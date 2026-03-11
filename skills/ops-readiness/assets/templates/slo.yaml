@@ -1,0 +1,29 @@
+service: {{project_name}}
+version: "1.0"
+description: "Service Level Objectives for {{project_name}}"
+
+slis:
+  - name: "api_success_rate"
+    description: "Percentage of successful API requests (HTTP 2xx, 3xx, 4xx non-server errors)"
+    indicator_type: "availability"
+    metric_source: "api_gateway"
+    formula: "sum(rate(http_requests_total{status!~'5..'}[5m])) / sum(rate(http_requests_total[5m])) * 100"
+
+  - name: "api_latency_p95"
+    description: "95th percentile latency for API requests"
+    indicator_type: "latency"
+    metric_source: "api_gateway"
+    formula: "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))"
+
+slos:
+  - sli_name: "api_success_rate"
+    target: 99.9
+    time_window: "30d"
+    error_budget: 0.1
+    action_threshold: "Burn rate > 2% over 1 hour"
+
+  - sli_name: "api_latency_p95"
+    target: "< 200ms"
+    time_window: "30d"
+    error_budget: "1% of requests > 200ms"
+    action_threshold: "Burn rate > 5% over 30 minutes"

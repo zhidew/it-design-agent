@@ -1,0 +1,32 @@
+name: 领域与类图设计子代理
+capability: ddd-structure
+description: 进行领域建模和结构设计，产出类图、DDD 结构说明及上下文映射。
+version: 0.1.0
+skills:
+  - ddd-structure
+inputs:
+  required:
+    - requirements
+    - existing_assets
+    - output_root
+  optional:
+    - context
+outputs:
+  required:
+    - artifacts/class-example.md
+    - artifacts/ddd-structure.md
+    - artifacts/context-map.md
+    - evidence/ddd-structure.json
+  schema_locked: true
+tools:
+  allowed:
+    - filesystem
+    - python:design-system/skills/ddd-structure/scripts/render_ddd_structure_stub.py
+policies:
+  asset_baseline_required: true
+  evidence_required: true
+  output_must_be_structured: true
+  descriptions_prefer_chinese: true
+error_handling:
+  on_missing_required_input: fail
+  on_validation_failure: fail

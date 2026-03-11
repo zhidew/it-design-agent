@@ -1,0 +1,26 @@
+extends: ["spectral:oas", "spectral:asyncapi"]
+rules:
+  # 自定义规则：operationId 必须存在且遵循驼峰命名
+  operation-operationId-valid-format:
+    description: "operationId must be camelCase."
+    given: "$.paths.*[get,post,put,delete,patch].operationId"
+    severity: error
+    then:
+      function: pattern
+      functionOptions:
+        match: "^[a-z][a-zA-Z0-9]+$"
+
+  # 自定义规则：API 必须提供错误响应 400 和 500
+  operation-4xx-5xx-responses:
+    description: "Operations must have at least one 400 and 500 response."
+    given: "$.paths.*[get,post,put,delete,patch].responses"
+    severity: warn
+    then:
+      field: "@key"
+      function: schema
+      functionOptions:
+        schema:
+          type: object
+          required:
+            - "400"
+            - "500"

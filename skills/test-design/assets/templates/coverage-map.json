@@ -1,0 +1,25 @@
+{
+  "project_name": "{{project_name}}",
+  "version": "{{version}}",
+  "coverage_rules": [
+    {
+      "design_module": "API 契约 (api-internal.yaml)",
+      "coverage_requirement": "所有 API 端点的 200, 400, 500 返回状态码必须包含至少一个自动化测试用例。"
+    },
+    {
+      "design_module": "状态机 (state-*.md)",
+      "coverage_requirement": "状态机中定义的所有状态扭转（包含成功和失败分支）必须被端到端集成测试覆盖。"
+    },
+    {
+      "design_module": "集成设计 (integration-*.md)",
+      "coverage_requirement": "外部接口调用的熔断与重试逻辑必须通过混沌测试 (Chaos Engineering) 注入故障进行验证。"
+    }
+  ],
+  "mapped_test_cases": [
+    {
+      "scenario": "{{scenario_name}} 成功创建",
+      "design_ref": "sequence-order.md / step 5",
+      "test_type": "Integration"
+    }
+  ]
+}

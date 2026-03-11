@@ -1,0 +1,53 @@
+openapi: 3.1.0
+info:
+  title: "{{project_name}} Public API"
+  version: "v1"
+  summary: "Publicly accessible API for partners and external systems"
+  description: "This API provides stable access to core services with backward compatibility guarantees."
+servers:
+  - url: "https://api.{{project_name}}.com/v1"
+
+paths:
+  /orders:
+    post:
+      summary: "Place new order"
+      operationId: placeOrder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PublicOrderRequestDTO" }
+      responses:
+        "201":
+          description: "Order accepted"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublicOrderResponseDTO" }
+
+components:
+  schemas:
+    PublicOrderRequestDTO:
+      type: object
+      required: [externalReference, items]
+      properties:
+        externalReference:
+          type: string
+          description: "Partner's internal identifier for this order"
+          example: "partner-ref-99"
+        items:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [productId, quantity]
+            properties:
+              productId: { type: string, description: "Public product ID", example: "PROD-ABC" }
+              quantity: { type: integer, minimum: 1, maximum: 100, example: 5 }
+
+    PublicOrderResponseDTO:
+      type: object
+      required: [orderId, status]
+      properties:
+        orderId: { type: string, description: "System generated order ID", example: "ORD-XYZ" }
+        status: { type: string, enum: [ACCEPTED, PROCESSING], example: "ACCEPTED" }
+        estimatedDelivery: { type: string, format: date, example: "2026-03-10" }

@@ -1,0 +1,52 @@
+asyncapi: 3.0.0
+info:
+  title: "{{project_name}} Event API"
+  version: "1.0.0"
+  description: "AsyncAPI specification for internal and external events."
+
+servers:
+  production:
+    host: "kafka.{{project_name}}.internal:9092"
+    protocol: kafka
+    description: "Production Kafka Broker"
+
+channels:
+  domainEvents:
+    address: "{{project_name}}.domain.events.v1"
+    messages:
+      eventCreated:
+        $ref: "#/components/messages/EntityCreatedEvent"
+
+operations:
+  publishEvent:
+    action: send
+    channel:
+      $ref: "#/channels/domainEvents"
+    messages:
+      - $ref: "#/components/messages/EntityCreatedEvent"
+
+components:
+  messages:
+    EntityCreatedEvent:
+      name: EntityCreated
+      title: "Entity Created Event"
+      summary: "Emitted when a new core entity is successfully created."
+      payload:
+        type: object
+        required: [eventId, timestamp, data]
+        properties:
+          eventId:
+            type: string
+            format: uuid
+            description: "Unique identifier for this event to ensure idempotency."
+          timestamp:
+            type: string
+            format: date-time
+          data:
+            type: object
+            required: [id, status]
+            properties:
+              id:
+                type: string
+              status:
+                type: string

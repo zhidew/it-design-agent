@@ -1,0 +1,34 @@
+{
+  "project_name": "{{project_name}}",
+  "version": "{{version}}",
+  "modules": [
+    {
+      "name": "interfaces",
+      "description": "API 层与适配器",
+      "allowed_dependencies": ["application", "domain"]
+    },
+    {
+      "name": "application",
+      "description": "用例编排与跨领域服务",
+      "allowed_dependencies": ["domain"]
+    },
+    {
+      "name": "domain",
+      "description": "纯粹的核心领域逻辑",
+      "allowed_dependencies": []
+    },
+    {
+      "name": "infrastructure",
+      "description": "基础设施与第三方库集成",
+      "allowed_dependencies": ["domain", "application"]
+    }
+  ],
+  "entry_points": [
+    "src/main/java/com/example/{{project_name}}/Application.java"
+  ],
+  "technology_stack": {
+    "language": "Java 17",
+    "framework": "Spring Boot 3.x",
+    "database": "MySQL 8.0"
+  }
+}

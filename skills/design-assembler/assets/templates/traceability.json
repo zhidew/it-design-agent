@@ -1,0 +1,24 @@
+{
+  "project_name": "{{project_name}}",
+  "version": "{{version}}",
+  "generated_at": "{{generated_at}}",
+  "traceability_links": [
+    {
+      "requirement_id": "REQ-001",
+      "requirement_desc": "用户可以创建新订单",
+      "design_artifacts": [
+        "artifacts/api-internal.yaml#/paths/~1orders/post",
+        "artifacts/sequence-order.md",
+        "artifacts/schema.sql#table=orders"
+      ],
+      "test_artifacts": [
+        "artifacts/test-inputs.md#scenario=OrderCreation"
+      ],
+      "ops_artifacts": [
+        "artifacts/slo.yaml#slis=api_success_rate"
+      ],
+      "status": "fully_traced"
+    }
+  ],
+  "missing_links": []
+}

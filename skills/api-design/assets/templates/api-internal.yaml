@@ -1,0 +1,106 @@
+openapi: 3.1.0
+info:
+  title: "{{project_name}} Internal API"
+  version: "{{version}}"
+  summary: "Internal contract for frontend-backend communication"
+  description: "This API is strictly for internal use and subject to rapid change."
+servers:
+  - url: "{{server_url}}"
+
+paths:
+  /orders:
+    get:
+      summary: "List orders"
+      operationId: listOrders
+      parameters:
+        - name: pageNumber
+          in: query
+          required: false
+          description: "Page number to retrieve (1-based index)"
+          schema: { type: integer, minimum: 1, default: 1, example: 1 }
+        - name: pageSize
+          in: query
+          required: false
+          description: "Number of items per page"
+          schema: { type: integer, minimum: 1, maximum: 200, default: 20, example: 20 }
+      responses:
+        "200":
+          description: "Successful response"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PagedOrderResponseDTO" }
+    post:
+      summary: "Create order"
+      operationId: createOrder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateOrderRequestDTO" }
+      responses:
+        "201":
+          description: "Order created"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrderResponseDTO" }
+
+components:
+  schemas:
+    OrderDTO:
+      type: object
+      required: [orderId, amount, status]
+      properties:
+        orderId:
+          type: string
+          description: "Unique order identifier"
+          example: "ORD-12345"
+        amount:
+          type: number
+          format: double
+          minimum: 0.01
+          description: "Total order amount"
+          example: 99.50
+        status:
+          type: string
+          enum: [CREATED, PAID, SHIPPED]
+          description: "Current lifecycle status"
+          example: "CREATED"
+        note:
+          type: string
+          maxLength: 500
+          description: "Optional customer notes"
+          example: "Deliver after 6 PM"
+
+    CreateOrderRequestDTO:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [skuId, quantity]
+            properties:
+              skuId: { type: string, example: "SKU-001" }
+              quantity: { type: integer, minimum: 1, example: 2 }
+
+    OrderResponseDTO:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: "#/components/schemas/OrderDTO" }
+
+    PagedOrderResponseDTO:
+      type: object
+      required: [data, page]
+      properties:
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/OrderDTO" }
+        page:
+          type: object
+          required: [pageNumber, totalItems]
+          properties:
+            pageNumber: { type: integer, example: 1 }
+            totalItems: { type: integer, example: 100 }

@@ -1,0 +1,41 @@
+service: {{project_name}}
+version: "1.0"
+description: "Configuration catalog defining all externalized properties and their schemas."
+
+properties:
+  # 基础应用配置
+  - key: "server.port"
+    type: "integer"
+    default: 8080
+    description: "The port the HTTP server binds to."
+    is_secret: false
+    restart_required: true
+
+  # 数据库连接池配置
+  - key: "spring.datasource.url"
+    type: "string"
+    description: "JDBC connection URL for the primary database."
+    is_secret: false
+    restart_required: true
+  - key: "spring.datasource.password"
+    type: "string"
+    description: "Database connection password."
+    is_secret: true
+    secret_store: "HashiCorp Vault / AWS Secrets Manager"
+    restart_required: true
+
+  # 业务开关 (Feature Toggles)
+  - key: "features.enable_new_payment_gateway"
+    type: "boolean"
+    default: false
+    description: "Toggle to switch traffic to the new V2 payment gateway."
+    is_secret: false
+    restart_required: false # 支持动态刷新
+
+  # 外部集成配置
+  - key: "integration.payment.timeout_ms"
+    type: "integer"
+    default: 3000
+    description: "Timeout in milliseconds for calls to the payment gateway."
+    is_secret: false
+    restart_required: false

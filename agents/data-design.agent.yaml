@@ -1,0 +1,38 @@
+name: 数据设计子代理
+capability: data-design
+description: 基于需求基线和现有 DDL 资产生成项目级数据与迁移设计产物，包含表结构 (SQL)、实体关系 (ER 图) 及数据迁移/回滚方案。
+version: 0.1.0
+skills:
+  - data-design
+inputs:
+  required:
+    - requirements
+    - existing_assets # 如现有 DDL、数据库说明
+    - output_root
+  optional:
+    - constraints
+    - context
+    - data_volume_estimation # 预估数据量，用于评估索引或分表策略
+outputs:
+  required:
+    - artifacts/schema.sql
+    - artifacts/er.md
+    - artifacts/migration-plan.md
+    - evidence/data-design.json
+  schema_locked: true
+tools:
+  allowed:
+    - filesystem
+    - git
+    - sqlfluff # SQL lint 工具
+    - python:design-system/skills/data-design/scripts/render_data_stub.py
+policies:
+  asset_baseline_required: true
+  evidence_required: true
+  output_must_be_structured: true
+  manual_override_forbidden: true
+  descriptions_prefer_chinese: true
+error_handling:
+  on_missing_required_input: fail
+  on_validation_failure: fail
+  on_partial_generation: emit_evidence_and_fail

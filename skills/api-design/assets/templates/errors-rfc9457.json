@@ -1,0 +1,21 @@
+﻿{
+  "version": "{{version}}",
+  "errors": [
+    {
+      "type": "https://example.com/problems/internal-error",
+      "title": "Internal Server Error",
+      "status": 500,
+      "errorCode": "COMMON-500",
+      "retryable": false,
+      "owner": "{{owner}}"
+    },
+    {
+      "type": "https://example.com/problems/invalid-request",
+      "title": "Invalid Request",
+      "status": 400,
+      "errorCode": "COMMON-400",
+      "retryable": false,
+      "owner": "{{owner}}"
+    }
+  ]
+}

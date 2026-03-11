@@ -1,0 +1,31 @@
+name: 流程与状态设计子代理
+capability: flow-design
+description: 基于业务需求生成系统交互时序图与状态机，覆盖主链路与异常链路。
+version: 0.1.0
+skills:
+  - flow-design
+inputs:
+  required:
+    - requirements
+    - existing_assets
+    - output_root
+  optional:
+    - context
+outputs:
+  required:
+    - artifacts/sequence-example.md
+    - artifacts/state-example.md
+    - evidence/flow-design.json
+  schema_locked: true
+tools:
+  allowed:
+    - filesystem
+    - python:design-system/skills/flow-design/scripts/render_flow_design_stub.py
+policies:
+  asset_baseline_required: true
+  evidence_required: true
+  output_must_be_structured: true
+  descriptions_prefer_chinese: true
+error_handling:
+  on_missing_required_input: fail
+  on_validation_failure: fail

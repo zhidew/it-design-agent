@@ -1,0 +1,39 @@
+service: {{project_name}}
+metrics:
+  - name: "jvm_memory_used_bytes"
+    type: "gauge"
+    description: "JVM memory usage"
+    labels: ["area"]
+  - name: "db_connection_pool_active"
+    type: "gauge"
+    description: "Active database connections"
+
+tracing:
+  provider: "OpenTelemetry"
+  sampling_rate: "10%"
+  critical_spans:
+    - name: "db_query"
+      tags: ["db.statement", "db.system"]
+    - name: "external_api_call"
+      tags: ["http.url", "http.status_code"]
+
+logging:
+  format: "JSON"
+  level: "INFO"
+  required_fields:
+    - "trace_id"
+    - "span_id"
+    - "user_id"
+    - "client_ip"
+
+alerts:
+  - name: "HighErrorRate"
+    condition: "api_success_rate < 99%"
+    duration: "5m"
+    severity: "CRITICAL"
+    channels: ["PagerDuty", "Slack"]
+  - name: "HighLatency"
+    condition: "api_latency_p95 > 500ms"
+    duration: "10m"
+    severity: "WARNING"
+    channels: ["Slack"]
