@@ -1,5 +1,6 @@
-# Dependencies
+﻿# Dependencies
 node_modules/
+.worktrees/
 venv/
 .venv/
 env/
