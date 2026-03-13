@@ -3,7 +3,7 @@
   "version": "{{version}}",
   "coverage_rules": [
     {
-      "design_module": "API 契约 (api-internal.yaml)",
+      "design_module": "API 设计 (api-internal.yaml)",
       "coverage_requirement": "所有 API 端点的 200, 400, 500 返回状态码必须包含至少一个自动化测试用例。"
     },
     {

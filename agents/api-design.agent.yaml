@@ -1,6 +1,6 @@
 name: API设计子代理
 capability: api-design
-description: 基于需求基线、现有接口资产和约束策略生成项目级 API 设计产物。具备根据受众（内部/外部/两者）自动判定并产出对应 API 契约的能力，并沉淀校验证据。
+description: 基于需求基线、现有接口资产和约束策略生成项目级 API 设计产物。具备根据受众（内部/外部/两者）自动判定并产出对应 API 设计的能力，并沉淀校校验证据。
 version: 0.1.1
 skills:
   - api-design

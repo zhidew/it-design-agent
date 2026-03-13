@@ -14,8 +14,19 @@ export const api = {
     apiClient.get(`/projects/${projectId}/versions`).then(res => res.data),
   runOrchestrator: (projectId: string, version: string, requirementText: string) => 
     apiClient.post(`/projects/${projectId}/versions/${version}/run`, { requirement_text: requirementText }).then(res => res.data),
+  uploadBaselineFiles: (projectId: string, version: string, files: File[]) => {
+    const formData = new FormData();
+    files.forEach(file => formData.append('files', file));
+    return apiClient.post(`/projects/${projectId}/versions/${version}/upload`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    }).then(res => res.data);
+  },
   getProjectArtifacts: (projectId: string, version: string) => 
     apiClient.get(`/projects/${projectId}/versions/${version}/artifacts`).then(res => res.data),
+  getProjectState: (projectId: string, version: string) => 
+    apiClient.get(`/projects/${projectId}/versions/${version}/state`).then(res => res.data),
+  resumeWorkflow: (projectId: string, version: string, humanInput: any) => 
+    apiClient.post(`/projects/${projectId}/versions/${version}/resume`, humanInput).then(res => res.data),
   getVersionLogs: (projectId: string, version: string) => 
     apiClient.get(`/projects/${projectId}/versions/${version}/logs`).then(res => res.data),
   getJobStatusSseUrl: (jobId: string) => `${API_BASE_URL}/jobs/${jobId}/status`,

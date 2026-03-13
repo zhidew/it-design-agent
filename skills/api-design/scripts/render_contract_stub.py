@@ -45,7 +45,7 @@ def main() -> int:
         expected_files.append("api-public.yaml")
 
     system_prompt = f"""
-    你是一个资深的API架构师。任务是根据项目需求设计符合 OpenAPI 3.1 规范的 API 契约和符合 RFC 9457 的错误码。
+    你是一个资深的API架构师。任务是根据项目需求设计符合 OpenAPI 3.1 规范的 API 设计和符合 RFC 9457 的错误码。
     
     项目背景：
     - 项目名称: {project_name}

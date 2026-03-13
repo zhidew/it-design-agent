@@ -14,7 +14,7 @@ description: 提取测试输入条件，生成覆盖率映射矩阵。
 - `existing_assets`: 相关存量资产。
 - `output_root`: 根输出目录。
 
-# 输出契约 (Output Contract)
+# 输出产物 (Output Artifacts)
 - `artifacts/test-inputs.md`
 - `artifacts/coverage-map.json`
 - `evidence/test-design.json`

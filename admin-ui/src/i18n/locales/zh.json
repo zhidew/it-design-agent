@@ -14,10 +14,13 @@
     "version": "版本",
     "copy": "复制",
     "copied": "已复制!",
+    "approve": "批准",
+    "revise": "修正",
     "systemRegistry": "系统注册表",
     "newProject": "新建项目",
     "loadingProjects": "正在加载项目...",
-    "configuration": "配置"
+    "configuration": "配置",
+    "loadError": "加载失败"
   },
   "projectList": {
     "title": "设计工作空间",
@@ -34,6 +37,13 @@
   "projectDetail": {
     "workspace": "项目工作空间",
     "noVersion": "暂无版本",
+    "activeProject": "激活项目",
+    "newDesignRun": "开启新设计任务",
+    "startDesign": "开始生成设计",
+    "executionPipeline": "执行流水线",
+    "realTimeOrchestration": "实时编排中",
+    "waitingReview": "等待评审",
+    "designArtifacts": "设计产物清单",
     "pipelineStatus": "流水线状态",
     "activeGeneration": "生成中",
     "readyIdle": "就绪 / 空闲",
@@ -54,6 +64,7 @@
     "retrieving": "正在获取生成的记录...",
     "noAssets": "该节点尚未产生任何设计资产。",
     "selectAsset": "选择资产以开始评审",
+    "selectFileToPreview": "选择一个文件以查看预览",
     "renderingDiagram": "正在渲染流程图...",
     "mermaidError": "Mermaid 渲染错误",
     "copySource": "复制 Mermaid 源码",
@@ -64,7 +75,14 @@
     "noReasoning": "该步骤暂无思考日志",
     "planner": "规划器",
     "assembler": "组装器",
-    "gatekeeper": "质量门禁"
+    "gatekeeper": "质量门禁",
+    "clearFiles": "清除文件",
+    "inputMaterials": "输入材料",
+    "orInputText": "或输入文本需求",
+    "resumeExecution": "恢复执行",
+    "subagentReasoning": "子代理思考",
+    "orchestrationLogs": "编排日志",
+    "noRelevantContext": "当前选择暂无相关上下文。"
   },
   "management": {
     "admin": "系统管理",
@@ -81,5 +99,27 @@
     "templateUpdateSuccess": "模板更新并版本化成功。",
     "versionRestored": "版本内容已加载到编辑器。点击保存以提交。",
     "inspectRestoreBtn": "查看与恢复"
+  },
+  "stages": {
+    "ANALYSIS": "需求分析",
+    "ARCHITECTURE": "系统架构",
+    "MODELING": "详细建模",
+    "INTERFACE": "流程与接口",
+    "READINESS": "生产就绪",
+    "DELIVERY": "最终交付"
+  },
+  "agents": {
+    "planner": "规划与发现",
+    "architecture-mapping": "系统映射",
+    "integration-design": "集成设计",
+    "data-design": "数据库建模",
+    "ddd-structure": "DDD 建模",
+    "flow-design": "流转逻辑",
+    "api-design": "API 设计",
+    "config-design": "配置设计",
+    "test-design": "测试输入",
+    "ops-readiness": "运维规范",
+    "design-assembler": "设计组装",
+    "validator": "质量门禁"
   }
 }

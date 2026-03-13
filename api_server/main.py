@@ -1,10 +1,43 @@
 import asyncio
+import sys
+from pathlib import Path
+
+# 将项目根目录 (it-design-agent) 加入 sys.path 以便导入 scripts
+root_dir = Path(__file__).resolve().parent.parent
+if str(root_dir) not in sys.path:
+    sys.path.append(str(root_dir))
+
+# Ensure ProactorEventLoop on Windows for subprocess support
+if sys.platform == 'win32':
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
 import json
+import logging
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 from routers import projects, management
 from services import orchestrator_service as orch
+
+# --- 巧妙的日志过滤器 ---
+class PollingLogFilter(logging.Filter):
+    def __init__(self):
+        super().__init__()
+        self.state_poll_count = 0
+
+    def filter(self, record):
+        # 检查是否是 /state 接口的访问日志
+        if "/state" in record.getMessage():
+            self.state_poll_count += 1
+            # 每 20 次轮询才打印一个打点，或者你可以完全返回 False 屏蔽
+            if self.state_poll_count >= 20:
+                print(".", end="", flush=True) # 在控制台打印一个点表示“心跳”
+                self.state_poll_count = 0
+            return False # 返回 False 表示不记录这条日志到标准输出
+        return True
+
+# 应用过滤器到 uvicorn 的访问日志
+logging.getLogger("uvicorn.access").addFilter(PollingLogFilter())
 
 app = FastAPI(
     title="IT Detailed Design Agent API",

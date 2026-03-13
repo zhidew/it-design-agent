@@ -3,8 +3,12 @@ import json
 import time
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
+from pathlib import Path
 
-load_dotenv()
+# 确保能找到项目根目录下的 .env 文件
+# it-design-agent/scripts/llm_generator.py -> parent is scripts -> parent is it-design-agent
+root_env = Path(__file__).resolve().parent.parent / ".env"
+load_dotenv(dotenv_path=root_env)
 
 class SubagentOutput(BaseModel):
     reasoning: str = Field(description="大模型对该领域设计的思考过程和决策逻辑 (Markdown 格式)")
@@ -36,37 +40,69 @@ def generate_with_llm(system_prompt: str, user_prompt: str, expected_files: list
     last_error = None
     for attempt in range(max_retries + 1):
         try:
+            raw_data = None
             if provider == "gemini":
-                return _call_gemini(enhanced_system_prompt, user_prompt, expected_files)
+                raw_data = _call_gemini_raw(enhanced_system_prompt, user_prompt)
             else:
-                return _call_openai(enhanced_system_prompt, user_prompt)
+                raw_data = _call_openai_raw(enhanced_system_prompt, user_prompt)
+            
+            # --- 强健的数据修复逻辑 ---
+            # 1. 确保 artifacts 是字典
+            artifacts = raw_data.get("artifacts", {})
+            if not isinstance(artifacts, dict):
+                artifacts = {}
+            
+            # 2. 修复嵌套字典问题 (如用户遇到的报错)
+            fixed_artifacts = {}
+            for k, v in artifacts.items():
+                if isinstance(v, (dict, list)):
+                    # 如果 LLM 调皮输出了嵌套 JSON，我们将其转回字符串
+                    fixed_artifacts[k] = json.dumps(v, ensure_ascii=False, indent=2)
+                else:
+                    fixed_artifacts[k] = str(v)
+            
+            # 3. 填充缺失的预期文件
+            for f in expected_files:
+                if f not in fixed_artifacts:
+                    fixed_artifacts[f] = ""
+            
+            raw_data["artifacts"] = fixed_artifacts
+            
+            # 4. 如果 reasoning 缺失，给个默认值
+            if "reasoning" not in raw_data:
+                raw_data["reasoning"] = "No reasoning provided by LLM."
+
+            return SubagentOutput.model_validate(raw_data)
+
         except json.JSONDecodeError as e:
             last_error = e
             print(f"  [LLM Generator] JSON 解析失败 (尝试 {attempt + 1}/{max_retries + 1}): {e}")
             time.sleep(2)
         except Exception as e:
             last_error = e
-            print(f"  [LLM Generator] 调用失败 (尝试 {attempt + 1}/{max_retries + 1}): {e}")
+            print(f"  [LLM Generator] 数据验证/调用失败 (尝试 {attempt + 1}/{max_retries + 1}): {e}")
             time.sleep(2)
             
     raise Exception(f"大模型生成失败，已重试 {max_retries} 次。最后错误: {last_error}")
 
 def _clean_json_response(text: str) -> str:
     text = text.strip()
-    if text.startswith("```json"):
-        text = text[7:]
+    # 移除首尾可能的 ```json ... ```
     if text.startswith("```"):
-        text = text[3:]
+        # 寻找第一个换行符
+        first_newline = text.find('\n')
+        if first_newline != -1:
+            text = text[first_newline:]
+        else:
+            text = text[3:]
     if text.endswith("```"):
         text = text[:-3]
     return text.strip()
 
-def _call_gemini(system_prompt: str, user_prompt: str, expected_files: list) -> SubagentOutput:
-    import warnings
-    warnings.filterwarnings("ignore", category=FutureWarning)
+def _call_gemini_raw(system_prompt: str, user_prompt: str) -> dict:
     import google.generativeai as genai
     api_key = os.getenv("GEMINI_API_KEY")
-    model_name = os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-flash")
+    model_name = os.getenv("GEMINI_MODEL_NAME", "gemini-2.0-flash")
     genai.configure(api_key=api_key)
     
     model = genai.GenerativeModel(
@@ -76,10 +112,9 @@ def _call_gemini(system_prompt: str, user_prompt: str, expected_files: list) -> 
     )
     response = model.generate_content(user_prompt)
     raw_text = _clean_json_response(response.text)
-    data = json.loads(raw_text)
-    return SubagentOutput.model_validate(data)
+    return json.loads(raw_text)
 
-def _call_openai(system_prompt: str, user_prompt: str) -> SubagentOutput:
+def _call_openai_raw(system_prompt: str, user_prompt: str) -> dict:
     from openai import OpenAI
     api_key = os.getenv("OPENAI_API_KEY")
     base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
@@ -95,5 +130,4 @@ def _call_openai(system_prompt: str, user_prompt: str) -> SubagentOutput:
         response_format={"type": "json_object"}
     )
     raw_text = _clean_json_response(completion.choices[0].message.content)
-    data = json.loads(raw_text)
-    return SubagentOutput.model_validate(data)
+    return json.loads(raw_text)

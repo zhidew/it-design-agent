@@ -14,7 +14,7 @@ description: 规划多环境配置、开关策略和密钥规范。
 - `existing_assets`: 相关存量资产。
 - `output_root`: 根输出目录。
 
-# 输出契约 (Output Contract)
+# 输出产物 (Output Artifacts)
 - `artifacts/config-catalog.yaml`
 - `artifacts/config-matrix.md`
 - `evidence/config-design.json`

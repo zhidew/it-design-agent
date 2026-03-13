@@ -23,8 +23,8 @@
 
 ## 5. 接口与集成契约 (Contracts & Integrations)
 定义微服务对外提供以及依赖的外部系统契约。
-- **内部 API 契约**: `artifacts/api-internal.yaml`
-- **外部 API 契约**: `artifacts/api-public.yaml`
+- **内部 API 设计**: `artifacts/api-internal.yaml`
+- **外部 API 设计**: `artifacts/api-public.yaml`
 - **异常结构定义**: `artifacts/errors-rfc9457.json`
 - **外部系统集成**: `artifacts/integration-*.md` 和 `artifacts/asyncapi.yaml`
 

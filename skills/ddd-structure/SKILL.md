@@ -14,7 +14,7 @@ description: 进行领域建模和结构设计，产出类图、DDD 结构说明
 - `existing_assets`: 相关存量资产。
 - `output_root`: 根输出目录。
 
-# 输出契约 (Output Contract)
+# 输出产物 (Output Artifacts)
 - `artifacts/class-example.md`
 - `artifacts/ddd-structure.md`
 - `artifacts/context-map.md`

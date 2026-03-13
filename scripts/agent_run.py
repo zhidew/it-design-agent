@@ -42,7 +42,7 @@ def main():
     skills_dir = base_dir / "skills"
     subagents = {
         "架构映射 (Architecture)": skills_dir / "architecture-mapping" / "scripts" / "render_architecture_mapping_stub.py",
-        "API 契约 (API Design)": skills_dir / "api-design" / "scripts" / "render_contract_stub.py",
+        "API 设计 (API Design)": skills_dir / "api-design" / "scripts" / "render_contract_stub.py",
         "数据建模 (Data Design)": skills_dir / "data-design" / "scripts" / "render_data_stub.py",
         "流程状态 (Flow Design)": skills_dir / "flow-design" / "scripts" / "render_flow_design_stub.py",
         "领域设计 (DDD Structure)": skills_dir / "ddd-structure" / "scripts" / "render_ddd_structure_stub.py",

@@ -8,7 +8,7 @@ def print_header(title):
 
 def frontend_drill(project_dir: Path):
     print_header("前端角色演练 (Frontend Drill)")
-    print("目标: 根据 API 契约与错误语义生成联调清单...")
+    print("目标: 根据 API 设计与错误语义生成联调清单...")
     
     api_file = project_dir / "artifacts" / "api-internal.yaml"
     errors_file = project_dir / "artifacts" / "errors-rfc9457.json"

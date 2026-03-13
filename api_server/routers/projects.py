@@ -1,4 +1,5 @@
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File
+import shutil
 from typing import List
 from models.project import ProjectCreateRequest, ProjectResponse, VersionRunRequest, JobResponse
 import services.orchestrator_service as orch
@@ -8,6 +9,26 @@ router = APIRouter(
     tags=["Projects"],
 )
 
+@router.post("/{project_id}/versions/{version}/upload")
+async def upload_baseline_files(
+    project_id: str, 
+    version: str, 
+    files: List[UploadFile] = File(...)
+):
+    """上传基线输入文件（需求、模型、字典等）"""
+    project_path = orch.PROJECTS_DIR / project_id / version
+    baseline_dir = project_path / "baseline"
+    baseline_dir.mkdir(parents=True, exist_ok=True)
+    
+    saved_files = []
+    for file in files:
+        file_path = baseline_dir / file.filename
+        with file_path.open("wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        saved_files.append(file.filename)
+        
+    return {"status": "success", "files": saved_files}
+
 @router.get("", response_model=List[ProjectResponse])
 async def get_projects():
     projects = orch.list_projects()
@@ -15,7 +36,6 @@ async def get_projects():
 
 @router.post("", response_model=ProjectResponse)
 async def create_project(req: ProjectCreateRequest):
-    # Use name as ID for simplicity in MVP
     project_id = req.name.strip().replace(" ", "-").lower()
     orch.create_project(project_id)
     return {"id": project_id, "name": req.name, "description": req.description}
@@ -27,16 +47,25 @@ async def get_project_versions(project_id: str):
 
 @router.post("/{project_id}/versions/{version}/run", response_model=JobResponse)
 async def run_design_orchestrator(project_id: str, version: str, req: VersionRunRequest):
-    # This triggers the async task in the background
     job_id = orch.trigger_orchestrator(project_id, version, req.requirement_text)
     return {"job_id": job_id, "status": "running", "message": "Orchestrator job started."}
 
 @router.get("/{project_id}/versions/{version}/artifacts")
 async def get_artifacts(project_id: str, version: str):
     tree = orch.get_artifacts_tree(project_id, version)
-    if not tree:
-        raise HTTPException(status_code=404, detail="Artifacts not found or project/version does not exist.")
     return tree
+
+@router.get("/{project_id}/versions/{version}/state")
+async def get_workflow_state(project_id: str, version: str):
+    state = orch.get_workflow_state(project_id, version)
+    if not state:
+        raise HTTPException(status_code=404, detail="Workflow state not found.")
+    return state
+
+@router.post("/{project_id}/versions/{version}/resume")
+async def resume_workflow(project_id: str, version: str, human_input: dict):
+    success = await orch.resume_workflow(project_id, version, human_input)
+    return {"success": success}
 
 @router.get("/{project_id}/versions/{version}/logs")
 async def get_version_logs(project_id: str, version: str):

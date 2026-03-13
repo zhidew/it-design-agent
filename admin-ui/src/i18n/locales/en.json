@@ -14,10 +14,13 @@
     "version": "Version",
     "copy": "Copy",
     "copied": "Copied!",
+    "approve": "Approve",
+    "revise": "Revise",
     "systemRegistry": "System Registry",
     "newProject": "New Project",
     "loadingProjects": "Loading Projects...",
-    "configuration": "Config"
+    "configuration": "Config",
+    "loadError": "Load Error"
   },
   "projectList": {
     "title": "Design Workspaces",
@@ -34,6 +37,13 @@
   "projectDetail": {
     "workspace": "Project Workspace",
     "noVersion": "No Version",
+    "activeProject": "Active Project",
+    "newDesignRun": "New Design Run",
+    "startDesign": "Start Generation",
+    "executionPipeline": "Execution Pipeline",
+    "realTimeOrchestration": "Real-time Orchestration",
+    "waitingReview": "Waiting Review",
+    "designArtifacts": "Design Artifacts",
     "pipelineStatus": "Pipeline Status",
     "activeGeneration": "Active Generation",
     "readyIdle": "Ready / Idle",
@@ -54,6 +64,7 @@
     "retrieving": "Retrieving generated design...",
     "noAssets": "No design assets have been emitted for the selected agent node yet.",
     "selectAsset": "Select an asset to begin review",
+    "selectFileToPreview": "Select a file to preview",
     "renderingDiagram": "Rendering diagram...",
     "mermaidError": "Mermaid Render Error",
     "copySource": "Copy Mermaid Source",
@@ -64,7 +75,14 @@
     "noReasoning": "No reasoning logs for this step",
     "planner": "Planner",
     "assembler": "Assembler",
-    "gatekeeper": "Gatekeeper"
+    "gatekeeper": "Gatekeeper",
+    "clearFiles": "Clear Files",
+    "inputMaterials": "Input Materials",
+    "orInputText": "Or input text requirements",
+    "resumeExecution": "Resume Execution",
+    "subagentReasoning": "Subagent Reasoning",
+    "orchestrationLogs": "Orchestration Logs",
+    "noRelevantContext": "No relevant context for the current selection."
   },
   "management": {
     "admin": "System Administration",
@@ -81,5 +99,27 @@
     "templateUpdateSuccess": "Template updated and versioned successfully.",
     "versionRestored": "Version content loaded into editor. Click Save to commit.",
     "inspectRestoreBtn": "Inspect & Restore"
+  },
+  "stages": {
+    "ANALYSIS": "Requirement Analysis",
+    "ARCHITECTURE": "System Architecture",
+    "MODELING": "Detailed Modeling",
+    "INTERFACE": "Process & Interface",
+    "READINESS": "Production Readiness",
+    "DELIVERY": "Final Delivery"
+  },
+  "agents": {
+    "planner": "Plan & Discovery",
+    "architecture-mapping": "System Mapping",
+    "integration-design": "Integration",
+    "data-design": "DB Schema",
+    "ddd-structure": "DDD Model",
+    "flow-design": "Flow Logic",
+    "api-design": "API Design",
+    "config-design": "Configuration",
+    "test-design": "Test Inputs",
+    "ops-readiness": "Ops Spec",
+    "design-assembler": "Assembly",
+    "validator": "Quality Gate"
   }
 }
