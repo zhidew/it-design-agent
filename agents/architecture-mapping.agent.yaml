@@ -1,6 +1,6 @@
-name: 架构映射子代理
+name: 模块边界分析代理
 capability: architecture-mapping
-description: 根据代码和架构规范，输出模块边界与依赖关系映射。
+description: 分析业务需求与既有系统结构，识别模块边界并建立依赖关系映射。
 version: 0.1.0
 skills:
   - architecture-mapping

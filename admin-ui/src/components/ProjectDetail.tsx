@@ -275,14 +275,6 @@ export function ProjectDetail() {
           </div>
           <div className="flex items-center gap-4">
             <LanguageSwitcher />
-            <div className="h-8 w-px bg-gray-100 mx-2" />
-            <div className="flex -space-x-2">
-              {[1, 2, 3].map(i => (
-                <div key={i} className="h-8 w-8 rounded-full border-2 border-white bg-gray-200 flex items-center justify-center text-[10px] font-bold text-gray-500">
-                  {String.fromCharCode(64 + i)}
-                </div>
-              ))}
-            </div>
           </div>
         </div>
       </header>
@@ -296,11 +288,11 @@ export function ProjectDetail() {
             </div>
             
             <div className="grid grid-cols-1 gap-2">
-              {renderUploadBtn('ir', 'IR(IT Requirement)', <FileText size={14} />, true)}
-              {renderUploadBtn('physical', 'Physical Model', <Database size={14} />)}
-              {renderUploadBtn('logical', 'Logical Model', <Layers size={14} />)}
-              {renderUploadBtn('dict', 'Data Dictionary', <Book size={14} />)}
-              {renderUploadBtn('lookup', 'Lookup List', <List size={14} />)}
+              {renderUploadBtn('ir', t('projectDetail.uploadIR'), <FileText size={14} />, true)}
+              {renderUploadBtn('physical', t('projectDetail.uploadPhysical'), <Database size={14} />)}
+              {renderUploadBtn('logical', t('projectDetail.uploadLogical'), <Layers size={14} />)}
+              {renderUploadBtn('dict', t('projectDetail.uploadDict'), <Book size={14} />)}
+              {renderUploadBtn('lookup', t('projectDetail.uploadLookup'), <List size={14} />)}
             </div>
 
             <div className="h-px bg-gray-50" />

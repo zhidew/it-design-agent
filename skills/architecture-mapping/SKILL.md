@@ -1,6 +1,6 @@
 ---
 name: architecture-mapping
-description: 根据代码和架构规范，输出模块边界与依赖关系映射。
+description: 分析业务需求与既有系统结构，识别模块边界并建立依赖关系映射。
 ---
 
 # 工作流 (Workflow)
