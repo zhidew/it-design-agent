@@ -103,7 +103,7 @@ description: {data['desc']}
 - `existing_assets`: 相关存量资产。
 - `output_root`: 根输出目录。
 
-# 输出契约 (Output Contract)
+# 输出产物 (Output Artifacts)
 """
     for out in data['outputs']:
         content += f"- `{out}`\n"

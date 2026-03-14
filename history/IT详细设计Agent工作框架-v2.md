@@ -29,7 +29,7 @@
 | 能力 | 优先级 | 触发条件 | 边界说明 |
 |---|---|---|---|
 | 架构映射 | MUST | 所有需求 | 负责模块边界与依赖，不负责业务优先级变更 |
-| API 契约设计 | MUST | 有对外/内部接口 | 负责契约与兼容策略，不负责接口上线发布 |
+| API 设计 | MUST | 有对外/内部接口 | 负责契约与兼容策略，不负责接口上线发布 |
 | 数据设计 | MUST | 有数据落库/查询变更 | 负责模型与迁移方案，不负责执行迁移 |
 | 流程/状态设计 | MUST | 有业务流程变更 | 负责主异常链路，不负责运行态调度 |
 | 类图 + DDD 结构设计 | MUST | 涉及领域模型或重构 | 负责边界与依赖规则，不负责代码重写 |
@@ -62,7 +62,7 @@
 | 能力 | 主要使用角色 | 支撑后续活动 | 设计前资产（必须） | 工具定义（示例） | 工具反馈（用于支撑设计） | 产出物（项目级） |
 |---|---|---|---|---|---|---|
 | 架构映射 | 后端、SRE | 模块拆分、部署边界确认 | 现有架构图、核心代码入口、历史 ADR、模块依赖 | `filesystem/git/依赖分析脚本` | 边界冲突、循环依赖、可复用模块清单 | `architecture.md`、`module-map.json`、`adr/ADR-*.md` |
-| API 契约设计 | 前端、后端、测试 | 联调、契约测试、异常处理 | 现有 API 文档、网关路由、调用日志、错误码规范 | `OpenAPI lint`、兼容性 diff、示例回放 | 兼容性风险、参数缺失、错误码冲突 | `openapi.yaml`、`errors-rfc9457.json` |
+| API 设计 | 前端、后端、测试 | 联调、契约测试、异常处理 | 现有 API 文档、网关路由、调用日志、错误码规范 | `OpenAPI lint`、兼容性 diff、示例回放 | 兼容性风险、参数缺失、错误码冲突 | `openapi.yaml`、`errors-rfc9457.json` |
 | 数据设计 | 后端、测试、SRE | 开发落库、数据校验、容量评估 | DDL、索引、数据字典、迁移脚本、慢查询 | `SQL lint`、schema diff、索引建议 | 迁移风险、索引收益、字段约束冲突 | `schema.sql`、`er.md`、`migration-plan.md` |
 | 流程/状态设计 | 前端、后端、测试 | 流程实现、状态测试、异常覆盖 | 业务流程文档、调用链、历史异常案例 | `Mermaid`、流程一致性检查脚本 | 主链路/异常链路覆盖度、状态缺口 | `sequence-*.md`、`state-*.md` |
 | 类图 + DDD 结构 | 后端 | 代码结构落地、依赖治理 | 领域模型代码、上下文边界文档、目录结构 | 类关系抽取、静态依赖规则检查 | 聚合边界漂移、跨上下文违规依赖 | `class-*.md`、`context-map.md`、`ddd-structure.md` |
@@ -73,22 +73,23 @@
 | 安全与可观测 | SRE、后端、测试 | 监控告警、审计、上线值守 | 安全基线、审计要求、监控指标与日志规范 | policy check、OpenTelemetry 约束检查 | 控制项缺口、告警盲区、追踪断点 | `security-controls.yaml`、`observability-spec.yaml` |
 | 文档汇编 | 全角色 | 开发评审、测试评审、上线评审 | 全部结构化产物、模板、评审意见 | 汇编脚本、追踪矩阵检查、文档渲染 | 缺失章节、来源断链、未闭环风险 | `detailed-design.md`、`traceability.json`、`review-checklist.md` |
 
-## 5. 产出物标准（Output Contract）
+## 5. 产出物标准（Output Artifacts）
 
 ### 5.1 结构化优先
 - 每个产出物必须是可解析文本（`yaml/json/sql/md`）。
 - 图统一用 Mermaid（`flowchart/sequence/state/class/er`）。
-- 关键 JSON/YAML 必须有 Schema 校验。
+- 关键 JSON/YAML 必须有 Schema 校验本地。
 
 ### 5.2 证据化要求
 每个能力至少一条证据记录（建议多条），保存在 `evidence/`：
 
 ```json
 {
-  "capability": "api-contract-design",
+  "capability": "api-design",
   "asset_type": "doc",
   "source": "docs/api/v1.md",
   "tool": "spectral",
+
   "result_summary": "发现2个兼容性风险",
   "design_impact": "新增v2路径并保留v1",
   "confidence": 0.9

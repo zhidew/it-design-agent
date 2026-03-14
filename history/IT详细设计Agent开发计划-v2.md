@@ -158,7 +158,7 @@ python scripts/validate_artifacts.py --project examples/golden-project
 3. 每个能力域定义一个 `skill` 目录：
 - `skills/<capability>/SKILL.md`
 - 可选：`skills/<capability>/scripts/*`、`references/*`、`assets/templates/*`
-4. `subagent` 输出必须匹配 Schema；`skill` 仅提供实现路径，不改变输出契约。
+4. `subagent` 输出必须匹配 Schema；`skill` 仅提供实现路径，不改变输出产物。
 5. 工具调用权限在 `subagent` 定义，`skill` 中仅引用允许工具。
 
 ### 3.10 Subagent/Skill 示例目录
@@ -252,7 +252,7 @@ python scripts/validate_artifacts.py --project examples/golden-project
 
 ### 7.1 接入顺序（MUST 优先）
 1. 架构映射
-2. API 契约设计
+2. API 设计
 3. 数据与迁移设计
 4. 流程/状态设计
 5. 测试可设计性

@@ -31,7 +31,7 @@
 6. 输出评审包并关闭风险项。
 7. 汇编最终《详细设计说明书》。
 
-## 4. 输入输出契约（I/O Contract）
+## 4. 输入输出产物（I/O Artifacts）
 
 ### 4.1 输入
 - PRD 基线
@@ -58,7 +58,7 @@
 | 能力层 | 优先级 | 说明 |
 |---|---|---|
 | 架构映射（Architecture Mapping） | MUST | 需求拆解、边界划分、模块职责 |
-| 接口契约设计（API Contract） | MUST | OpenAPI、错误码、幂等、版本 |
+| 接口设计（API Design） | MUST | OpenAPI、错误码、幂等、版本 |
 | 数据设计（Data Design） | MUST | 实体、索引、迁移、一致性 |
 | 流程设计（Sequence/State） | MUST | 主异常链路与状态流转 |
 | 类图设计（Class Diagram） | MUST | 领域对象与依赖关系 |
@@ -99,7 +99,7 @@
 | 能力层 | Skill 名称（建议） | 设计前必须读取的资产 | 工具调用（MCP/脚本） | 工具反馈如何支撑设计 | 产出物模板 |
 |---|---|---|---|---|---|
 | 架构映射 | `architecture-mapping` | 现有架构图、模块目录、历史 ADR、核心代码入口 | `filesystem`、`git`、依赖分析脚本、JSON Schema 校验 | 输出模块边界、依赖冲突、可复用组件清单，支撑 `module-map` 与架构分层 | `architecture.md`、`module-map.json` |
-| 接口契约设计 | `api-contract-design` | 现有 API 文档、网关路由、调用日志、错误码规范 | OpenAPI lint（Spectral）、接口差异脚本、示例回放脚本 | 输出接口兼容性差异、参数缺失、错误码冲突，支撑接口版本与幂等策略 | `openapi.yaml`、`errors.json` |
+| 接口设计 | `api-design` | 现有 API 文档、网关路由、调用日志、错误码规范 | OpenAPI lint（Spectral）、接口差异脚本、示例回放脚本 | 输出接口兼容性差异、参数缺失、错误码冲突，支撑接口版本与幂等策略 | `openapi.yaml`、`errors.json` |
 | 数据设计 | `data-model-design` | 当前表结构、索引、数据字典、迁移历史、慢查询 | SQLFluff、Schema Diff、索引建议脚本 | 输出字段映射、索引影响、迁移风险，支撑 ER 与 DDL 调整 | `schema.sql`、`er.md` |
 | 流程设计 | `flow-design` | 现有时序图、调用链日志、业务流程文档 | Mermaid CLI、流程校验脚本、调用链分析脚本 | 输出主链路/异常链路证据，支撑时序图与状态机设计 | `sequence-*.md`、`state-*.md` |
 | 类图设计 | `class-diagram-design` | 领域模型代码、接口定义、聚合相关文档 | Mermaid CLI、类关系抽取脚本、静态分析工具 | 输出实体关系、继承/组合/依赖关系，支撑类图与职责划分 | `class-*.md` |

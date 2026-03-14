@@ -42,7 +42,8 @@
 | 能力 | 优先级 | 触发条件 | 边界说明 |
 |---|---|---|---|
 | 架构映射 | MUST | 所有需求 | 输出模块边界与依赖关系 |
-| API 契约设计 | MUST | 有服务接口 | 输出兼容策略与错误语义 |
+| API 设计 | MUST | 有服务接口 | 输出兼容策略与错误语义 |
+
 | 数据与迁移设计 | MUST | 有数据变更 | 输出表结构、索引、迁移方案 |
 | 流程/状态设计 | MUST | 有流程变更 | 输出主链路与异常链路 |
 | 类图 + DDD 结构 | MUST | 领域建模或重构 | 输出边界与依赖规则 |
@@ -56,13 +57,13 @@
 
 ### 3.4 执行模型（Orchestrator + Subagent + Skill）
 1. `Orchestrator`：负责流程编排、任务路由、门禁控制、结果汇编。
-2. `Subagent`：负责能力执行边界（输入输出契约、工具白名单、权限、失败策略），配置说明优先用中文描述。
+2. `Subagent`：负责能力执行边界（输入输出产物、工具白名单、权限、失败策略），配置说明优先用中文描述。
 3. `Skill`：负责能力表达（方法步骤、模板、校验规则、参考资料、脚本调用）。
 
 ### 3.5 设计约束（必须遵守）
 1. 一个能力域对应一个主 `subagent`（可有扩展子能力）。
 2. 一个 `subagent` 可挂多个 `skill`（基础版/行业版/高级版）。
-3. 输出 Schema 固定在 `subagent` 层，`skill` 不得突破输出契约。
+3. 输出 Schema 固定在 `subagent` 层，`skill` 不得突破输出产物。
 4. 工具权限与调用白名单在 `subagent` 层治理，不能仅靠 `skill` 约束。
 5. `Orchestrator` 只接收结构化输出，不接收自由文本作为最终交付依据。
 6. `subagent` 配置文件统一采用 `xxx-design.agent.yaml` 命名。
@@ -73,7 +74,8 @@
 ### 3.6 能力到 Subagent/Skill 映射（最小）
 | 能力域 | Subagent（执行体） | Skill（能力规范） |
 |---|---|---|
-| API 契约设计 | `api-design-agent` | `api-design` |
+| API 设计 | `api-design-agent` | `api-design` |
+
 | 数据与迁移设计 | `data-design-agent` | `data-model-design` |
 | 流程/状态设计 | `flow-design-agent` | `flow-design` |
 | 类图 + DDD 结构 | `ddd-structure-agent` | `ddd-code-structure-design` |
@@ -102,7 +104,8 @@
 | 能力 | 主要角色 | 设计前资产 | 工具 | 工具反馈 | 产出物（项目级） |
 |---|---|---|---|---|---|
 | 架构映射 | 后端/SRE | 架构图、代码入口、历史 ADR | 文件检索、依赖分析 | 边界冲突、循环依赖 | `architecture.md`、`module-map.json`、`adr/ADR-*.md` |
-| API 契约设计 | 前端/后端/测试 | 现有 API 文档、路由、错误码规范 | OpenAPI lint、diff 检查 | 兼容性风险、字段缺失、受众边界不清 | `openapi-internal.yaml`、`errors-rfc9457.json`、`openapi-public.yaml`（按需） |
+| API 设计 | 前端/后端/测试 | 现有 API 文档、路由、错误码规范 | OpenAPI lint、diff 检查 | 兼容性风险、字段缺失、受众边界不清 | `openapi-internal.yaml`、`errors-rfc9457.json`、`openapi-public.yaml`（按需） |
+
 | 数据与迁移设计 | 后端/测试/SRE | DDL、索引、迁移脚本、慢查询 | SQL lint、Schema diff | 迁移风险、索引收益 | `schema.sql`、`er.md`、`migration-plan.md` |
 | 流程/状态设计 | 前端/后端/测试 | 业务流程文档、调用链、异常案例 | Mermaid、流程一致性检查 | 漏链路、状态缺口 | `sequence-*.md`、`state-*.md` |
 | 类图 + DDD 结构 | 后端 | 领域代码、边界文档、目录结构 | 类关系抽取、依赖规则检查 | 跨上下文违规依赖 | `class-*.md`、`ddd-structure.md`、`context-map.md` |
