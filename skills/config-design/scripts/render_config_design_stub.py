@@ -31,8 +31,10 @@ def main() -> int:
     scenario_name = payload.get("scenario_name", "CoreFeature")
 
     artifacts_dir = output_root / "artifacts"
+    logs_dir = output_root / "logs"
     evidence_dir = output_root / "evidence"
     artifacts_dir.mkdir(parents=True, exist_ok=True)
+    logs_dir.mkdir(parents=True, exist_ok=True)
     evidence_dir.mkdir(parents=True, exist_ok=True)
 
     catalog_tpl = (TEMPLATE_DIR / "config-catalog.yaml").read_text(encoding="utf-8-sig")
@@ -70,7 +72,7 @@ def main() -> int:
             if line.strip():
                 print(f"[config-design] [LLM Reasoning] {line}")
         
-        reasoning_file = artifacts_dir / "config-design-reasoning.md"
+        reasoning_file = logs_dir / "config-design-reasoning.md"
         reasoning_file.write_text(f"# 配置设计大模型思考过程\n\n{llm_output.reasoning}\n", encoding="utf-8")
         
         for filename in expected_files:

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File
 import shutil
 from typing import List
-from models.project import ProjectCreateRequest, ProjectResponse, VersionRunRequest, JobResponse
+from models.project import ProjectCreateRequest, ProjectResponse, VersionRunRequest, JobResponse, ResumeRequest, NodeRetryRequest
 import services.orchestrator_service as orch
 
 router = APIRouter(
@@ -45,10 +45,17 @@ async def get_project_versions(project_id: str):
     versions = orch.list_versions(project_id)
     return versions
 
+@router.delete("/{project_id}/versions/{version}")
+async def delete_project_version(project_id: str, version: str):
+    deleted = orch.delete_version(project_id, version)
+    if not deleted:
+        raise HTTPException(status_code=409, detail="Version cannot be deleted while it is running, or it does not exist.")
+    return {"success": True, "project_id": project_id, "version": version}
+
 @router.post("/{project_id}/versions/{version}/run", response_model=JobResponse)
 async def run_design_orchestrator(project_id: str, version: str, req: VersionRunRequest):
     job_id = orch.trigger_orchestrator(project_id, version, req.requirement_text)
-    return {"job_id": job_id, "status": "running", "message": "Orchestrator job started."}
+    return {"job_id": job_id, "status": "queued", "message": "Orchestrator job queued."}
 
 @router.get("/{project_id}/versions/{version}/artifacts")
 async def get_artifacts(project_id: str, version: str):
@@ -59,13 +66,39 @@ async def get_artifacts(project_id: str, version: str):
 async def get_workflow_state(project_id: str, version: str):
     state = orch.get_workflow_state(project_id, version)
     if not state:
-        raise HTTPException(status_code=404, detail="Workflow state not found.")
+        # Fallback to a very minimal state instead of 404
+        return {
+            "project_id": project_id,
+            "version": version,
+            "run_status": "failed",
+            "task_queue": [],
+            "history": ["Error: Workflow state not found on server."],
+            "artifacts": {},
+        }
     return state
 
 @router.post("/{project_id}/versions/{version}/resume")
-async def resume_workflow(project_id: str, version: str, human_input: dict):
-    success = await orch.resume_workflow(project_id, version, human_input)
-    return {"success": success}
+async def resume_workflow(project_id: str, version: str, req: ResumeRequest):
+    payload = req.model_dump() if hasattr(req, "model_dump") else req.dict()
+    success = await orch.resume_workflow(project_id, version, payload)
+    if not success:
+        raise HTTPException(status_code=409, detail="Workflow is not waiting for human input.")
+    return {"success": True, "status": "queued", "action": req.action}
+
+@router.post("/{project_id}/versions/{version}/retry-node")
+async def retry_workflow_node(project_id: str, version: str, req: NodeRetryRequest):
+    payload = req.model_dump() if hasattr(req, "model_dump") else req.dict()
+    success = await orch.retry_workflow_node(project_id, version, payload["node_type"])
+    if not success:
+        raise HTTPException(status_code=409, detail="Node cannot be retried in the current workflow state.")
+    return {"success": True, "status": "queued", "node_type": payload["node_type"]}
+
+@router.post("/{project_id}/versions/{version}/continue")
+async def continue_workflow(project_id: str, version: str):
+    success = await orch.continue_workflow(project_id, version)
+    if not success:
+        raise HTTPException(status_code=409, detail="Workflow cannot be continued in the current state.")
+    return {"success": True, "status": "queued"}
 
 @router.get("/{project_id}/versions/{version}/logs")
 async def get_version_logs(project_id: str, version: str):

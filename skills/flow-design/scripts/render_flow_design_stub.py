@@ -37,8 +37,10 @@ def main() -> int:
     project_name = payload.get("project_name", "CoreSystem")
 
     artifacts_dir = output_root / "artifacts"
+    logs_dir = output_root / "logs"
     evidence_dir = output_root / "evidence"
     artifacts_dir.mkdir(parents=True, exist_ok=True)
+    logs_dir.mkdir(parents=True, exist_ok=True)
     evidence_dir.mkdir(parents=True, exist_ok=True)
 
     sequence_template = (TEMPLATE_DIR / "sequence.md").read_text(encoding="utf-8-sig")
@@ -81,7 +83,7 @@ def main() -> int:
             if line.strip():
                 print(f"[flow-design] [LLM Reasoning] {line}")
         
-        reasoning_file = artifacts_dir / "flow-design-reasoning.md"
+        reasoning_file = logs_dir / "flow-design-reasoning.md"
         reasoning_file.write_text(f"# 流程与状态大模型思考过程 (Flow Design LLM Reasoning)\n\n{llm_output.reasoning}\n", encoding="utf-8")
         
         for filename in expected_files:

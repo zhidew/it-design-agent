@@ -35,8 +35,10 @@ def main() -> int:
     dependencies = payload.get("dependencies", "")
 
     artifacts_dir = output_root / "artifacts"
+    logs_dir = output_root / "logs"
     evidence_dir = output_root / "evidence"
     artifacts_dir.mkdir(parents=True, exist_ok=True)
+    logs_dir.mkdir(parents=True, exist_ok=True)
     evidence_dir.mkdir(parents=True, exist_ok=True)
 
     # Load templates to pass as context
@@ -85,7 +87,7 @@ def main() -> int:
                 print(f"[data-design] [LLM Reasoning] {line}")
 
         # 保存推理日志
-        reasoning_file = artifacts_dir / "data-design-reasoning.md"
+        reasoning_file = logs_dir / "data-design-reasoning.md"
         reasoning_file.write_text(f"# 数据建模大模型思考过程 (Data Design LLM Reasoning)\n\n{llm_output.reasoning}\n", encoding="utf-8")
         
         # 保存生成的产物

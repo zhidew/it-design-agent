@@ -29,8 +29,11 @@ def main() -> int:
     version = payload.get("version", "1.0.0")
 
     artifacts_dir = output_root / "artifacts"
+    logs_dir = output_root / "logs"
     release_dir = output_root / "release"
     evidence_dir = output_root / "evidence"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    logs_dir.mkdir(parents=True, exist_ok=True)
     release_dir.mkdir(parents=True, exist_ok=True)
     evidence_dir.mkdir(parents=True, exist_ok=True)
 
@@ -72,7 +75,7 @@ def main() -> int:
             if line.strip():
                 print(f"[design-assembler] [LLM Reasoning] {line}")
         
-        reasoning_file = artifacts_dir / "design-assembler-reasoning.md"
+        reasoning_file = logs_dir / "design-assembler-reasoning.md"
         reasoning_file.write_text(f"# 设计组装大模型思考过程\n\n{llm_output.reasoning}\n", encoding="utf-8")
         
         for filename in expected_files:

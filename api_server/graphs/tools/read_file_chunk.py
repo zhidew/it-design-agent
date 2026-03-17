@@ -1,0 +1,34 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any, Dict
+
+
+def read_file_chunk(root_dir: Path, tool_input: Dict[str, Any]) -> Dict[str, Any]:
+    relative_path = tool_input.get("path")
+    start_line = int(tool_input.get("start_line", 1) or 1)
+    end_line = int(tool_input.get("end_line", start_line + 19) or (start_line + 19))
+
+    if not isinstance(relative_path, str) or not relative_path.strip():
+        raise ValueError("`path` must be a non-empty string.")
+    if start_line < 1 or end_line < start_line:
+        raise ValueError("Invalid line range.")
+
+    file_path = (root_dir / relative_path).resolve()
+    try:
+        file_path.relative_to(root_dir.resolve())
+    except ValueError as exc:
+        raise ValueError(f"File path escapes root: {relative_path}") from exc
+
+    if not file_path.exists() or not file_path.is_file():
+        raise FileNotFoundError(f"File not found: {relative_path}")
+
+    lines = file_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    selected = lines[start_line - 1 : end_line]
+    return {
+        "root_dir": str(root_dir),
+        "path": relative_path,
+        "start_line": start_line,
+        "end_line": min(end_line, len(lines)),
+        "content": "\n".join(selected),
+    }

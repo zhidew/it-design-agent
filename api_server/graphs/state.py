@@ -1,36 +1,105 @@
-from typing import TypedDict, List, Dict, Any, Optional
-from typing_extensions import Annotated
-import operator
+from typing import Annotated, Any, Dict, List, Literal, Optional, TypedDict
 
-class Task(TypedDict):
+RunStatus = Literal["queued", "running", "waiting_human", "success", "failed"]
+NodeStatus = Literal["todo", "running", "waiting_human", "success", "failed", "skipped"]
+
+
+def merge_messages(
+    current: Optional[List[Dict[str, Any]]],
+    incoming: Optional[List[Dict[str, Any]]],
+) -> List[Dict[str, Any]]:
+    return [*(current or []), *(incoming or [])]
+
+
+def merge_artifacts(
+    current: Optional[Dict[str, Any]],
+    incoming: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    merged: Dict[str, Any] = dict(current or {})
+    merged.update(incoming or {})
+    return merged
+
+
+def merge_task_queue(
+    current: Optional[List["Task"]],
+    incoming: Optional[List["Task"]],
+) -> List["Task"]:
+    current = current or []
+    incoming = incoming or []
+    merged_by_id: Dict[str, Task] = {task["id"]: dict(task) for task in current}
+    order = [task["id"] for task in current]
+
+    for task in incoming:
+        task_id = task["id"]
+        if task_id not in merged_by_id:
+            order.append(task_id)
+            merged_by_id[task_id] = dict(task)
+            continue
+        merged_by_id[task_id] = {**merged_by_id[task_id], **task}
+
+    return [merged_by_id[task_id] for task_id in order]
+
+
+def merge_history(
+    current: Optional[List[str]],
+    incoming: Optional[List[str]],
+) -> List[str]:
+    return [*(current or []), *(incoming or [])]
+
+
+def merge_tool_results(
+    current: Optional[List[Dict[str, Any]]],
+    incoming: Optional[List[Dict[str, Any]]],
+) -> List[Dict[str, Any]]:
+    return [*(current or []), *(incoming or [])]
+
+
+def merge_bool_or(current: bool, incoming: bool) -> bool:
+    return current or incoming
+
+
+def merge_optional_str(current: Optional[str], incoming: Optional[str]) -> Optional[str]:
+    return incoming or current
+
+
+def merge_run_status(current: RunStatus, incoming: RunStatus) -> RunStatus:
+    # Logic: failed > waiting_human > running > queued > success
+    severity = {"failed": 4, "waiting_human": 3, "running": 2, "queued": 1, "success": 0}
+    if severity.get(incoming, 0) > severity.get(current, 0):
+        return incoming
+    return current
+
+
+class Task(TypedDict, total=False):
     id: str
-    agent_type: str  # e.g., 'api-design', 'data-design'
+    agent_type: str
     priority: int
     input_keys: List[str]
-    status: str  # 'todo', 'running', 'success', 'failed', 'blocked'
+    status: NodeStatus
     dependencies: List[str]
     metadata: Dict[str, Any]
 
-class DesignState(TypedDict):
-    # design_context: assets pool (Markdown/YAML/JSON)
+
+class DesignState(TypedDict, total=False):
     design_context: Dict[str, Any]
-    
-    # task_queue: structured list of tasks
-    # We use Annotated with operator.add or similar if we want to merge updates, 
-    # but for a simple queue, we'll manage it in the nodes.
-    task_queue: List[Task]
-    
-    # workflow_phase: INIT -> CORE -> MODEL -> LOGIC -> API -> QUALITY -> DONE
+    task_queue: Annotated[List[Task], merge_task_queue]
     workflow_phase: str
-    
-    # history: steps audit and reasoning logs
-    history: Annotated[List[str], operator.add]
-    
-    # human_intervention: for interrupts
-    human_intervention_required: bool
-    last_worker: Optional[str]
-    
-    # project metadata
+    history: Annotated[List[str], merge_history]
+    messages: Annotated[List[Dict[str, Any]], merge_messages]
+    artifacts: Annotated[Dict[str, Any], merge_artifacts]
+    tool_results: Annotated[List[Dict[str, Any]], merge_tool_results]
+    human_intervention_required: Annotated[bool, merge_bool_or]
+    waiting_reason: Annotated[Optional[str], merge_optional_str]
+    last_worker: Annotated[Optional[str], merge_optional_str]
+    current_node: Annotated[Optional[str], merge_optional_str]
+    run_status: Annotated[RunStatus, merge_run_status]
+    run_id: str
+    resume_action: str
+    human_feedback: str
+    human_answers: Dict[str, List[Dict[str, Any]]]
+    pending_interrupt: Dict[str, Any] | None
+    resume_target_node: str | None
+    updated_at: Annotated[str, merge_optional_str]
     project_id: str
     version: str
     requirement: str

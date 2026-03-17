@@ -16,6 +16,7 @@ import logging
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
+from models.events import dump_event, validate_event_payload
 from routers import projects, management
 from services import orchestrator_service as orch
 
@@ -60,34 +61,38 @@ app.include_router(management.router)
 @app.get("/api/v1/jobs/{job_id}/status")
 async def get_job_status_stream(request: Request, job_id: str):
     """
-    Server-Sent Events (SSE) endpoint to stream orchestrator logs.
+    Server-Sent Events (SSE) endpoint to stream structured orchestrator events.
     """
     async def event_generator():
-        last_log_index = 0
-        while True:
-            # Check if client disconnected
+        queue = None
+        backlog = orch.get_job_events(job_id)
+        for payload in backlog:
             if await request.is_disconnected():
-                break
+                return
+            event = validate_event_payload(payload)
+            yield {"event": event.event_type, "data": json.dumps(dump_event(event), ensure_ascii=False)}
 
-            job_data = orch.get_job_status(job_id)
-            status = job_data["status"]
-            logs = job_data["logs"]
-            
-            # Yield any new logs
-            for i in range(last_log_index, len(logs)):
-                yield {"data": json.dumps({"type": "log", "message": logs[i]})}
-            last_log_index = len(logs)
-            
-            # Yield status
-            yield {"data": json.dumps({"type": "status", "status": status})}
-            
-            # If the job is done or failed, exit the loop
-            if status in ["success", "failed", "not_found"]:
-                break
-                
-            await asyncio.sleep(1) # Poll interval
-            
-    return EventSourceResponse(event_generator())
+        queue = orch.subscribe_job_events(job_id)
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+
+                try:
+                    payload = await asyncio.wait_for(queue.get(), timeout=15)
+                except asyncio.TimeoutError:
+                    continue
+
+                event = validate_event_payload(payload)
+                yield {"event": event.event_type, "data": json.dumps(dump_event(event), ensure_ascii=False)}
+
+                if event.event_type in {"run_completed", "run_failed"}:
+                    break
+        finally:
+            if queue is not None:
+                orch.unsubscribe_job_events(job_id, queue)
+
+    return EventSourceResponse(event_generator(), ping=15)
 
 if __name__ == "__main__":
     import uvicorn

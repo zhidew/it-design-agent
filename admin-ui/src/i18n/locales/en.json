@@ -49,6 +49,8 @@
     "realTimeOrchestration": "Real-time Pipeline Monitoring",
     "waitingReview": "Pending Review",
     "designArtifacts": "Design Artifacts",
+    "scanReport": "Quality Scan Report",
+    "validationResult": "Validation Result",
     "pipelineStatus": "Engine Status",
     "activeGeneration": "Orchestrating",
     "readyIdle": "Ready / Idle",
@@ -108,7 +110,7 @@
     "ANALYSIS": "Requirement Analysis",
     "ARCHITECTURE": "Structural Design",
     "MODELING": "Domain & Data Modeling",
-    "INTERFACE": "Logic Flow & Integration",
+    "INTERFACE": "Flow & Integration",
     "READINESS": "Production Readiness",
     "DELIVERY": "Review & Assembly"
   },

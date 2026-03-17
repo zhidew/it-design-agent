@@ -12,6 +12,8 @@ export const api = {
     apiClient.post('/projects', { name, description }).then(res => res.data),
   getProjectVersions: (projectId: string) => 
     apiClient.get(`/projects/${projectId}/versions`).then(res => res.data),
+  deleteProjectVersion: (projectId: string, version: string) =>
+    apiClient.delete(`/projects/${projectId}/versions/${version}`).then(res => res.data),
   runOrchestrator: (projectId: string, version: string, requirementText: string) => 
     apiClient.post(`/projects/${projectId}/versions/${version}/run`, { requirement_text: requirementText }).then(res => res.data),
   uploadBaselineFiles: (projectId: string, version: string, files: File[]) => {
@@ -25,8 +27,23 @@ export const api = {
     apiClient.get(`/projects/${projectId}/versions/${version}/artifacts`).then(res => res.data),
   getProjectState: (projectId: string, version: string) => 
     apiClient.get(`/projects/${projectId}/versions/${version}/state`).then(res => res.data),
-  resumeWorkflow: (projectId: string, version: string, humanInput: any) => 
+  resumeWorkflow: (
+    projectId: string,
+    version: string,
+    humanInput: {
+      action: 'approve' | 'revise' | 'answer';
+      node_id?: string;
+      interrupt_id?: string;
+      selected_option?: string;
+      answer?: string;
+      feedback?: string;
+    },
+  ) => 
     apiClient.post(`/projects/${projectId}/versions/${version}/resume`, humanInput).then(res => res.data),
+  retryWorkflowNode: (projectId: string, version: string, nodeType: string) =>
+    apiClient.post(`/projects/${projectId}/versions/${version}/retry-node`, { node_type: nodeType }).then(res => res.data),
+  continueWorkflow: (projectId: string, version: string) =>
+    apiClient.post(`/projects/${projectId}/versions/${version}/continue`).then(res => res.data),
   getVersionLogs: (projectId: string, version: string) => 
     apiClient.get(`/projects/${projectId}/versions/${version}/logs`).then(res => res.data),
   getJobStatusSseUrl: (jobId: string) => `${API_BASE_URL}/jobs/${jobId}/status`,
