@@ -24,19 +24,8 @@ from subgraphs import (
 )
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
-SUPPORTED_AGENT_IDS = {
-    "architecture-mapping",
-    "integration-design",
-    "data-design",
-    "ddd-structure",
-    "flow-design",
-    "api-design",
-    "config-design",
-    "test-design",
-    "ops-readiness",
-    "design-assembler",
-    "validator",
-}
+
+# Agent aliases for normalization (kept for backward compatibility)
 AGENT_ALIASES = {
     "architect-map": "architecture-mapping",
     "architecture-map": "architecture-mapping",
@@ -45,6 +34,39 @@ AGENT_ALIASES = {
     "tests": "test-design",
     "test": "test-design",
 }
+
+
+def _get_supported_agent_ids() -> set:
+    """Get supported agent IDs from AgentRegistry (dynamic).
+    
+    Includes both registry-based agents and built-in agents (validator).
+    """
+    # Built-in agents that are not in the registry
+    builtin_agents = {"validator"}
+    
+    try:
+        from registry.agent_registry import AgentRegistry
+        registry = AgentRegistry.get_instance()
+        return set(registry.get_capabilities()) | builtin_agents
+    except RuntimeError:
+        # Fallback to hardcoded list if registry not initialized
+        return {
+            "architecture-mapping",
+            "integration-design",
+            "data-design",
+            "ddd-structure",
+            "flow-design",
+            "api-design",
+            "config-design",
+            "test-design",
+            "ops-readiness",
+            "design-assembler",
+            "validator",
+        }
+
+
+# Legacy constant for compatibility
+SUPPORTED_AGENT_IDS = _get_supported_agent_ids()
 
 
 def supervisor(state: DesignState) -> Dict[str, Any]:
@@ -314,10 +336,12 @@ def _build_task_queue(active_agents: set[str]) -> List[Task]:
 
 
 def _normalize_active_agents(active_agents: set[str]) -> set[str]:
+    """Normalize agent IDs using aliases and validate against registry."""
+    supported_ids = _get_supported_agent_ids()  # Get fresh list from registry
     normalized = set()
     for agent in active_agents:
         canonical_agent = AGENT_ALIASES.get(agent, agent)
-        if canonical_agent in SUPPORTED_AGENT_IDS:
+        if canonical_agent in supported_ids:
             normalized.add(canonical_agent)
     return normalized
 
@@ -518,10 +542,14 @@ async def planner_node(state: DesignState) -> Dict[str, Any]:
     human_feedback = state.get("human_feedback", "")
     human_inputs = _summarize_human_inputs(planner_answers, human_feedback)
 
-    system_prompt = """You are an Expert IT Design Orchestrator.
-Your task is to analyze the user's requirements and provide a tailored design pipeline.
-We have the following Subagents available:
-- architecture-mapping: Core system structure.
+    # Get dynamic agent descriptions from AgentRegistry
+    try:
+        from registry.agent_registry import AgentRegistry
+        registry = AgentRegistry.get_instance()
+        agent_descriptions = registry.get_planner_agent_descriptions()
+    except RuntimeError:
+        # Fallback if registry not initialized
+        agent_descriptions = """- architecture-mapping: Core system structure.
 - integration-design: External service calls, MQ, Kafka.
 - data-design: DB schemas, SQL tables.
 - ddd-structure: Domain entities, aggregates.
@@ -530,6 +558,14 @@ We have the following Subagents available:
 - config-design: App parameters, lookup lists.
 - test-design: Test cases, coverage.
 - ops-readiness: Monitoring, deployment specs.
+- design-assembler: Assemble all design artifacts.
+- validator: Validate design outputs."""
+
+    system_prompt = f"""You are an Expert IT Design Orchestrator.
+Your task is to analyze the user's requirements and provide a tailored design pipeline.
+
+We have the following Subagents available:
+{agent_descriptions}
 
 ALWAYS INCLUDE: architecture-mapping, design-assembler, validator.
 ONLY INCLUDE others if the requirement clearly involves those domains.
@@ -543,22 +579,22 @@ Treat this as a material sufficiency assessment:
 - In reasoning, explicitly explain which parts of the provided materials were sufficient and which specific gap remains unresolved.
 
 Output JSON format:
-{
+{{
   "reasoning": "Your step-by-step thinking about which agents to select based on text and files.",
-  "artifacts": {
+  "artifacts": {{
     "active_agents": ["agent-id-1", "agent-id-2"],
     "needs_human": false,
     "question": "",
-    "context": {
+    "context": {{
       "missing_information": ["field_name"],
       "why_needed": "Explain why the clarification matters.",
       "options": [
-        {"value": "option_value", "label": "Option Label", "description": "When this applies."}
+        {{"value": "option_value", "label": "Option Label", "description": "When this applies."}}
       ],
       "allow_free_text": true
-    }
-  }
-}"""
+    }}
+  }}
+}}"""
 
     user_prompt = (
         f"Requirement Text: {requirement_text}\n"

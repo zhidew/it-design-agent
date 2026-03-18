@@ -38,6 +38,7 @@ async def run_standard_react_subgraph(
     expected_files_fn: Callable[[Dict[str, Any]], List[str]],
     candidate_files_fn: Callable[[Dict[str, Any]], List[str]] | None = None,
     structure_candidates_fn: Callable[[List[str]], List[str]] | None = None,
+    enable_permission_check: bool = True,
 ) -> Dict[str, Any]:
     project_id = state["project_id"]
     version = state["version"]
@@ -70,6 +71,16 @@ async def run_standard_react_subgraph(
     READ_TOOLS = {"list_files", "extract_structure", "grep_search", "read_file_chunk", "extract_lookup_values"}
     WRITE_TOOLS = {"write_file", "patch_file", "run_command"}
 
+    # Create permission-aware tool executor
+    def _execute_tool_with_permission(tool_name: str, tool_input: Dict[str, Any] | None) -> Dict[str, Any]:
+        """Execute tool with optional permission check."""
+        if enable_permission_check:
+            from api_server.graphs.tools.protocol import execute_tool_with_permission
+            return execute_tool_with_permission(
+                tool_name, tool_input, agent_capability=capability
+            )
+        return execute_tool_fn(tool_name, tool_input)
+
     try:
         for step in range(1, max_react_steps + 1):
             decision = await asyncio.to_thread(
@@ -88,7 +99,7 @@ async def run_standard_react_subgraph(
                 history_updates.append(f"[{capability}] ReAct step {step}: evidence collection complete.")
                 break
 
-            tool_name = decision.get("tool_name")
+            tool_name = decision.get("tool_name") or "none"
             tool_input = dict(decision.get("tool_input") or {})
             
             # Determine which root_dir to use
@@ -98,7 +109,7 @@ async def run_standard_react_subgraph(
                 # Default to baseline_dir for read tools or unrecognized tools
                 tool_input["root_dir"] = str(baseline_dir)
 
-            tool_result = await asyncio.to_thread(execute_tool_fn, tool_name, tool_input)
+            tool_result = await asyncio.to_thread(_execute_tool_with_permission, tool_name, tool_input)
             tool_results.append(tool_result)
             react_trace[-1]["tool_result"] = {
                 "status": tool_result.get("status"),

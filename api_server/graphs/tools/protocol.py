@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, Optional, TYPE_CHECKING
 
 from .extract_structure import extract_structure
 from .extract_lookup_values import extract_lookup_values
@@ -13,12 +13,16 @@ from .write_file import write_file
 from .patch_file import patch_file
 from .run_command import run_command
 
+if TYPE_CHECKING:
+    from registry.agent_registry import AgentFullConfig
+
 
 TOOL_ERROR_OK = "OK"
 TOOL_ERROR_INVALID_INPUT = "INVALID_INPUT"
 TOOL_ERROR_NOT_FOUND = "NOT_FOUND"
 TOOL_ERROR_UNSUPPORTED = "UNSUPPORTED_TOOL"
 TOOL_ERROR_INTERNAL = "INTERNAL_ERROR"
+TOOL_ERROR_NOT_ALLOWED = "NOT_ALLOWED"
 
 
 class ToolInputError(ValueError):
@@ -54,6 +58,64 @@ def execute_tool(tool_name: str, tool_input: Dict[str, Any] | None) -> Dict[str,
         "input": tool_input,
         "output": output,
     }
+
+
+def execute_tool_with_permission(
+    tool_name: str,
+    tool_input: Dict[str, Any] | None,
+    agent_config: Optional["AgentFullConfig"] = None,
+    agent_capability: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Execute a tool with permission check based on agent configuration.
+    
+    This function first verifies that the agent has permission to use the tool,
+    then executes the tool if allowed.
+    
+    Args:
+        tool_name: Name of the tool to execute
+        tool_input: Input parameters for the tool
+        agent_config: AgentFullConfig object (preferred)
+        agent_capability: Capability string to load config from registry (fallback)
+        
+    Returns:
+        Tool execution result with status and output
+        
+    Raises:
+        ToolInputError: If tool is not allowed for the agent
+        
+    Example:
+        # With AgentFullConfig
+        config = registry.load_full_config("api-design")
+        result = execute_tool_with_permission("write_file", {...}, agent_config=config)
+        
+        # With capability string (loads from registry)
+        result = execute_tool_with_permission("list_files", {...}, agent_capability="api-design")
+    """
+    # Resolve agent config
+    config = agent_config
+    if config is None and agent_capability:
+        try:
+            from registry.agent_registry import AgentRegistry
+            registry = AgentRegistry.get_instance()
+            config = registry.load_full_config(agent_capability)
+        except RuntimeError:
+            # Registry not initialized, skip permission check
+            pass
+    
+    # Check permission
+    if config is not None:
+        if not config.has_tool_permission(tool_name):
+            allowed = config.tools_allowed or []
+            from registry.errors import ToolNotAllowedError
+            raise ToolInputError(
+                TOOL_ERROR_NOT_ALLOWED,
+                f"Tool '{tool_name}' is not allowed for agent '{config.manifest.capability}'. "
+                f"Allowed tools: {allowed}"
+            )
+    
+    # Execute the tool
+    return execute_tool(tool_name, tool_input)
 
 
 def _require_root_dir(tool_input: Dict[str, Any]) -> Path:

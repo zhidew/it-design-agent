@@ -1,6 +1,7 @@
 import asyncio
 import sys
 from pathlib import Path
+from contextlib import asynccontextmanager
 
 # 将项目根目录 (it-design-agent) 加入 sys.path 以便导入 scripts
 root_dir = Path(__file__).resolve().parent.parent
@@ -19,6 +20,31 @@ from sse_starlette.sse import EventSourceResponse
 from models.events import dump_event, validate_event_payload
 from routers import projects, management
 from services import orchestrator_service as orch
+from registry.agent_registry import AgentRegistry
+
+
+# --- Lifespan for startup/shutdown ---
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initialize resources on startup, cleanup on shutdown."""
+    # Startup: Initialize AgentRegistry
+    base_dir = Path(__file__).resolve().parent.parent
+    try:
+        registry = AgentRegistry.initialize(base_dir)
+        stats = registry.get_stats()
+        print(f"[Startup] AgentRegistry initialized: {stats['total_agents']} agents loaded")
+        if stats['load_errors']:
+            for error in stats['load_errors']:
+                print(f"[Startup] Warning: {error}")
+    except Exception as e:
+        print(f"[Startup] Failed to initialize AgentRegistry: {e}")
+    
+    yield  # Application runs here
+    
+    # Shutdown: Cleanup
+    AgentRegistry.reset()
+    print("[Shutdown] AgentRegistry cleaned up")
+
 
 # --- 巧妙的日志过滤器 ---
 class PollingLogFilter(logging.Filter):
@@ -32,7 +58,7 @@ class PollingLogFilter(logging.Filter):
             self.state_poll_count += 1
             # 每 20 次轮询才打印一个打点，或者你可以完全返回 False 屏蔽
             if self.state_poll_count >= 20:
-                print(".", end="", flush=True) # 在控制台打印一个点表示“心跳”
+                print(".", end="", flush=True) # 在控制台打印一个点表示"心跳"
                 self.state_poll_count = 0
             return False # 返回 False 表示不记录这条日志到标准输出
         return True
@@ -44,6 +70,7 @@ app = FastAPI(
     title="IT Detailed Design Agent API",
     description="Backend API for the IT Detailed Design Agent UI",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 # Enable CORS for the frontend

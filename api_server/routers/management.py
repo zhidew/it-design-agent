@@ -15,12 +15,58 @@ class TemplateUpdateRequest(BaseModel):
 class AgentUpdateRequest(BaseModel):
     config_yaml: str
 
-@router.get("/agents", response_model=List[AgentMetadata])
-async def list_agents():
-    return orch.list_agents()
 
-@router.get("/agents/{agent_id}", response_model=AgentMetadata)
+@router.get("/agents")
+async def list_agents():
+    """List all available agents using AgentRegistry."""
+    from registry.agent_registry import AgentRegistry
+    
+    try:
+        registry = AgentRegistry.get_instance()
+        manifests = registry.get_all_manifests()
+        
+        # Convert to API response format (compatible with existing UI)
+        agents = []
+        for m in manifests:
+            agent_data = {
+                "id": m.capability,
+                "name": m.name,
+                "description": m.description,
+                "config_path": m.agent_yaml_path or "",
+                "skills": [m.capability],  # Each agent has its corresponding skill
+            }
+            agents.append(agent_data)
+        
+        return agents
+    except RuntimeError:
+        # Fallback to original implementation if registry not initialized
+        return orch.list_agents()
+
+
+@router.get("/agents/{agent_id}")
 async def get_agent(agent_id: str):
+    """Get a single agent's details."""
+    from registry.agent_registry import AgentRegistry
+    
+    try:
+        registry = AgentRegistry.get_instance()
+        manifest = registry.get_manifest(agent_id)
+        
+        if manifest:
+            return {
+                "id": manifest.capability,
+                "name": manifest.name,
+                "description": manifest.description,
+                "config_path": manifest.agent_yaml_path or "",
+                "skills": [manifest.capability],
+                "keywords": manifest.keywords,
+                "required_inputs": manifest.required_inputs,
+                "expected_outputs": manifest.expected_outputs,
+            }
+    except RuntimeError:
+        pass
+    
+    # Fallback to original implementation
     agent = orch.get_agent(agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
