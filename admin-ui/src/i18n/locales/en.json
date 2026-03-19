@@ -88,7 +88,8 @@
     "resumeExecution": "Resume Execution",
     "subagentReasoning": "Subagent Reasoning",
     "orchestrationLogs": "Orchestration Logs",
-    "noRelevantContext": "No relevant context for the current selection."
+    "noRelevantContext": "No relevant context for the current selection.",
+    "noArtifactsProduced": "No design assets have been produced for this node yet."
   },
   "management": {
     "admin": "System Administration",

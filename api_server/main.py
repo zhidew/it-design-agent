@@ -1,3 +1,11 @@
+import warnings
+
+# Suppress annoying dependency and deprecation warnings at the very beginning
+# This must happen before other imports like 'fastapi' or 'requests'
+warnings.filterwarnings("ignore", message=".*urllib3.*doesn't match a supported version.*")
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="asyncio")
+warnings.filterwarnings("ignore", message="Core Pydantic V1 functionality isn't compatible with Python 3.14")
+
 import asyncio
 import sys
 from pathlib import Path
@@ -9,7 +17,8 @@ if str(root_dir) not in sys.path:
     sys.path.append(str(root_dir))
 
 # Ensure ProactorEventLoop on Windows for subprocess support
-if sys.platform == 'win32':
+# In Python 3.14+, ProactorEventLoop is the default and set_event_loop_policy is deprecated.
+if sys.platform == 'win32' and sys.version_info < (3, 14):
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 import json

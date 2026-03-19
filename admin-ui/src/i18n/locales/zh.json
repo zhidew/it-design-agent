@@ -88,7 +88,8 @@
     "resumeExecution": "恢复执行",
     "subagentReasoning": "子代理推理链",
     "orchestrationLogs": "编排日志",
-    "noRelevantContext": "当前选择暂无相关上下文。"
+    "noRelevantContext": "当前选择暂无相关上下文。",
+    "noArtifactsProduced": "该节点尚未产生任何设计资产。"
   },
   "management": {
     "admin": "系统管理",

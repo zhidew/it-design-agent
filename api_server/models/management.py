@@ -35,3 +35,27 @@ class TemplateMetadata(BaseModel):
     skill_id: str
     current_content: str
     versions: List[TemplateVersion] = []
+
+
+class VersionMetadata(BaseModel):
+    version_id: str
+    project_id: str
+    requirement: str
+    run_status: str
+    created_at: str
+    updated_at: str
+
+
+class ProjectMetadata(BaseModel):
+    id: str
+    name: str
+    description: Optional[str] = None
+    created_at: str
+    updated_at: str
+
+
+class VersionListResponse(BaseModel):
+    versions: List[VersionMetadata]
+    total: int
+    page: int
+    page_size: int

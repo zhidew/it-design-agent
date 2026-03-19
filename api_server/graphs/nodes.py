@@ -11,17 +11,7 @@ from scripts.llm_generator import SubagentOutput, generate_with_llm
 
 from .state import DesignState, Task
 from .tools import execute_tool
-from subgraphs import (
-    run_api_design_node,
-    run_architecture_mapping_node,
-    run_config_design_node,
-    run_data_design_node,
-    run_ddd_structure_node,
-    run_flow_design_node,
-    run_integration_design_node,
-    run_ops_readiness_node,
-    run_test_design_node,
-)
+from subgraphs.dynamic_subagent import run_dynamic_subagent
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
@@ -69,6 +59,29 @@ def _get_supported_agent_ids() -> set:
 SUPPORTED_AGENT_IDS = _get_supported_agent_ids()
 
 
+# Enable dynamic subagent execution (can be controlled via environment variable)
+USE_DYNAMIC_SUBAGENT = os.getenv("USE_DYNAMIC_SUBAGENT", "true").lower() in ("true", "1", "yes")
+
+# Agents that have explicit hardcoded implementations (prefer those for now)
+# Set to empty to use dynamic subagent for all agents
+_HARDCODED_AGENTS: set = set()
+
+
+def _should_use_dynamic_subagent(agent_type: str) -> bool:
+    """
+    Determine whether to use dynamic subagent execution.
+    
+    Returns True if:
+    1. USE_DYNAMIC_SUBAGENT is enabled
+    2. Agent is NOT in the hardcoded list
+    
+    Now defaults to True for all agents (configuration-driven approach).
+    """
+    if not USE_DYNAMIC_SUBAGENT:
+        return False
+    return agent_type not in _HARDCODED_AGENTS
+
+
 def supervisor(state: DesignState) -> Dict[str, Any]:
     queue = state.get("task_queue", [])
     phase = state.get("workflow_phase", "INIT")
@@ -108,11 +121,16 @@ def supervisor(state: DesignState) -> Dict[str, Any]:
                 "dispatched_tasks": dispatched_tasks,
             }
 
+    # Phase transition logic (only if no tasks are todo or running)
     phases = ["INIT", "ANALYSIS", "ARCHITECTURE", "MODELING", "INTERFACE", "READINESS", "DELIVERY", "DONE"]
     try:
         current_idx = phases.index(phase)
         if current_idx < len(phases) - 1:
-            return {"next": "supervisor_advance", "workflow_phase": phases[current_idx + 1]}
+            next_phase = phases[current_idx + 1]
+            # Advance phase
+            return {"next": "supervisor_advance", "workflow_phase": next_phase}
+        
+        # If we are in DONE phase or no more phases
         return {"next": "END"}
     except ValueError:
         return {"next": "END"}
@@ -139,79 +157,22 @@ def create_worker_node(agent_type: str):
         if current_task_id and not state.get("current_task_id"):
             state["current_task_id"] = current_task_id
 
-        if agent_type == "architecture-mapping":
-            result = await run_architecture_mapping_node(
+        # =================================================================
+        # Dynamic subagent execution (configuration-driven)
+        # =================================================================
+        result = await run_dynamic_subagent(
+            capability=agent_type,
+            state=state,
+            base_dir=BASE_DIR,
+            generate_with_llm_fn=generate_with_llm,
+            execute_tool_fn=execute_tool,
+            update_task_status_fn=_update_task_status,
+        )
+        return result
 
-                state,
-                base_dir=BASE_DIR,
-                generate_with_llm_fn=generate_with_llm,
-                execute_tool_fn=execute_tool,
-                update_task_status_fn=_update_task_status,
-            )
-        if agent_type == "data-design":
-            return await run_data_design_node(
-                state,
-                base_dir=BASE_DIR,
-                generate_with_llm_fn=generate_with_llm,
-                execute_tool_fn=execute_tool,
-                update_task_status_fn=_update_task_status,
-            )
-        if agent_type == "api-design":
-            return await run_api_design_node(
-                state,
-                base_dir=BASE_DIR,
-                generate_with_llm_fn=generate_with_llm,
-                execute_tool_fn=execute_tool,
-                update_task_status_fn=_update_task_status,
-            )
-        if agent_type == "config-design":
-            return await run_config_design_node(
-                state,
-                base_dir=BASE_DIR,
-                generate_with_llm_fn=generate_with_llm,
-                execute_tool_fn=execute_tool,
-                update_task_status_fn=_update_task_status,
-            )
-        if agent_type == "flow-design":
-            return await run_flow_design_node(
-                state,
-                base_dir=BASE_DIR,
-                generate_with_llm_fn=generate_with_llm,
-                execute_tool_fn=execute_tool,
-                update_task_status_fn=_update_task_status,
-            )
-        if agent_type == "integration-design":
-            return await run_integration_design_node(
-                state,
-                base_dir=BASE_DIR,
-                generate_with_llm_fn=generate_with_llm,
-                execute_tool_fn=execute_tool,
-                update_task_status_fn=_update_task_status,
-            )
-        if agent_type == "ddd-structure":
-            return await run_ddd_structure_node(
-                state,
-                base_dir=BASE_DIR,
-                generate_with_llm_fn=generate_with_llm,
-                execute_tool_fn=execute_tool,
-                update_task_status_fn=_update_task_status,
-            )
-        if agent_type == "ops-readiness":
-            return await run_ops_readiness_node(
-                state,
-                base_dir=BASE_DIR,
-                generate_with_llm_fn=generate_with_llm,
-                execute_tool_fn=execute_tool,
-                update_task_status_fn=_update_task_status,
-            )
-        if agent_type == "test-design":
-            return await run_test_design_node(
-                state,
-                base_dir=BASE_DIR,
-                generate_with_llm_fn=generate_with_llm,
-                execute_tool_fn=execute_tool,
-                update_task_status_fn=_update_task_status,
-            )
+        # NOTE: The following fallback code is kept for reference only.
+        # All agents now use dynamic subagent execution.
+        # If you need to add a special agent, add it to _HARDCODED_AGENTS set.
 
         project_id = state["project_id"]
         version = state["version"]
@@ -292,9 +253,20 @@ def _update_tasks_by_id(queue: List[Task], task_ids: List[str], status: str) -> 
 
 
 def _dependencies_met(task: Task, queue: List[Task]) -> bool:
+    """Check if all dependencies of a task are satisfied.
+    
+    Implements weak dependency semantics:
+    - Dependencies are only added for agents that were selected by planner
+    - If a dependency task doesn't exist in queue, it means that agent was skipped
+    - Only check status for dependencies that actually exist in the queue
+    """
     for dep_id in task.get("dependencies", []):
         dep_task = next((queued_task for queued_task in queue if queued_task["id"] == dep_id), None)
-        if not dep_task or dep_task["status"] != "success":
+        # Weak dependency: if task not in queue, it was skipped by planner - ignore
+        if dep_task is None:
+            continue
+        # Strong dependency: task exists but not yet completed
+        if dep_task["status"] != "success":
             return False
     return True
 
@@ -309,6 +281,15 @@ def _resolve_parallel_limit(state: DesignState) -> int:
 
 
 def _build_task_queue(active_agents: set[str]) -> List[Task]:
+    """Build task queue with cross-agent memory dependencies.
+    
+    Dependency graph (cross-agent memory):
+    - api-design reads: data-design.schema.sql, ddd-structure.ddd-structure.md
+    - integration-design reads: api-design.api-*.yaml
+    - ops-readiness reads: config-design.config-catalog.yaml
+    - test-design reads: flow-design.sequence/state-*.md (existing)
+    - ddd-structure reads: data-design.schema.sql (existing)
+    """
     tasks: List[Task] = [
         {"id": "0", "agent_type": "planner", "status": "success", "dependencies": [], "priority": 100}
     ]
@@ -319,16 +300,44 @@ def _build_task_queue(active_agents: set[str]) -> List[Task]:
             return True
         return False
 
+    # Phase 1: Architecture foundation
     add_task_if_active("1", "architecture-mapping", 90, ["0"])
-    add_task_if_active("2", "integration-design", 85, ["1"])
+    
+    # Phase 2: Parallel design work (all depend on architecture)
     has_data = add_task_if_active("3", "data-design", 80, ["1"])
-    add_task_if_active("4", "ddd-structure", 75, ["3" if has_data else "1"])
-    add_task_if_active("5", "api-design", 70, ["1"])
     add_task_if_active("6", "config-design", 65, ["1"])
     add_task_if_active("7", "flow-design", 60, ["1"])
-    add_task_if_active("8", "test-design", 50, ["7" if "flow-design" in active_agents else "1"])
-    add_task_if_active("9", "ops-readiness", 45, ["1"])
+    
+    # Phase 3: Domain modeling (depends on data design for schema context)
+    has_ddd = add_task_if_active("4", "ddd-structure", 75, ["3" if has_data else "1"])
+    
+    # Phase 4: API design (cross-agent memory: reads data schema + domain model)
+    api_deps = ["1"]
+    if has_data:
+        api_deps.append("3")  # Read schema.sql for DTO alignment
+    if has_ddd:
+        api_deps.append("4")  # Read ddd-structure.md for entity mapping
+    has_api = add_task_if_active("5", "api-design", 70, api_deps)
+    
+    # Phase 5: Integration design (cross-agent memory: reads API contracts)
+    integ_deps = ["1"]
+    if has_api:
+        integ_deps.append("5")  # Read api-*.yaml for contract consistency
+    add_task_if_active("2", "integration-design", 85, integ_deps)
+    
+    # Phase 6: Test design (cross-agent memory: reads flow diagrams)
+    test_deps = ["1"]
+    if "flow-design" in active_agents:
+        test_deps.append("7")  # Read sequence/state diagrams
+    add_task_if_active("8", "test-design", 50, test_deps)
+    
+    # Phase 7: Ops readiness (cross-agent memory: reads config catalog)
+    ops_deps = ["1"]
+    if "config-design" in active_agents:
+        ops_deps.append("6")  # Read config-catalog.yaml for monitoring context
+    add_task_if_active("9", "ops-readiness", 45, ops_deps)
 
+    # Phase 8: Assembly and validation
     current_ids = [task["id"] for task in tasks if task["id"] != "0"]
     tasks.append({"id": "10", "agent_type": "design-assembler", "status": "todo", "dependencies": current_ids, "priority": 20})
     tasks.append({"id": "11", "agent_type": "validator", "status": "todo", "dependencies": ["10"], "priority": 10})

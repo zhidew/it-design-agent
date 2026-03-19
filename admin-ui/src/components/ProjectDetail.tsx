@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api } from '../api';
-import { ArrowLeft, Play, RefreshCw, Activity, Check, X, Upload, FileText, Database, Layers, Book, List, Trash2 } from 'lucide-react';
+import { ArrowLeft, Play, RefreshCw, Activity, Check, X, Upload, FileText, Database, Layers, Book, List, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { TaskKanban } from './TaskKanban';
@@ -178,6 +178,10 @@ export function ProjectDetail() {
   const [workflowState, setWorkflowState] = useState<WorkflowState | null>(null);
   const [runEvents, setRunEvents] = useState<OrchestratorEvent[]>([]);
   const [versionStateMap, setVersionStateMap] = useState<Record<string, VersionStateSummary>>({});
+
+  const [page, setPage] = useState(1);
+  const [totalVersions, setTotalVersions] = useState(0);
+  const [pageSize, setPageSize] = useState(5);
 
   const [isVersionsLoading, setIsVersionsLoading] = useState(false);
   const [isArtifactsLoading, setIsArtifactsLoading] = useState(false);
@@ -493,15 +497,20 @@ export function ProjectDetail() {
     }
   };
 
-  const loadVersions = async () => {
+  const loadVersions = async (targetPage: number = page, targetPageSize: number = pageSize) => {
     if (!id) return;
     setIsVersionsLoading(true);
     try {
-      const res = await api.getProjectVersions(id);
-      setVersions(res);
-      if (res.length > 0) {
+      const res = await api.getProjectVersions(id, targetPage, targetPageSize);
+      const versionIds = res.versions.map((v: any) => v.version_id);
+      setVersions(versionIds);
+      setTotalVersions(res.total);
+      setPage(res.page);
+      setPageSize(res.page_size);
+
+      if (versionIds.length > 0) {
         const settled = await Promise.allSettled(
-          res.map(async (version) => {
+          versionIds.map(async (version: string) => {
             const state = await api.getProjectState(id, version) as WorkflowState;
             return [version, {
               run_status: state.run_status,
@@ -522,8 +531,10 @@ export function ProjectDetail() {
       } else {
         setVersionStateMap({});
       }
-      if (res.length > 0 && !selectedVersion) {
-        handleSelectVersion(res[0]);
+      
+      // Auto-select first version only on first load if none selected
+      if (versionIds.length > 0 && !selectedVersion && targetPage === 1) {
+        handleSelectVersion(versionIds[0]);
       }
     } catch {
       setUiError(t('common.loadError'));
@@ -678,6 +689,10 @@ export function ProjectDetail() {
     } finally {
       setDeletingVersion(null);
     }
+  };
+
+  const handleSelectFile = (filename: string) => {
+    setSelectedFile((prev) => (prev === filename ? null : filename));
   };
 
   const loadArtifacts = async (version: string) => {
@@ -846,9 +861,12 @@ export function ProjectDetail() {
       return;
     }
 
+    // Default selection disabled to hide preview by default
+    /*
     if (!selectedFile || !filteredArtifacts.includes(selectedFile)) {
       setSelectedFile(filteredArtifacts[0]);
     }
+    */
   }, [filteredArtifacts, selectedFile]);
 
   const renderUploadBtn = (type: InputFile['type'], label: string, icon: React.ReactNode, required: boolean = false) => {
@@ -1057,6 +1075,50 @@ export function ProjectDetail() {
                 })()
               ))}
             </div>
+
+            {totalVersions > 0 && (
+              <div className="flex flex-col gap-4 pt-4 border-t border-gray-50">
+                <div className="flex items-center justify-between px-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Size:</span>
+                    <select 
+                      value={pageSize}
+                      onChange={(e) => {
+                        const newSize = parseInt(e.target.value);
+                        setPageSize(newSize);
+                        void loadVersions(1, newSize);
+                      }}
+                      className="bg-transparent text-[10px] font-bold text-gray-600 outline-none cursor-pointer hover:text-indigo-600 transition-colors"
+                    >
+                      <option value={5}>5</option>
+                      <option value={10}>10</option>
+                      <option value={20}>20</option>
+                      <option value={50}>50</option>
+                    </select>
+                  </div>
+                  <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                    {page} / {Math.ceil(totalVersions / pageSize)}
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between gap-2 px-2">
+                  <button
+                    onClick={() => loadVersions(page - 1, pageSize)}
+                    disabled={page <= 1 || isVersionsLoading}
+                    className="flex-1 py-2 rounded-xl border border-gray-100 bg-white text-gray-500 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed transition-all flex items-center justify-center"
+                  >
+                    <ChevronLeft size={14} />
+                  </button>
+                  <button
+                    onClick={() => loadVersions(page + 1, pageSize)}
+                    disabled={page >= Math.ceil(totalVersions / pageSize) || isVersionsLoading}
+                    className="flex-1 py-2 rounded-xl border border-gray-100 bg-white text-gray-500 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed transition-all flex items-center justify-center"
+                  >
+                    <ChevronRight size={14} />
+                  </button>
+                </div>
+              </div>
+            )}
           </section>
         </aside>
 
@@ -1178,18 +1240,15 @@ export function ProjectDetail() {
                 )}
               </div>
 
-              {pendingInterrupt && (
-                <div className="rounded-2xl border border-amber-200 bg-white/80 px-4 py-3 space-y-2">
-                  <div className="text-[10px] font-black uppercase tracking-widest text-amber-700">Interrupt</div>
-                  <div className="text-xs font-medium text-amber-950 space-y-1">
-                    <div>node_id: {pendingInterrupt.node_id}</div>
-                    {pendingInterrupt.interrupt_id && <div>interrupt_id: {pendingInterrupt.interrupt_id}</div>}
-                  </div>
-                  {pendingInterrupt.context && Object.keys(pendingInterrupt.context).length > 0 && (
-                    <pre className="whitespace-pre-wrap text-xs font-medium text-amber-950 overflow-x-auto">
-                      {JSON.stringify(pendingInterrupt.context, null, 2)}
-                    </pre>
-                  )}
+              {/* Hidden: Technical interrupt details (node_id, interrupt_id, raw context) not shown to end users */}
+
+              {/* Show why this clarification is needed */}
+              {pendingInterrupt?.context?.why_needed && (
+                <div className="rounded-2xl border border-amber-200 bg-white/60 px-4 py-3">
+                  <p className="text-xs text-amber-800">
+                    <span className="font-bold">Why this matters: </span>
+                    {String(pendingInterrupt.context.why_needed)}
+                  </p>
                 </div>
               )}
 
@@ -1280,17 +1339,6 @@ export function ProjectDetail() {
           )}
 
           <section className="space-y-6">
-            <div className="flex items-center gap-3 px-2">
-              <h2 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
-                {selectedNode === 'planner' 
-                  ? t('projectDetail.inputMaterials') 
-                  : isValidatorNode 
-                    ? t('projectDetail.scanReport')
-                    : t('projectDetail.designArtifacts')}
-              </h2>
-              <div className="h-px flex-1 bg-gray-100" />
-            </div>
-
             {reasoningLogs.length > 0 && (
               <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-6 space-y-4">
                 <div className="flex items-center gap-3">
@@ -1317,12 +1365,23 @@ export function ProjectDetail() {
                 </div>
               </div>
             )}
+
+            <div className="flex items-center gap-3 px-2">
+              <h2 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                {selectedNode === 'planner' 
+                  ? t('projectDetail.inputMaterials') 
+                  : isValidatorNode 
+                    ? t('projectDetail.scanReport')
+                    : t('projectDetail.designArtifacts')}
+              </h2>
+              <div className="h-px flex-1 bg-gray-100" />
+            </div>
             
             {!isValidatorNode && (
               <ArtifactViewer 
                 artifacts={artifacts}
                 selectedFile={selectedFile}
-                onSelectFile={setSelectedFile}
+                onSelectFile={handleSelectFile}
                 filteredArtifacts={filteredArtifacts}
                 t={t}
               />

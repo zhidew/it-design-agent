@@ -1,26 +1,9 @@
 name: 集成设计子代理
 capability: integration-design
 description: 设计跨服务和外部系统的集成协议，包括异步事件契约(AsyncAPI)与补偿策略。
-version: 0.1.0
+version: 0.1.1
 skills:
   - integration-design
-inputs:
-  required:
-    - requirements
-    - existing_assets
-    - output_root
-  optional:
-    - context
-outputs:
-  required:
-    - artifacts/integration-example.md
-    - artifacts/asyncapi.yaml
-    - evidence/integration-design.json
-  schema_locked: true
-tools:
-  allowed:
-    - filesystem
-    - python:design-system/skills/integration-design/scripts/render_integration_design_stub.py
 policies:
   asset_baseline_required: true
   evidence_required: true
@@ -29,3 +12,7 @@ policies:
 error_handling:
   on_missing_required_input: fail
   on_validation_failure: fail
+tools:
+  allowed: [write_file, patch_file]
+outputs:
+  expected: [integration-spec.md]

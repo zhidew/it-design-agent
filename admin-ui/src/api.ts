@@ -10,8 +10,8 @@ export const api = {
   getProjects: () => apiClient.get('/projects').then(res => res.data),
   createProject: (name: string, description?: string) => 
     apiClient.post('/projects', { name, description }).then(res => res.data),
-  getProjectVersions: (projectId: string) => 
-    apiClient.get(`/projects/${projectId}/versions`).then(res => res.data),
+  getProjectVersions: (projectId: string, page: number = 1, pageSize: number = 10) => 
+    apiClient.get(`/projects/${projectId}/versions`, { params: { page, page_size: pageSize } }).then(res => res.data),
   deleteProjectVersion: (projectId: string, version: string) =>
     apiClient.delete(`/projects/${projectId}/versions/${version}`).then(res => res.data),
   runOrchestrator: (projectId: string, version: string, requirementText: string) => 

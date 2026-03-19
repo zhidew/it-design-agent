@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File
 import shutil
 from typing import List
 from models.project import ProjectCreateRequest, ProjectResponse, VersionRunRequest, JobResponse, ResumeRequest, NodeRetryRequest
+from models.management import VersionListResponse
 import services.orchestrator_service as orch
 
 router = APIRouter(
@@ -40,10 +41,10 @@ async def create_project(req: ProjectCreateRequest):
     orch.create_project(project_id)
     return {"id": project_id, "name": req.name, "description": req.description}
 
-@router.get("/{project_id}/versions", response_model=List[str])
-async def get_project_versions(project_id: str):
-    versions = orch.list_versions(project_id)
-    return versions
+@router.get("/{project_id}/versions", response_model=VersionListResponse)
+async def get_project_versions(project_id: str, page: int = 1, page_size: int = 10):
+    versions_data = orch.list_versions(project_id, page, page_size)
+    return versions_data
 
 @router.delete("/{project_id}/versions/{version}")
 async def delete_project_version(project_id: str, version: str):

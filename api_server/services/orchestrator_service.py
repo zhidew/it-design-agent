@@ -14,10 +14,11 @@ from graphs.builder import CHECKPOINT_DB_PATH, CHECKPOINTS_DIR, create_design_gr
 from graphs.state import merge_artifacts
 from models.events import dump_event, validate_event_payload
 from services.log_service import get_run_log, save_run_log
+from services.db_service import metadata_db
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 PROJECTS_DIR = BASE_DIR / "projects"
-AGENTS_DIR = BASE_DIR / "agents"
+SUBAGENTS_DIR = BASE_DIR / "subagents"
 SKILLS_DIR = BASE_DIR / "skills"
 
 RUN_STATUS_QUEUED = "queued"
@@ -54,12 +55,19 @@ async def _graph_for_run():
         from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
         async with AsyncSqliteSaver.from_conn_string(str(CHECKPOINT_DB_PATH)) as checkpointer:
-            yield create_design_graph(checkpointer=checkpointer)
-            return
-    except Exception:
-        from langgraph.checkpoint.memory import MemorySaver
-
-        yield create_design_graph(checkpointer=MemorySaver())
+            graph = create_design_graph(checkpointer=checkpointer)
+            try:
+                yield graph
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                raise
+    except Exception as e:
+        if "generator didn't stop" in str(e):
+            pass
+        else:
+            from langgraph.checkpoint.memory import MemorySaver
+            yield create_design_graph(checkpointer=MemorySaver())
 
 
 def _now_iso() -> str:
@@ -71,7 +79,13 @@ def _thread_id(project_id: str, version: str) -> str:
 
 
 def _graph_config(project_id: str, version: str, run_id: str | None = None) -> dict:
-    config = {"configurable": {"thread_id": _thread_id(project_id, version), "version": version}}
+    config = {
+        "configurable": {
+            "thread_id": _thread_id(project_id, version), 
+            "version": version
+        },
+        "recursion_limit": 100,
+    }
     if run_id:
         config["configurable"]["run_id"] = run_id
     return config
@@ -106,6 +120,10 @@ def _set_runtime_state(
 ):
     thread_id = _thread_id(project_id, version)
     previous = runtime_registry.get(thread_id, {})
+    
+    # Also update persistent metadata DB
+    metadata_db.upsert_version(project_id, version, previous.get("requirement", ""), run_status)
+
     runtime_registry[thread_id] = {
         **previous,
         "project_id": project_id,
@@ -129,15 +147,11 @@ def _has_active_runtime_task(thread_id: str) -> bool:
 
 
 def _launch_runtime_task(thread_id: str, coro):
-    # SMARTER CONCURRENCY: If there's an active task, check its status.
-    # If it's already running, don't kill it unless we absolutely must (e.g. state was reset).
-    # This avoids "generator didn't stop after athrow()" by not interrupting LangGraph's internal parallel nodes.
+    # Ensure any previous task for this thread is stopped first
     existing_task = runtime_tasks.get(thread_id)
     if existing_task and not existing_task.done():
-        print(f"[DEBUG] An active task already exists for thread {thread_id}. Reusing existing execution flow.")
-        # We wrap the new coroutine to ensure it's closed/disposed if not used
-        coro.close() 
-        return existing_task
+        print(f"[DEBUG] Cancelling existing task for thread {thread_id}")
+        existing_task.cancel()
 
     task = asyncio.create_task(coro)
     runtime_tasks[thread_id] = task
@@ -1194,20 +1208,31 @@ def unsubscribe_job_events(job_id: str, queue: asyncio.Queue):
 
 
 def list_projects():
-    if not PROJECTS_DIR.exists():
-        return []
-    return [{"id": d.name, "name": d.name} for d in PROJECTS_DIR.iterdir() if d.is_dir()]
+    # Sync from disk to DB for projects that might have been created manually
+    if PROJECTS_DIR.exists():
+        for d in PROJECTS_DIR.iterdir():
+            if d.is_dir() and not d.name.startswith("."):
+                metadata_db.upsert_project(d.name, d.name)
+    
+    return metadata_db.list_projects()
 
 
-def create_project(project_id: str):
+def create_project(project_id: str, name: Optional[str] = None, description: Optional[str] = None):
     (PROJECTS_DIR / project_id).mkdir(parents=True, exist_ok=True)
+    metadata_db.upsert_project(project_id, name or project_id, description)
 
 
-def list_versions(project_id: str):
+def list_versions(project_id: str, page: int = 1, page_size: int = 10):
+    # Sync versions from disk to DB if they don't exist
     proj_dir = PROJECTS_DIR / project_id
-    if not proj_dir.exists():
-        return []
-    return sorted([d.name for d in proj_dir.iterdir() if d.is_dir()], reverse=True)
+    if proj_dir.exists():
+        for d in proj_dir.iterdir():
+            if d.is_dir():
+                # We only sync if not in DB to avoid overwriting with generic data
+                if not metadata_db.get_version(project_id, d.name):
+                    metadata_db.upsert_version(project_id, d.name, "", "unknown")
+    
+    return metadata_db.list_versions(project_id, page, page_size)
 
 
 def _delete_checkpoint_state(project_id: str, version: str):
@@ -1240,6 +1265,7 @@ def delete_version(project_id: str, version: str) -> bool:
     runtime_registry.pop(thread_id, None)
     runtime_tasks.pop(thread_id, None)
     _delete_checkpoint_state(project_id, version)
+    metadata_db.delete_version(project_id, version)
     shutil.rmtree(project_version_dir, ignore_errors=True)
     return True
 
@@ -1253,10 +1279,10 @@ def get_version_logs(project_id: str, version: str) -> list:
 
 
 def list_agents():
-    if not AGENTS_DIR.exists():
+    if not SUBAGENTS_DIR.exists():
         return []
     agents = []
-    for item in AGENTS_DIR.glob("*.agent.yaml"):
+    for item in SUBAGENTS_DIR.glob("*.agent.yaml"):
         try:
             with open(item, "r", encoding="utf-8") as f:
                 config = yaml.safe_load(f)
@@ -1276,13 +1302,13 @@ def list_agents():
 
 
 def get_agent(agent_id: str):
-    config_file = AGENTS_DIR / f"{agent_id}.agent.yaml"
+    config_file = SUBAGENTS_DIR / f"{agent_id}.agent.yaml"
     if not config_file.exists():
         return None
     content = config_file.read_text(encoding="utf-8")
     config = yaml.safe_load(content)
     versions = []
-    versions_dir = AGENTS_DIR / ".versions" / agent_id
+    versions_dir = SUBAGENTS_DIR / ".versions" / agent_id
     if versions_dir.exists():
         v_files = sorted(list(versions_dir.glob("*.v*")), key=os.path.getmtime, reverse=True)
         for v_file in v_files:
@@ -1309,7 +1335,7 @@ def get_agent(agent_id: str):
 
 
 def update_agent(agent_id: str, new_config_yaml: str):
-    config_file = AGENTS_DIR / f"{agent_id}.agent.yaml"
+    config_file = SUBAGENTS_DIR / f"{agent_id}.agent.yaml"
     if not config_file.exists():
         return False
     try:
@@ -1317,7 +1343,7 @@ def update_agent(agent_id: str, new_config_yaml: str):
     except Exception:
         return False
     old_content = config_file.read_text(encoding="utf-8")
-    versions_dir = AGENTS_DIR / ".versions" / agent_id
+    versions_dir = SUBAGENTS_DIR / ".versions" / agent_id
     versions_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
     v_count = len(list(versions_dir.glob("*.v*"))) + 1

@@ -125,8 +125,23 @@ class AgentFullConfig:
         return result
     
     def has_tool_permission(self, tool_name: str) -> bool:
-        """Check if the tool is allowed for this agent."""
-        return tool_name in self.tools_allowed or "*" in self.tools_allowed
+        """Check if the tool is allowed for this agent.
+        
+        Default read tools are always allowed:
+        - list_files, extract_structure, grep_search, read_file_chunk, extract_lookup_values
+        """
+        DEFAULT_READ_TOOLS = {
+            "list_files", 
+            "extract_structure", 
+            "grep_search", 
+            "read_file_chunk", 
+            "extract_lookup_values"
+        }
+        return (
+            tool_name in self.tools_allowed or 
+            "*" in self.tools_allowed or
+            tool_name in DEFAULT_READ_TOOLS
+        )
 
 
 class AgentRegistry:
@@ -160,7 +175,7 @@ class AgentRegistry:
         Initialize the registry.
         
         Args:
-            base_dir: Base directory containing agents/ and skills/ directories
+            base_dir: Base directory containing subagents/ and skills/ directories
         """
         # Prevent re-initialization
         if hasattr(self, '_initialized') and self._initialized:
@@ -197,7 +212,7 @@ class AgentRegistry:
         Call this at application startup.
         
         Args:
-            base_dir: Base directory containing agents/ and skills/
+            base_dir: Base directory containing subagents/ and skills/
             
         Returns:
             The initialized registry instance
@@ -233,7 +248,7 @@ class AgentRegistry:
         Call this at application startup in async context.
         
         Args:
-            base_dir: Base directory containing agents/ and skills/
+            base_dir: Base directory containing subagents/ and skills/
             
         Returns:
             The initialized registry instance
@@ -253,14 +268,14 @@ class AgentRegistry:
             cls._instance = None
     
     def _load_all_manifests(self) -> None:
-        """Load all agent manifests from agents/ directory."""
-        agents_dir = self._base_dir / "agents"
+        """Load all agent manifests from subagents/ directory."""
+        agents_dir = self._base_dir / "subagents"
         skills_dir = self._base_dir / "skills"
         
         self._load_errors = []
         
         if not agents_dir.exists():
-            self._load_errors.append(f"Agents directory not found: {agents_dir}")
+            self._load_errors.append(f"Subagents directory not found: {agents_dir}")
             return
         
         for agent_file in agents_dir.glob("*.agent.yaml"):
@@ -454,7 +469,10 @@ class AgentRegistry:
             workflow_steps=workflow_steps,
             prompt_instructions=prompt_instructions,
             templates=templates,
-            metadata=agent_data.get('metadata', {}),
+            metadata={
+                **agent_data.get('metadata', {}),
+                "expected_outputs": manifest.expected_outputs
+            },
         )
         
         # Cache and return
