@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { memo, useMemo } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -32,11 +32,11 @@ const ALL_STAGES = [
   { id: 'ARCHITECTURE', agents: ['architecture-mapping', 'integration-design'] },
   { id: 'MODELING', agents: ['data-design', 'ddd-structure'] },
   { id: 'INTERFACE', agents: ['flow-design', 'api-design', 'config-design'] },
-  { id: 'READINESS', agents: ['test-design', 'ops-readiness'] },
+  { id: 'QUALITY', agents: ['test-design', 'ops-design'] },
   { id: 'DELIVERY', agents: ['design-assembler', 'validator'] },
 ];
 
-export const TaskKanban: React.FC<TaskKanbanProps> = ({
+const TaskKanbanComponent: React.FC<TaskKanbanProps> = ({
   tasks,
   nodeStatuses,
   selectedNode,
@@ -117,50 +117,50 @@ export const TaskKanban: React.FC<TaskKanbanProps> = ({
           style={{ gridTemplateColumns }}
         >
           {activeStages.map((stage, idx) => {
-              const isActive = currentPhase === stage.id;
-              const stageAgentsInQueue = stage.agents.filter((agentId) => tasks.some((task) => task.agent_type === agentId));
-              const statuses = stageAgentsInQueue.map((agentId) => nodeStatuses[agentId] || 'idle');
-              const isAllSuccess = statuses.length > 0 && statuses.every((status) => status === 'success');
-              const hasFailed = statuses.some((status) => status === 'failed');
-              const hasWaitingHuman = statuses.some((status) => status === 'waiting_human');
-              const hasSuccess = statuses.some((status) => status === 'success');
+            const isActive = currentPhase === stage.id;
+            const stageAgentsInQueue = stage.agents.filter((agentId) => tasks.some((task) => task.agent_type === agentId));
+            const statuses = stageAgentsInQueue.map((agentId) => nodeStatuses[agentId] || 'idle');
+            const isAllSuccess = statuses.length > 0 && statuses.every((status) => status === 'success');
+            const hasFailed = statuses.some((status) => status === 'failed');
+            const hasWaitingHuman = statuses.some((status) => status === 'waiting_human');
+            const hasSuccess = statuses.some((status) => status === 'success');
 
-              let circleColor = 'bg-white border-gray-200 text-gray-300';
-              let textColor = 'text-gray-400';
-              let icon = <span className="text-[10px] font-black">{idx + 1}</span>;
+            let circleColor = 'bg-white border-gray-200 text-gray-300';
+            let textColor = 'text-gray-400';
+            let icon = <span className="text-[10px] font-black">{idx + 1}</span>;
 
-              if (isAllSuccess) {
-                circleColor = 'bg-emerald-500 border-emerald-500 text-white';
-                textColor = 'text-emerald-600';
-                icon = <CheckCircle size={14} />;
-              } else if (hasFailed && hasSuccess) {
-                circleColor = 'bg-amber-500 border-amber-500 text-white';
-                textColor = 'text-amber-600';
-                icon = <AlertTriangle size={14} />;
-              } else if (hasWaitingHuman) {
-                circleColor = 'bg-amber-400 border-amber-400 text-white';
-                textColor = 'text-amber-600';
-                icon = <AlertTriangle size={14} />;
-              } else if (hasFailed) {
-                circleColor = 'bg-rose-500 border-rose-500 text-white';
-                textColor = 'text-rose-600';
-                icon = <XCircle size={14} />;
-              } else if (isActive) {
-                circleColor = 'bg-white border-indigo-600 text-indigo-600 shadow-md scale-110';
-                textColor = 'text-indigo-600';
-                icon = <Activity size={14} className="animate-pulse" />;
-              }
+            if (isAllSuccess) {
+              circleColor = 'bg-emerald-500 border-emerald-500 text-white';
+              textColor = 'text-emerald-600';
+              icon = <CheckCircle size={14} />;
+            } else if (hasFailed && hasSuccess) {
+              circleColor = 'bg-amber-500 border-amber-500 text-white';
+              textColor = 'text-amber-600';
+              icon = <AlertTriangle size={14} />;
+            } else if (hasWaitingHuman) {
+              circleColor = 'bg-amber-400 border-amber-400 text-white';
+              textColor = 'text-amber-600';
+              icon = <AlertTriangle size={14} />;
+            } else if (hasFailed) {
+              circleColor = 'bg-rose-500 border-rose-500 text-white';
+              textColor = 'text-rose-600';
+              icon = <XCircle size={14} />;
+            } else if (isActive) {
+              circleColor = 'bg-white border-indigo-600 text-indigo-600 shadow-md scale-110';
+              textColor = 'text-indigo-600';
+              icon = <Activity size={14} className="animate-pulse" />;
+            }
 
-              return (
-                <div key={stage.id} className="flex min-w-0 flex-col items-center gap-3 transition-all duration-500">
-                  <div className={`flex h-7 w-7 items-center justify-center rounded-full border-2 transition-all duration-500 ${circleColor}`}>
-                    {icon}
-                  </div>
-                  <span className={`text-[9px] font-black uppercase tracking-tight text-center leading-tight transition-colors break-words ${textColor}`}>
-                    {t(`stages.${stage.id}`)}
-                  </span>
+            return (
+              <div key={stage.id} className="flex min-w-0 flex-col items-center gap-3 transition-all duration-500">
+                <div className={`flex h-7 w-7 items-center justify-center rounded-full border-2 transition-all duration-500 ${circleColor}`}>
+                  {icon}
                 </div>
-              );
+                <span className={`text-[9px] font-black uppercase tracking-tight text-center leading-tight transition-colors break-words ${textColor}`}>
+                  {t(`stages.${stage.id}`)}
+                </span>
+              </div>
+            );
           })}
         </div>
       </div>
@@ -176,11 +176,10 @@ export const TaskKanban: React.FC<TaskKanbanProps> = ({
           return (
             <div
               key={stage.id}
-              className={`flex min-w-0 flex-col gap-2 p-2.5 rounded-2xl border transition-all duration-500 min-h-[110px] ${
-                isActive
-                  ? 'bg-white border-indigo-100 shadow-xl shadow-indigo-50/50 ring-1 ring-indigo-50'
-                  : 'bg-white/60 border-gray-100 shadow-sm opacity-90'
-              }`}
+              className={`flex min-w-0 flex-col gap-2 p-2.5 rounded-2xl border transition-all duration-500 min-h-[110px] ${isActive
+                ? 'bg-white border-indigo-100 shadow-xl shadow-indigo-50/50 ring-1 ring-indigo-50'
+                : 'bg-white/60 border-gray-100 shadow-sm opacity-90'
+                }`}
             >
               <div className="flex flex-col gap-1.5">
                 {stageAgentsInQueue.map((agentId) => renderNode(agentId, t(`agents.${agentId}`), isActive))}
@@ -197,3 +196,22 @@ export const TaskKanban: React.FC<TaskKanbanProps> = ({
     </div>
   );
 };
+
+function buildTasksSignature(tasks: Task[]): string {
+  return tasks.map((task) => `${task.agent_type}:${task.status}:${task.priority}`).join('|');
+}
+
+function buildNodeStatusesSignature(nodeStatuses: Record<string, NodeStatus>): string {
+  return Object.entries(nodeStatuses)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}:${value}`)
+    .join('|');
+}
+
+export const TaskKanban = memo(TaskKanbanComponent, (prev, next) => (
+  prev.selectedNode === next.selectedNode &&
+  prev.currentPhase === next.currentPhase &&
+  prev.t === next.t &&
+  buildTasksSignature(prev.tasks) === buildTasksSignature(next.tasks) &&
+  buildNodeStatusesSignature(prev.nodeStatuses) === buildNodeStatusesSignature(next.nodeStatuses)
+));

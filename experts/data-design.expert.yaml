@@ -1,0 +1,32 @@
+﻿name: Data Design Expert
+capability: data-design
+description: Generate project-level data and migration design artifacts based on requirements baseline and existing DDL assets, including table structures (SQL), entity relationships (ER diagrams), and data migration/rollback plans.
+version: 0.1.1
+skills:
+  - data-design
+scheduling:
+  priority: 80
+  dependencies:
+    - architecture-mapping
+tools:
+  allowed:
+    - clone_repository
+    - query_database
+    - query_knowledge_base
+    - write_file
+    - patch_file
+outputs:
+  expected:
+    - schema.sql
+    - er.md
+    - migration-plan.md
+policies:
+  asset_baseline_required: true
+  evidence_required: true
+  output_must_be_structured: true
+  manual_override_forbidden: true
+  descriptions_prefer_chinese: true
+error_handling:
+  on_missing_required_input: fail
+  on_validation_failure: fail
+  on_partial_generation: emit_evidence_and_fail

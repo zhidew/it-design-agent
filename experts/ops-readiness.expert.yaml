@@ -1,0 +1,22 @@
+﻿name: Ops Design Expert
+capability: ops-design
+description: Design SLOs, alerting rules, monitoring metrics, and deployment/rollback runbooks.
+version: 0.1.1
+skills:
+  - ops-design
+scheduling:
+  priority: 45
+  dependencies:
+    - config-design
+policies:
+  asset_baseline_required: true
+  evidence_required: true
+  output_must_be_structured: true
+  descriptions_prefer_chinese: true
+error_handling:
+  on_missing_required_input: fail
+  on_validation_failure: fail
+tools:
+  allowed: [clone_repository, query_database, query_knowledge_base, write_file, patch_file]
+outputs:
+  expected: [ops-checklist.md, runbook.md]

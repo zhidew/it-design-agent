@@ -9,6 +9,12 @@ class ProjectResponse(BaseModel):
     id: str
     name: str
     description: Optional[str] = None
+    total_versions: int = 0
+    enabled_experts_count: int = 0
+    running_versions: int = 0
+    has_versions: bool = False
+    is_active: bool = False
+    status: str = 'empty'
 
 class VersionRunRequest(BaseModel):
     requirement_text: str

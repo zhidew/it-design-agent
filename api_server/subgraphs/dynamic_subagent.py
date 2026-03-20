@@ -22,7 +22,7 @@ import os
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
-from scripts.llm_generator import SubagentOutput
+from services.llm_service import SubagentOutput
 
 if TYPE_CHECKING:
     from registry.agent_registry import AgentFullConfig
@@ -703,7 +703,8 @@ def _load_templates_for_capability(
 
 # Cross-agent memory: upstream artifact mapping
 # Defines which upstream artifacts each agent should read for cross-agent memory
-UPSTREAM_ARTIFACT_MAPPING: Dict[str, Dict[str, List[str]]] = {
+# Note: This is a fallback when registry is not available; prefer registry configuration
+UPSTREAM_ARTIFACT_MAPPING_FALLBACK: Dict[str, Dict[str, List[str]]] = {
     "api-design": {
         "data-design": ["schema.sql", "er.md"],
         "ddd-structure": ["ddd-structure.md", "class-domain.md"],
@@ -716,7 +717,7 @@ UPSTREAM_ARTIFACT_MAPPING: Dict[str, Dict[str, List[str]]] = {
         "flow-design": ["sequence-example.md", "state-example.md"],
         "api-design": ["api-internal.yaml"],
     },
-    "ops-readiness": {
+    "ops-design": {
         "config-design": ["config-catalog.yaml"],
         "flow-design": ["sequence-example.md"],
     },
@@ -725,18 +726,45 @@ UPSTREAM_ARTIFACT_MAPPING: Dict[str, Dict[str, List[str]]] = {
     },
 }
 
-# All expected artifacts by agent (for discovery)
-EXPECTED_ARTIFACTS_BY_AGENT: Dict[str, List[str]] = {
-    "data-design": ["schema.sql", "er.md", "migration-plan.md"],
-    "ddd-structure": ["ddd-structure.md", "class-domain.md", "context-map.md"],
-    "api-design": ["api-internal.yaml", "api-public.yaml", "errors-rfc9457.json"],
-    "flow-design": ["sequence-example.md", "state-example.md"],
-    "config-design": ["config-catalog.yaml", "config-matrix.md"],
-    "test-design": ["test-inputs.md", "coverage-map.json"],
-    "ops-readiness": ["slo.yaml", "observability-spec.yaml", "deployment-runbook.md"],
-    "integration-design": ["integration-externalsystem.md", "asyncapi.yaml"],
-    "architecture-mapping": ["architecture.md", "module-map.json"],
-}
+
+def _get_expected_artifacts_by_agent() -> Dict[str, List[str]]:
+    """Get expected artifacts mapping from registry. Returns {capability: [expected_outputs]}."""
+    try:
+        from registry.expert_registry import ExpertRegistry
+        registry = ExpertRegistry.get_instance()
+        return {
+            manifest.capability: manifest.expected_outputs
+            for manifest in registry.get_all_manifests()
+            if manifest.expected_outputs
+        }
+    except RuntimeError:
+        return {}
+
+
+def _get_upstream_artifact_mapping() -> Dict[str, Dict[str, List[str]]]:
+    """Get upstream artifact mapping from registry config.
+    
+    Reads from expert.yaml `upstream_artifacts` field if defined.
+    Falls back to UPSTREAM_ARTIFACT_MAPPING_FALLBACK.
+    """
+    try:
+        from registry.expert_registry import ExpertRegistry
+        registry = ExpertRegistry.get_instance()
+        result: Dict[str, Dict[str, List[str]]] = {}
+        for manifest in registry.get_all_manifests():
+            if manifest.expert_yaml_path:
+                import yaml
+                try:
+                    with open(manifest.expert_yaml_path, "r", encoding="utf-8") as f:
+                        data = yaml.safe_load(f) or {}
+                    upstream = data.get("upstream_artifacts", {})
+                    if upstream:
+                        result[manifest.capability] = upstream
+                except Exception:
+                    pass
+        return result if result else UPSTREAM_ARTIFACT_MAPPING_FALLBACK
+    except RuntimeError:
+        return UPSTREAM_ARTIFACT_MAPPING_FALLBACK
 
 
 def _discover_upstream_artifacts(capability: str, artifacts_dir: Path) -> Dict[str, List[str]]:
@@ -753,7 +781,7 @@ def _discover_upstream_artifacts(capability: str, artifacts_dir: Path) -> Dict[s
     Returns:
         Dict mapping upstream agent -> list of existing artifact files
     """
-    upstream_map = UPSTREAM_ARTIFACT_MAPPING.get(capability, {})
+    upstream_map = _get_upstream_artifact_mapping().get(capability, {})
     if not upstream_map:
         return {}
     
@@ -776,17 +804,8 @@ def _discover_upstream_artifacts(capability: str, artifacts_dir: Path) -> Dict[s
 
 
 def _default_expected_files(capability: str) -> List[str]:
-    """Get default expected files for a capability."""
-    # This could be moved to agent.yaml in the future
-    defaults = {
-        "data-design": ["schema.sql", "er.md", "migration-plan.md"],
-        "api-design": ["api-internal.yaml", "errors-rfc9457.json"],
-        "config-design": ["config-spec.yaml"],
-        "ddd-structure": ["domain-model.md", "bounded-contexts.md"],
-        "flow-design": ["sequence-diagrams.md", "flow-descriptions.md"],
-        "test-design": ["test-plan.md", "test-cases.yaml"],
-        "ops-readiness": ["ops-checklist.md", "runbook.md"],
-        "integration-design": ["integration-spec.md"],
-        "architecture-mapping": ["architecture.md", "component-diagram.md"],
-    }
-    return defaults.get(capability, ["output.md"])
+    """Get default expected files for a capability from registry."""
+    artifacts_map = _get_expected_artifacts_by_agent()
+    if capability in artifacts_map:
+        return artifacts_map[capability]
+    return ["output.md"]

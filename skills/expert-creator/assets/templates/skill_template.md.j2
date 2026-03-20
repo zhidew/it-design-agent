@@ -1,0 +1,63 @@
+---
+name: {{ skill_name }}
+description: "{{ skill_description }}"
+keywords: {{ keywords | default([]) }}
+---
+
+# {{ skill_name }}
+
+## Purpose
+
+{{ purpose }}
+
+## Capabilities
+
+{% for capability in capabilities %}
+{{ loop.index }}. **{{ capability.name }}**: {{ capability.description }}
+{% endfor %}
+
+## ReAct Workflow
+
+{% for phase in phases %}
+### Phase {{ loop.index }}: {{ phase.name }}
+
+#### Think {{ loop.index }}: {{ phase.think }}
+
+{{ phase.thought_content }}
+
+#### Act {{ loop.index }}: {{ phase.act }}
+
+```yaml
+Action: {{ phase.action_name }}
+Input:
+{% for key, value in phase.action_input.items() %}
+  {{ key }}: {{ value }}
+{% endfor %}
+```
+
+#### Observe {{ loop.index }}: {{ phase.observe }}
+
+{{ phase.observation_content }}
+
+{% endfor %}
+
+## Output Artifacts
+
+| File | Description |
+|------|-------------|
+{% for output in outputs %}
+| {{ output.file }} | {{ output.description }} |
+{% endfor %}
+
+## Tools Used
+
+This expert uses the following tools:
+{% for tool in tools %}
+- {{ tool }}
+{% endfor %}
+
+## Notes
+
+- This expert follows the standard ReAct workflow pattern
+- All outputs are validated for completeness
+- Templates are used to ensure consistent structure

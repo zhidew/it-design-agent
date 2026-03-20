@@ -1,0 +1,29 @@
+﻿name: DDD Structure Expert
+capability: ddd-structure
+description: Perform domain modeling and structural design, producing class diagrams, DDD structure descriptions, and context mappings.
+version: 0.1.1
+skills:
+  - ddd-structure
+scheduling:
+  priority: 75
+  dependencies:
+    - data-design
+tools:
+  allowed:
+    - clone_repository
+    - query_database
+    - query_knowledge_base
+    - write_file
+    - patch_file
+outputs:
+  expected:
+    - domain-model.md
+    - bounded-contexts.md
+policies:
+  asset_baseline_required: true
+  evidence_required: true
+  output_must_be_structured: true
+  descriptions_prefer_chinese: true
+error_handling:
+  on_missing_required_input: fail
+  on_validation_failure: fail

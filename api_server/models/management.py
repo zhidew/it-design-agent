@@ -37,6 +37,50 @@ class TemplateMetadata(BaseModel):
     versions: List[TemplateVersion] = []
 
 
+class ExpertVersion(BaseModel):
+    version_id: str
+    timestamp: str
+    content: str
+    author: Optional[str] = "System"
+
+
+class ExpertMetadata(BaseModel):
+    id: str
+    name: str
+    description: Optional[str] = None
+    expertise: List[str] = []
+    profile_path: str
+    skill_path: Optional[str] = None
+    current_profile: str
+    versions: List[ExpertVersion] = []
+
+
+class ExpertCenterFileNode(BaseModel):
+    id: str
+    name: str
+    path: str
+    node_type: str
+    expert_id: Optional[str] = None
+    children: List["ExpertCenterFileNode"] = []
+
+
+class FileContentVersion(BaseModel):
+    version_id: str
+    timestamp: str
+    content: str
+    author: Optional[str] = "System"
+
+
+class FileContentResponse(BaseModel):
+    path: str
+    name: str
+    content: str
+    versions: List[FileContentVersion] = []
+
+
+ExpertCenterFileNode.model_rebuild()
+
+
 class VersionMetadata(BaseModel):
     version_id: str
     project_id: str

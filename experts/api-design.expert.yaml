@@ -1,0 +1,32 @@
+name: API Design Expert
+capability: api-design
+description: Generate project-level API design artifacts based on requirements baseline, existing interface assets, and constraint policies. Automatically determine audience (internal/external/both) and produce corresponding API designs with validation evidence.
+version: 0.1.2
+skills:
+  - api-design
+scheduling:
+  priority: 70
+  dependencies:
+    - data-design
+    - ddd-structure
+tools:
+  allowed:
+    - clone_repository
+    - query_database
+    - query_knowledge_base
+    - write_file
+    - patch_file
+outputs:
+  expected:
+    - api-internal.yaml
+    - errors-rfc9457.json
+policies:
+  asset_baseline_required: true
+  evidence_required: true
+  output_must_be_structured: true
+  manual_override_forbidden: true
+  descriptions_prefer_chinese: true
+error_handling:
+  on_missing_required_input: fail
+  on_validation_failure: fail
+  on_partial_generation: emit_evidence_and_fail

@@ -1,7 +1,8 @@
 import { Routes, Route, Link } from 'react-router-dom';
 import { ProjectList } from './components/ProjectList';
 import { ProjectDetail } from './components/ProjectDetail';
-import { Management } from './components/Management';
+import { ExpertCenter } from './components/Management';
+import { ProjectConfig } from './components/ProjectConfig';
 
 function App() {
   return (
@@ -9,7 +10,9 @@ function App() {
       <Routes>
         <Route path="/" element={<ProjectList />} />
         <Route path="/projects/:id" element={<ProjectDetail />} />
-        <Route path="/management" element={<Management />} />
+        <Route path="/projects/:id/config" element={<ProjectConfig />} />
+        <Route path="/management" element={<ExpertCenter />} />
+        <Route path="/expert-center" element={<ExpertCenter />} />
         <Route
           path="*"
           element={

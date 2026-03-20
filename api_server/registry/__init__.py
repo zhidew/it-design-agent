@@ -1,10 +1,5 @@
 """
-Registry Module - Agent and Skill Configuration Management
-
-This module provides:
-- AgentRegistry: Pre-loaded agent metadata for planner discovery
-- SkillParser: Parse SKILL.md files into structured data
-- Tool permission validation
+Registry Module - Expert and Skill Configuration Management.
 """
 
 from .errors import (
@@ -14,7 +9,10 @@ from .errors import (
     ToolNotAllowedError,
 )
 from .skill_parser import SkillParser
-from .agent_registry import (
+from .expert_registry import (
+    ExpertProfile,
+    ExpertConfig,
+    ExpertRegistry,
     AgentManifest,
     AgentFullConfig,
     AgentRegistry,
@@ -29,6 +27,9 @@ __all__ = [
     # Parser
     "SkillParser",
     # Registry
+    "ExpertProfile",
+    "ExpertConfig",
+    "ExpertRegistry",
     "AgentManifest",
     "AgentFullConfig",
     "AgentRegistry",

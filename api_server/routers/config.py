@@ -1,0 +1,119 @@
+from fastapi import APIRouter, HTTPException
+
+from models.project_config import DatabaseConfig, ExpertConfig, KnowledgeBaseConfig, LlmConfig, RepositoryConfig
+from services.db_service import metadata_db
+
+
+router = APIRouter(
+    prefix="/api/v1/projects/{project_id}/config",
+    tags=["Project Config"],
+)
+
+system_router = APIRouter(
+    prefix="/api/v1/system",
+    tags=["System Config"],
+)
+
+
+def _require_project(project_id: str):
+    project = metadata_db.get_project(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found.")
+    return project
+
+
+@router.post("/repositories")
+async def create_repository_config(project_id: str, req: RepositoryConfig):
+    _require_project(project_id)
+    payload = req.model_dump() if hasattr(req, "model_dump") else req.dict()
+    return metadata_db.upsert_repository(project_id, payload)
+
+
+@router.get("/repositories")
+async def list_repository_configs(project_id: str):
+    _require_project(project_id)
+    return {"repositories": metadata_db.list_repositories(project_id)}
+
+
+@router.delete("/repositories/{repo_id}")
+async def delete_repository_config(project_id: str, repo_id: str):
+    _require_project(project_id)
+    deleted = metadata_db.delete_repository(project_id, repo_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Repository config '{repo_id}' not found.")
+    return {"success": True, "project_id": project_id, "repo_id": repo_id}
+
+
+@router.post("/databases")
+async def create_database_config(project_id: str, req: DatabaseConfig):
+    _require_project(project_id)
+    payload = req.model_dump() if hasattr(req, "model_dump") else req.dict()
+    return metadata_db.upsert_database(project_id, payload)
+
+
+@router.get("/databases")
+async def list_database_configs(project_id: str):
+    _require_project(project_id)
+    return {"databases": metadata_db.list_databases(project_id)}
+
+
+@router.delete("/databases/{db_id}")
+async def delete_database_config(project_id: str, db_id: str):
+    _require_project(project_id)
+    deleted = metadata_db.delete_database(project_id, db_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Database config '{db_id}' not found.")
+    return {"success": True, "project_id": project_id, "db_id": db_id}
+
+
+@router.post("/knowledge-bases")
+async def create_knowledge_base_config(project_id: str, req: KnowledgeBaseConfig):
+    _require_project(project_id)
+    payload = req.model_dump() if hasattr(req, "model_dump") else req.dict()
+    return metadata_db.upsert_knowledge_base(project_id, payload)
+
+
+@router.get("/knowledge-bases")
+async def list_knowledge_base_configs(project_id: str):
+    _require_project(project_id)
+    return {"knowledge_bases": metadata_db.list_knowledge_bases(project_id)}
+
+
+@router.delete("/knowledge-bases/{kb_id}")
+async def delete_knowledge_base_config(project_id: str, kb_id: str):
+    _require_project(project_id)
+    deleted = metadata_db.delete_knowledge_base(project_id, kb_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Knowledge base config '{kb_id}' not found.")
+    return {"success": True, "project_id": project_id, "kb_id": kb_id}
+
+
+@router.post("/experts")
+async def save_project_expert_config(project_id: str, req: ExpertConfig):
+    _require_project(project_id)
+    payload = req.model_dump() if hasattr(req, "model_dump") else req.dict()
+    return metadata_db.upsert_project_expert(project_id, payload)
+
+
+@router.get("/experts")
+async def list_project_expert_configs(project_id: str):
+    _require_project(project_id)
+    return {"experts": metadata_db.list_project_experts(project_id)}
+
+
+@router.get("/llm")
+async def get_project_llm_config(project_id: str):
+    _require_project(project_id)
+    return metadata_db.get_project_llm_config(project_id, include_secrets=False, merge_defaults=True)
+
+
+@router.post("/llm")
+async def save_project_llm_config(project_id: str, req: LlmConfig):
+    _require_project(project_id)
+    payload = req.model_dump() if hasattr(req, "model_dump") else req.dict()
+    return metadata_db.upsert_project_llm_config(project_id, payload)
+
+
+@system_router.get("/llm-config")
+async def get_system_llm_defaults():
+    return metadata_db.get_system_llm_defaults(include_secrets=False)
