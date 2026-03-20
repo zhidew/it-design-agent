@@ -16,6 +16,10 @@
     "copied": "Copied!",
     "approve": "Approve",
     "revise": "Revise",
+    "delete": "Delete",
+    "create": "Create",
+    "newFile": "New File",
+    "fileName": "File Name",
     "systemRegistry": "System Registry",
     "newProject": "New Project",
     "loadingProjects": "Loading Projects...",
@@ -23,16 +27,25 @@
     "loadError": "Load Error"
   },
   "projectList": {
-    "title": "Design Workspaces",
-    "subtitle": "Automated Design System",
+    "title": "AI Design Workspaces",
+    "subtitle": "IT Design Agent",
     "createTitle": "Create New Project Container",
     "projectName": "Project Name",
     "projectNamePlaceholder": "Enter project name (e.g. Loyalty System)",
     "createBtn": "Create Project",
     "creating": "Creating...",
     "noProjects": "No design workspaces found. Create your first one above.",
+    "searchPlaceholder": "Search projects by name or ID...",
+    "noSearchResults": "No projects match your search",
     "ready": "Ready",
-    "workspaceActive": "Workspace Active"
+    "running": "Running",
+    "empty": "Empty",
+    "hasVersions": "{{count}} versions",
+    "hasExpertsEnabled": "{{count}} experts enabled",
+    "emptyWorkspace": "Empty workspace",
+    "workspaceActive": "Workspace Active",
+    "totalVersions": "Total Versions",
+    "runningVersions": "Running"
   },
   "projectDetail": {
     "workspace": "Project Workspace",
@@ -89,43 +102,261 @@
     "subagentReasoning": "Subagent Reasoning",
     "orchestrationLogs": "Orchestration Logs",
     "noRelevantContext": "No relevant context for the current selection.",
-    "noArtifactsProduced": "No design assets have been produced for this node yet."
+    "noArtifactsProduced": "No design assets have been produced for this node yet.",
+    "resources": {
+      "title": "Project Resources",
+      "repositories": "Code Repos",
+      "databases": "Databases",
+      "knowledgeBases": "Knowledge Bases",
+      "experts": "Enabled Experts",
+      "emptyRepositories": "No code repositories configured yet.",
+      "emptyDatabases": "No databases configured yet.",
+      "emptyKnowledgeBases": "No knowledge bases configured yet.",
+      "emptyExperts": "No enabled experts configured yet.",
+      "more": "+{{count}} more"
+    }
+  },
+  "projectConfig": {
+    "eyebrow": "Project Resources",
+    "title": "Project Resource Config",
+    "description": "Configure repository, database, knowledge base, and expert access for this project.",
+    "tabs": {
+      "repositories": "Repo Config",
+      "databases": "DB Config",
+      "knowledge": "KB Config",
+      "experts": "Expert Config"
+    },
+    "actions": {
+      "addRepo": "Add Repo",
+      "addDatabase": "Add DB",
+      "addKnowledgeBase": "Add KB",
+      "delete": "Delete"
+    },
+    "placeholders": {
+      "description": "Description"
+    },
+    "messages": {
+      "loadError": "Failed to load project resource config.",
+      "saveRepositoriesSuccess": "Repository configs saved.",
+      "saveRepositoriesError": "Failed to save repository configs.",
+      "saveDatabasesSuccess": "Database configs saved.",
+      "saveDatabasesError": "Failed to save database configs.",
+      "saveKnowledgeBasesSuccess": "Knowledge base configs saved.",
+      "saveKnowledgeBasesError": "Failed to save knowledge base configs.",
+      "saveExpertsSuccess": "Expert configs saved.",
+      "saveExpertsError": "Failed to save expert configs.",
+      "deleteRepositoriesSuccess": "Repository config deleted.",
+      "deleteRepositoriesError": "Failed to delete repository config.",
+      "deleteDatabasesSuccess": "Database config deleted.",
+      "deleteDatabasesError": "Failed to delete database config.",
+      "deleteKnowledgeBasesSuccess": "Knowledge base config deleted.",
+      "deleteKnowledgeBasesError": "Failed to delete knowledge base config."
+    },
+    "repositories": {
+      "eyebrow": "Code Repository Access",
+      "title": "Repository Config",
+      "itemLabel": "Repository #{{index}}",
+      "empty": "No repositories configured yet. Click Add Repo to start.",
+      "placeholders": {
+        "id": "Config ID, for example frontend",
+        "name": "Display name",
+        "url": "Repository URL",
+        "branch": "Branch, default main",
+        "username": "Username, optional",
+        "token": "Access token, optional",
+        "tokenExisting": "Token already saved. Leave blank to keep current value.",
+        "localPath": "Local path, optional"
+      }
+    },
+    "databases": {
+      "eyebrow": "Database Metadata Access",
+      "title": "Database Config",
+      "itemLabel": "Database #{{index}}",
+      "empty": "No databases configured yet. Click Add DB to start.",
+      "placeholders": {
+        "id": "Config ID, for example primary",
+        "name": "Display name",
+        "port": "Port",
+        "host": "Host or SQLite base path",
+        "database": "Database name or SQLite file name",
+        "username": "Username, optional",
+        "password": "Password, optional",
+        "passwordExisting": "Password already saved. Leave blank to keep current value.",
+        "schemaFilter": "Schema filters, split by line or comma"
+      }
+    },
+    "knowledge": {
+      "eyebrow": "Knowledge Search Sources",
+      "title": "Knowledge Base Config",
+      "itemLabel": "Knowledge Base #{{index}}",
+      "empty": "No knowledge bases configured yet. Click Add KB to start.",
+      "types": {
+        "local": "Local",
+        "remote": "Remote"
+      },
+      "placeholders": {
+        "id": "Config ID, for example main",
+        "name": "Display name",
+        "path": "Local directory path",
+        "indexUrl": "Remote index URL",
+        "includes": "Included files, split by line or comma"
+      }
+    },
+    "experts": {
+      "eyebrow": "Expert Availability",
+      "title": "Expert Enablement",
+      "description": "Control which experts the planner can schedule for this project. Core experts may still be enforced when required by the workflow.",
+      "itemLabel": "Expert #{{index}}",
+      "empty": "No experts available yet.",
+      "enabled": "Enabled",
+      "disabled": "Disabled",
+      "placeholders": {
+        "description": "Optional project-specific note for this expert"
+      }
+    }
   },
   "management": {
     "admin": "System Administration",
-    "title": "Registry & Assets",
-    "subAgents": "Sub-Agents Registry",
-    "skills": "Skills & Logic",
+    "title": "Expert Center",
+    "subAgents": "Experts",
+    "skills": "Skill Files",
     "quickSelect": "Quick Select",
     "configurationPath": "Configuration Path",
     "inspectRestore": "Inspect & Restore",
     "noHistory": "No history yet",
     "saveChanges": "Save Changes",
+    "saveSuccess": "File saved successfully.",
     "versionHistory": "Version History",
     "loadError": "Failed to load management data.",
     "templateUpdateSuccess": "Template updated and versioned successfully.",
     "versionRestored": "Version content loaded into editor. Click Save to commit.",
-    "inspectRestoreBtn": "Inspect & Restore"
+    "inspectRestoreBtn": "Inspect & Restore",
+    "expertTree": "Expert Tree",
+    "expertOverview": "Expert Overview",
+    "profilePath": "Profile Path",
+    "selectExpert": "Select an expert",
+    "selectExpertHint": "Choose an expert to load its profile, skill guide, templates, references, and scripts in one workspace.",
+    "fileEditor": "File Editor",
+    "selectFileHint": "Select a file from the current workbench section to start editing.",
+    "workbenchTitle": "Expert Workbench",
+    "workbenchExperts": "Experts",
+    "workbenchSections": "Content Sections",
+    "profileTab": "Profile",
+    "profileTabHint": "Edit the expert profile and operational metadata.",
+    "skillTab": "Skill Guide",
+    "skillTabHint": "Work on the main SKILL.md guidance and workflow instructions.",
+    "templatesTab": "Templates",
+    "templatesTabHint": "Manage reusable asset templates and contract skeletons.",
+    "referencesTab": "References",
+    "referencesTabHint": "Review supporting references and source material.",
+    "scriptsTab": "Scripts",
+    "scriptsTabHint": "Maintain implementation scripts and automation helpers.",
+    "toolsTab": "Tools",
+    "toolsTabHint": "View system built-in tools and their implementations.",
+    "emptySection": "No files are available in this section for the selected expert.",
+    "kindYaml": "YAML",
+    "kindJson": "JSON",
+    "kindMarkdown": "Markdown",
+    "kindScript": "Script",
+    "kindText": "Text",
+    "createExpert": "Create Expert",
+    "deleteExpert": "Delete Expert",
+    "newExpertId": "New expert ID",
+    "newExpertName": "New expert name",
+    "newExpertDescription": "New expert description",
+    "createExpertSuccess": "Expert created successfully.",
+    "createExpertError": "Failed to create expert.",
+    "deleteExpertSuccess": "Expert deleted successfully.",
+    "deleteExpertError": "Failed to delete expert.",
+    "systemTools": "System Tools",
+    "deleteExpertConfirm": "Delete expert {{name}} and its fixed file structure?",
+    "searchExperts": "Search experts by name, ID, or expertise",
+    "noExpertSearchResults": "No matching experts found.",
+    "generationSteps": {
+      "0": "Analyzing professional domain...",
+      "1": "Defining expert identity (Kebab-case)...",
+      "2": "Architecting reasoning chain (ReAct)...",
+      "3": "Building core asset templates and scripts...",
+      "4": "Packaging expert profile..."
+    },
+    "aiBuilding": "AI Building in Progress...",
+    "buildingHint": "Generating structured assets using deep simulation LLM engine",
+    "newExpertDomain": "Add New Expert Domain",
+    "newExpertDomainHint": "Enter the expert's professional focus, and the system will build complete intelligent logic and workflows.",
+    "expertNameLabel": "Expert Name",
+    "expertDescLabel": "Description (Optional)",
+    "back": "Back",
+    "startGeneration": "Start AI Generation"
+  },
+  "experts": {
+    "expert-creator": {
+      "name": "Expert Creator",
+      "description": "Intelligently generate new design experts with complete profiles, skill guides, templates, and scripts."
+    },
+    "api-design": {
+      "name": "API Design Expert",
+      "description": "Design public and internal API contracts, request-response models, and error specifications."
+    },
+    "architecture-mapping": {
+      "name": "Architecture Mapping Expert",
+      "description": "Map module boundaries, dependencies, and architecture-level collaboration paths."
+    },
+    "config-design": {
+      "name": "Configuration Design Expert",
+      "description": "Define runtime configuration, switches, environment strategy, and config governance."
+    },
+    "data-design": {
+      "name": "Data Design Expert",
+      "description": "Model schemas, migration plans, and persistence structures for business data."
+    },
+    "ddd-structure": {
+      "name": "DDD Structure Expert",
+      "description": "Shape domain boundaries, aggregates, and domain model structures."
+    },
+    "design-assembler": {
+      "name": "Design Assembly Expert",
+      "description": "Assemble outputs from all experts into a cohesive design package."
+    },
+    "flow-design": {
+      "name": "Flow Design Expert",
+      "description": "Design sequence flows, state transitions, and key business interactions."
+    },
+    "integration-design": {
+      "name": "Integration Design Expert",
+      "description": "Plan service integration contracts, async events, and coordination mechanisms."
+    },
+    "ops-design": {
+      "name": "Ops Design Expert",
+      "description": "Prepare SLOs, observability, alerting, and operational readiness assets."
+    },
+    "test-design": {
+      "name": "Test Design Expert",
+      "description": "Define test coverage strategy, case inputs, and quality verification structure."
+    },
+    "validator": {
+      "name": "Validation Expert",
+      "description": "Validate design consistency, completeness, and quality gate outcomes."
+    }
   },
   "stages": {
     "ANALYSIS": "Requirement Analysis",
     "ARCHITECTURE": "Structural Design",
     "MODELING": "Domain & Data Modeling",
     "INTERFACE": "Flow & Integration",
-    "READINESS": "Production Readiness",
-    "DELIVERY": "Review & Assembly"
+    "QUALITY": "Test & Ops",
+    "DELIVERY": "Assembly & Review"
   },
   "agents": {
     "planner": "Mission Decomposition",
-    "architecture-mapping": "Module Boundary Analysis",
-    "integration-design": "External Integration",
-    "data-design": "Persistence Schema",
-    "ddd-structure": "Domain Model Design",
-    "flow-design": "Process Logic Flow",
-    "api-design": "API Interface Design",
-    "config-design": "Runtime Configuration",
-    "test-design": "Quality Verification",
-    "ops-readiness": "Observability Spec",
+    "architecture-mapping": "Module Arch Analysis",
+    "integration-design": "Integration Design",
+    "data-design": "Data Design",
+    "ddd-structure": "DDD Design",
+    "flow-design": "Flow Design",
+    "api-design": "API Design",
+    "config-design": "Config Design",
+    "test-design": "Test Design",
+    "ops-design": "Ops Design",
     "design-assembler": "Document Assembly",
     "validator": "Design Quality Gate"
   }

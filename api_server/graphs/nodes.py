@@ -7,10 +7,11 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List
 
-from scripts.llm_generator import SubagentOutput, generate_with_llm
+from services.llm_service import SubagentOutput, generate_with_llm
 
 from .state import DesignState, Task
 from .tools import execute_tool
+from services.db_service import metadata_db
 from subgraphs.dynamic_subagent import run_dynamic_subagent
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -19,8 +20,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 AGENT_ALIASES = {
     "architect-map": "architecture-mapping",
     "architecture-map": "architecture-mapping",
-    "readiness": "ops-readiness",
-    "ops": "ops-readiness",
+    "quality": "ops-design",
+    "ops": "ops-design",
     "tests": "test-design",
     "test": "test-design",
 }
@@ -49,7 +50,7 @@ def _get_supported_agent_ids() -> set:
             "api-design",
             "config-design",
             "test-design",
-            "ops-readiness",
+            "ops-design",
             "design-assembler",
             "validator",
         }
@@ -122,7 +123,7 @@ def supervisor(state: DesignState) -> Dict[str, Any]:
             }
 
     # Phase transition logic (only if no tasks are todo or running)
-    phases = ["INIT", "ANALYSIS", "ARCHITECTURE", "MODELING", "INTERFACE", "READINESS", "DELIVERY", "DONE"]
+    phases = ["INIT", "ANALYSIS", "ARCHITECTURE", "MODELING", "INTERFACE", "QUALITY", "DELIVERY", "DONE"]
     try:
         current_idx = phases.index(phase)
         if current_idx < len(phases) - 1:
@@ -160,85 +161,18 @@ def create_worker_node(agent_type: str):
         # =================================================================
         # Dynamic subagent execution (configuration-driven)
         # =================================================================
-        result = await run_dynamic_subagent(
-            capability=agent_type,
-            state=state,
-            base_dir=BASE_DIR,
-            generate_with_llm_fn=generate_with_llm,
-            execute_tool_fn=execute_tool,
-            update_task_status_fn=_update_task_status,
-        )
-        return result
-
-        # NOTE: The following fallback code is kept for reference only.
-        # All agents now use dynamic subagent execution.
-        # If you need to add a special agent, add it to _HARDCODED_AGENTS set.
-
-        project_id = state["project_id"]
-        version = state["version"]
-        project_path = BASE_DIR / "projects" / project_id / version
-        baseline_path = project_path / "baseline" / "requirements.json"
-        logs_dir = project_path / "logs"
-
-        baseline_path.parent.mkdir(parents=True, exist_ok=True)
-        logs_dir.mkdir(parents=True, exist_ok=True)
-
-        script_name_map = {
-            "api-design": "render_contract_stub.py",
-            "architecture-mapping": "render_architecture_mapping_stub.py",
-            "config-design": "render_config_design_stub.py",
-            "data-design": "render_data_stub.py",
-            "ddd-structure": "render_ddd_structure_stub.py",
-            "flow-design": "render_flow_design_stub.py",
-            "integration-design": "render_integration_design_stub.py",
-            "ops-readiness": "render_ops_readiness_stub.py",
-            "test-design": "render_test_design_stub.py",
-            "design-assembler": "render_design_assembler_stub.py",
-            "validator": "validate_artifacts.py",
-        }
-
-        script_name = script_name_map.get(agent_type)
-        if not script_name:
-            return {"history": [f"[ERROR] Unknown agent {agent_type}"]}
-
-        script_path = (
-            BASE_DIR / "scripts" / script_name
-            if agent_type == "validator"
-            else BASE_DIR / "skills" / agent_type / "scripts" / script_name
-        )
-        if not script_path.exists():
-            return {"history": [f"[ERROR] Script not found: {script_path}"]}
-
-        def run_sync_process():
-            if agent_type == "validator":
-                cmd = [sys.executable, str(script_path), "--project", str(project_path)]
-            else:
-                cmd = [sys.executable, str(script_path), str(baseline_path), str(project_path)]
-            return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
-
-        start_msg = f"[SYSTEM] Agent '{agent_type}' is now running..."
-        result = await asyncio.to_thread(run_sync_process)
-
-        stdout_clean = result.stdout.strip() if result.stdout else ""
-        stderr_clean = result.stderr.strip() if result.stderr else ""
-
-        if agent_type == "validator":
-            (logs_dir / "validator.log").write_text(f"{stdout_clean}\n{stderr_clean}", encoding="utf-8")
-
-        status = "success" if result.returncode == 0 else "failed"
-
-        history_updates = [start_msg, f"[{agent_type}] Completed with status: {status}"]
-        if stderr_clean:
-            history_updates.append(f"[{agent_type}] [ERROR] {stderr_clean}")
-        if status == "failed" and stdout_clean:
-            history_updates.append(f"[{agent_type}] [STDOUT] {stdout_clean}")
-
-        return {
-            "history": history_updates,
-            "task_queue": _update_task_status(state["task_queue"], agent_type, status),
-            "human_intervention_required": False,
-            "last_worker": agent_type,
-        }
+        try:
+            result = await run_dynamic_subagent(
+                capability=agent_type,
+                state=state,
+                base_dir=BASE_DIR,
+                generate_with_llm_fn=generate_with_llm,
+                execute_tool_fn=execute_tool,
+                update_task_status_fn=_update_task_status,
+            )
+            return result
+        except Exception as e:
+            return {"history": [f"[ERROR] Failed to run dynamic subagent {agent_type}: {e}"]}
 
     return worker_node
 
@@ -281,67 +215,194 @@ def _resolve_parallel_limit(state: DesignState) -> int:
 
 
 def _build_task_queue(active_agents: set[str]) -> List[Task]:
-    """Build task queue with cross-agent memory dependencies.
+    """Build task queue dynamically from expert configurations.
     
-    Dependency graph (cross-agent memory):
-    - api-design reads: data-design.schema.sql, ddd-structure.ddd-structure.md
-    - integration-design reads: api-design.api-*.yaml
-    - ops-readiness reads: config-design.config-catalog.yaml
-    - test-design reads: flow-design.sequence/state-*.md (existing)
-    - ddd-structure reads: data-design.schema.sql (existing)
+    This function now supports hot-pluggable experts by reading
+    dependencies and priority from expert YAML configurations.
+    
+    Dependency resolution:
+    - Each expert declares its dependencies in its YAML file
+    - Dependencies are resolved to task IDs at runtime
+    - Supports weak dependency semantics (missing deps are skipped)
+    
+    Built-in agents (validator, design-assembler) have special handling:
+    - design-assembler: depends on all active agents
+    - validator: depends on design-assembler
     """
     tasks: List[Task] = [
         {"id": "0", "agent_type": "planner", "status": "success", "dependencies": [], "priority": 100}
     ]
+    
+    # Build task ID mapping for dependency resolution
+    task_id_map: Dict[str, str] = {"planner": "0"}
+    task_counter = 1
+    
+    # Get expert configurations from registry
+    try:
+        from registry.expert_registry import ExpertRegistry
+        registry = ExpertRegistry.get_instance()
+        
+        # Sort active agents by priority (higher priority first)
+        expert_configs = []
+        for agent in active_agents:
+            if agent in {"validator", "design-assembler"}:
+                # Built-in agents handled separately
+                continue
+            manifest = registry.get_manifest(agent)
+            if manifest:
+                expert_configs.append((agent, manifest.priority, manifest.dependencies))
+            else:
+                # Expert not in registry, use defaults
+                expert_configs.append((agent, 50, []))
+        
+        # Sort by priority descending
+        expert_configs.sort(key=lambda x: x[1], reverse=True)
+        
+        # Create tasks for each expert
+        for agent, priority, deps in expert_configs:
+            task_id = str(task_counter)
+            task_counter += 1
+            
+            # Resolve dependencies to task IDs
+            resolved_deps = ["0"]  # Always depend on planner
+            for dep in deps:
+                if dep in task_id_map:
+                    resolved_deps.append(task_id_map[dep])
+            
+            tasks.append({
+                "id": task_id,
+                "agent_type": agent,
+                "status": "todo",
+                "dependencies": resolved_deps,
+                "priority": priority
+            })
+            task_id_map[agent] = task_id
+            
+    except RuntimeError:
+        # Fallback: registry not initialized, use default ordering
+        default_order = [
+            ("architecture-mapping", 90, []),
+            ("data-design", 80, ["architecture-mapping"]),
+            ("ddd-structure", 75, ["data-design"]),
+            ("api-design", 70, ["data-design", "ddd-structure"]),
+            ("config-design", 65, []),
+            ("flow-design", 60, []),
+            ("test-design", 50, ["flow-design"]),
+            ("ops-design", 45, ["config-design"]),
+            ("integration-design", 85, ["api-design"]),
+        ]
+        
+        for agent, priority, deps in default_order:
+            if agent in active_agents:
+                task_id = str(task_counter)
+                task_counter += 1
+                
+                resolved_deps = ["0"]
+                for dep in deps:
+                    if dep in task_id_map:
+                        resolved_deps.append(task_id_map[dep])
+                
+                tasks.append({
+                    "id": task_id,
+                    "agent_type": agent,
+                    "status": "todo",
+                    "dependencies": resolved_deps,
+                    "priority": priority
+                })
+                task_id_map[agent] = task_id
 
-    def add_task_if_active(task_id: str, agent: str, priority: int, deps: List[str]):
-        if agent in active_agents:
-            tasks.append({"id": task_id, "agent_type": agent, "status": "todo", "dependencies": deps, "priority": priority})
-            return True
-        return False
+    # Add design-assembler (depends on all other active agents)
+    if "design-assembler" in active_agents or len([t for t in tasks if t["id"] != "0"]) > 0:
+        current_ids = [task["id"] for task in tasks if task["id"] != "0"]
+        assembler_id = str(task_counter)
+        task_counter += 1
+        tasks.append({
+            "id": assembler_id,
+            "agent_type": "design-assembler",
+            "status": "todo",
+            "dependencies": current_ids,
+            "priority": 20
+        })
+        task_id_map["design-assembler"] = assembler_id
 
-    # Phase 1: Architecture foundation
-    add_task_if_active("1", "architecture-mapping", 90, ["0"])
-    
-    # Phase 2: Parallel design work (all depend on architecture)
-    has_data = add_task_if_active("3", "data-design", 80, ["1"])
-    add_task_if_active("6", "config-design", 65, ["1"])
-    add_task_if_active("7", "flow-design", 60, ["1"])
-    
-    # Phase 3: Domain modeling (depends on data design for schema context)
-    has_ddd = add_task_if_active("4", "ddd-structure", 75, ["3" if has_data else "1"])
-    
-    # Phase 4: API design (cross-agent memory: reads data schema + domain model)
-    api_deps = ["1"]
-    if has_data:
-        api_deps.append("3")  # Read schema.sql for DTO alignment
-    if has_ddd:
-        api_deps.append("4")  # Read ddd-structure.md for entity mapping
-    has_api = add_task_if_active("5", "api-design", 70, api_deps)
-    
-    # Phase 5: Integration design (cross-agent memory: reads API contracts)
-    integ_deps = ["1"]
-    if has_api:
-        integ_deps.append("5")  # Read api-*.yaml for contract consistency
-    add_task_if_active("2", "integration-design", 85, integ_deps)
-    
-    # Phase 6: Test design (cross-agent memory: reads flow diagrams)
-    test_deps = ["1"]
-    if "flow-design" in active_agents:
-        test_deps.append("7")  # Read sequence/state diagrams
-    add_task_if_active("8", "test-design", 50, test_deps)
-    
-    # Phase 7: Ops readiness (cross-agent memory: reads config catalog)
-    ops_deps = ["1"]
-    if "config-design" in active_agents:
-        ops_deps.append("6")  # Read config-catalog.yaml for monitoring context
-    add_task_if_active("9", "ops-readiness", 45, ops_deps)
+    # Add validator (depends on design-assembler)
+    if "validator" in active_agents:
+        assembler_task = next((t for t in tasks if t["agent_type"] == "design-assembler"), None)
+        validator_deps = [assembler_task["id"]] if assembler_task else []
+        tasks.append({
+            "id": str(task_counter),
+            "agent_type": "validator",
+            "status": "todo",
+            "dependencies": validator_deps,
+            "priority": 10
+        })
 
-    # Phase 8: Assembly and validation
-    current_ids = [task["id"] for task in tasks if task["id"] != "0"]
-    tasks.append({"id": "10", "agent_type": "design-assembler", "status": "todo", "dependencies": current_ids, "priority": 20})
-    tasks.append({"id": "11", "agent_type": "validator", "status": "todo", "dependencies": ["10"], "priority": 10})
     return tasks
+
+
+def _format_execution_topology(tasks: List[Task]) -> str:
+    """Format a readable execution plan from the resolved task queue."""
+    tasks_by_id: Dict[str, Task] = {task["id"]: task for task in tasks}
+    non_planner_tasks = [task for task in tasks if task.get("agent_type") != "planner"]
+
+    if not non_planner_tasks:
+        return ""
+
+    stage_cache: Dict[str, int] = {"0": 0}
+
+    def resolve_stage(task_id: str) -> int:
+        if task_id in stage_cache:
+            return stage_cache[task_id]
+        task = tasks_by_id[task_id]
+        dependency_ids = [
+            dep_id
+            for dep_id in task.get("dependencies", [])
+            if dep_id in tasks_by_id and tasks_by_id[dep_id].get("agent_type") != "planner"
+        ]
+        if not dependency_ids:
+            stage_cache[task_id] = 1
+        else:
+            stage_cache[task_id] = max(resolve_stage(dep_id) for dep_id in dependency_ids) + 1
+        return stage_cache[task_id]
+
+    stages: Dict[int, List[Task]] = {}
+    for task in non_planner_tasks:
+        stage = resolve_stage(task["id"])
+        stages.setdefault(stage, []).append(task)
+
+    lines = ["**Execution Topology:**", "- Stage 0: planner"]
+    for stage in sorted(stages):
+        stage_tasks = stages[stage]
+        mode = "parallel" if len(stage_tasks) > 1 else "sequential"
+        entries: List[str] = []
+        for task in stage_tasks:
+            dependency_names = [
+                tasks_by_id[dep_id]["agent_type"]
+                for dep_id in task.get("dependencies", [])
+                if dep_id in tasks_by_id and tasks_by_id[dep_id].get("agent_type") != "planner"
+            ]
+            if dependency_names:
+                entries.append(f"{task['agent_type']} (after: {', '.join(dependency_names)})")
+            else:
+                entries.append(str(task["agent_type"]))
+        lines.append(f"- Stage {stage} ({mode}): {' | '.join(entries)}")
+
+    dependency_lines: List[str] = []
+    for task in non_planner_tasks:
+        dependency_names = [
+            tasks_by_id[dep_id]["agent_type"]
+            for dep_id in task.get("dependencies", [])
+            if dep_id in tasks_by_id and tasks_by_id[dep_id].get("agent_type") != "planner"
+        ]
+        if dependency_names:
+            dependency_lines.append(f"- {task['agent_type']} <- {', '.join(dependency_names)}")
+
+    if dependency_lines:
+        lines.append("")
+        lines.append("**Dependency Graph:**")
+        lines.extend(dependency_lines)
+
+    return "\n".join(lines)
 
 
 def _normalize_active_agents(active_agents: set[str]) -> set[str]:
@@ -566,7 +627,7 @@ async def planner_node(state: DesignState) -> Dict[str, Any]:
 - api-design: REST/RPC interface contracts.
 - config-design: App parameters, lookup lists.
 - test-design: Test cases, coverage.
-- ops-readiness: Monitoring, deployment specs.
+- ops-design: Monitoring, deployment specs.
 - design-assembler: Assemble all design artifacts.
 - validator: Validate design outputs."""
 
@@ -640,13 +701,24 @@ Output JSON format:
         active_agents = {"architecture-mapping", "data-design", "api-design", "flow-design"}
 
     active_agents = _normalize_active_agents(active_agents)
-    active_agents.update({"architecture-mapping", "design-assembler", "validator"})
+    mandatory_agents = {"architecture-mapping", "design-assembler", "validator"}
+    active_agents.update(mandatory_agents)
+    enabled_experts = set(metadata_db.list_enabled_expert_ids(project_id))
+    if enabled_experts:
+        active_agents = {agent for agent in active_agents if agent in enabled_experts or agent in mandatory_agents}
     tasks = _build_task_queue(active_agents)
 
-    reasoning_content = (
-        f"### LLM Orchestration Reasoning\n\n{llm_decision.reasoning}\n\n"
-        f"**Selected Pipeline:** {', '.join(sorted(list(active_agents)))}"
-    )
+    execution_topology = _format_execution_topology(tasks)
+    reasoning_sections = [
+        "### LLM Orchestration Reasoning",
+        "",
+        llm_decision.reasoning,
+        "",
+        f"**Selected Pipeline:** {', '.join(sorted(list(active_agents)))}",
+    ]
+    if execution_topology:
+        reasoning_sections.extend(["", execution_topology])
+    reasoning_content = "\n".join(reasoning_sections)
     (project_path / "logs" / "planner-reasoning.md").write_text(reasoning_content, encoding="utf-8")
 
     baseline_payload = {

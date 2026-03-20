@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_BASE_URL = 'http://127.0.0.1:8000/api/v1';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api/v1';
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -47,4 +47,68 @@ export const api = {
   getVersionLogs: (projectId: string, version: string) => 
     apiClient.get(`/projects/${projectId}/versions/${version}/logs`).then(res => res.data),
   getJobStatusSseUrl: (jobId: string) => `${API_BASE_URL}/jobs/${jobId}/status`,
+  getRepositoryConfigs: (projectId: string) =>
+    apiClient.get(`/projects/${projectId}/config/repositories`).then(res => res.data),
+  saveRepositoryConfig: (projectId: string, payload: {
+    id: string;
+    name: string;
+    url: string;
+    branch?: string;
+    username?: string;
+    token?: string;
+    local_path?: string;
+    description?: string;
+    type?: string;
+  }) => apiClient.post(`/projects/${projectId}/config/repositories`, payload).then(res => res.data),
+  deleteRepositoryConfig: (projectId: string, repoId: string) =>
+    apiClient.delete(`/projects/${projectId}/config/repositories/${repoId}`).then(res => res.data),
+  getDatabaseConfigs: (projectId: string) =>
+    apiClient.get(`/projects/${projectId}/config/databases`).then(res => res.data),
+  saveDatabaseConfig: (projectId: string, payload: {
+    id: string;
+    name: string;
+    type: string;
+    host: string;
+    port: number;
+    database: string;
+    username?: string;
+    password?: string;
+    schema_filter?: string[];
+    description?: string;
+  }) => apiClient.post(`/projects/${projectId}/config/databases`, payload).then(res => res.data),
+  deleteDatabaseConfig: (projectId: string, dbId: string) =>
+    apiClient.delete(`/projects/${projectId}/config/databases/${dbId}`).then(res => res.data),
+  getKnowledgeBaseConfigs: (projectId: string) =>
+    apiClient.get(`/projects/${projectId}/config/knowledge-bases`).then(res => res.data),
+  saveKnowledgeBaseConfig: (projectId: string, payload: {
+    id: string;
+    name: string;
+    type: string;
+    path?: string;
+    index_url?: string;
+    includes?: string[];
+    description?: string;
+  }) => apiClient.post(`/projects/${projectId}/config/knowledge-bases`, payload).then(res => res.data),
+  deleteKnowledgeBaseConfig: (projectId: string, kbId: string) =>
+    apiClient.delete(`/projects/${projectId}/config/knowledge-bases/${kbId}`).then(res => res.data),
+  getExpertConfigs: (projectId: string) =>
+    apiClient.get(`/projects/${projectId}/config/experts`).then(res => res.data),
+  saveExpertConfig: (projectId: string, payload: {
+    id: string;
+    name: string;
+    enabled: boolean;
+    description?: string;
+  }) => apiClient.post(`/projects/${projectId}/config/experts`, payload).then(res => res.data),
+  getProjectLlmConfig: (projectId: string) =>
+    apiClient.get(`/projects/${projectId}/config/llm`).then(res => res.data),
+  saveProjectLlmConfig: (projectId: string, payload: {
+    llm_provider: string;
+    openai_api_key?: string;
+    openai_base_url?: string;
+    openai_model_name?: string;
+    gemini_api_key?: string;
+    gemini_model_name?: string;
+  }) => apiClient.post(`/projects/${projectId}/config/llm`, payload).then(res => res.data),
+  getSystemLlmDefaults: () =>
+    apiClient.get('/system/llm-config').then(res => res.data),
 };

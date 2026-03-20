@@ -1,0 +1,21 @@
+﻿name: Architecture Mapping Expert
+capability: architecture-mapping
+description: Analyze business requirements and existing system structure, identify module boundaries and establish dependency relationship mappings.
+version: 0.1.1
+skills:
+  - architecture-mapping
+scheduling:
+  priority: 90
+  dependencies: []
+policies:
+  asset_baseline_required: true
+  evidence_required: true
+  output_must_be_structured: true
+  descriptions_prefer_chinese: true
+error_handling:
+  on_missing_required_input: fail
+  on_validation_failure: fail
+tools:
+  allowed: [clone_repository, query_database, query_knowledge_base, write_file, patch_file]
+outputs:
+  expected: [architecture.md, component-diagram.md]

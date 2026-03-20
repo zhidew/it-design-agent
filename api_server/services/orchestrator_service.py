@@ -18,8 +18,10 @@ from services.db_service import metadata_db
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 PROJECTS_DIR = BASE_DIR / "projects"
-SUBAGENTS_DIR = BASE_DIR / "subagents"
+EXPERTS_DIR = BASE_DIR / "experts"
+LEGACY_SUBAGENTS_DIR = BASE_DIR / "subagents"
 SKILLS_DIR = BASE_DIR / "skills"
+EXPERT_CENTER_VERSIONS_DIR = BASE_DIR / ".expert-center-versions"
 
 RUN_STATUS_QUEUED = "queued"
 RUN_STATUS_RUNNING = "running"
@@ -211,6 +213,19 @@ def _check_success(project_root: Path, file_patterns: list[str]) -> bool:
     return False
 
 
+def _get_registry_expert_outputs() -> dict[str, list[str]]:
+    """Get expert outputs mapping from registry. Returns {capability: [expected_outputs]}."""
+    try:
+        from registry.expert_registry import ExpertRegistry
+        registry = ExpertRegistry.get_instance()
+        return {
+            manifest.capability: manifest.expected_outputs
+            for manifest in registry.get_all_manifests()
+        }
+    except RuntimeError:
+        return {}
+
+
 def _build_legacy_task_queue(project_id: str, version: str) -> list[dict]:
     project_root = PROJECTS_DIR / project_id / version
     logs_dir = project_root / "logs"
@@ -224,8 +239,14 @@ def _build_legacy_task_queue(project_id: str, version: str) -> list[dict]:
         except Exception:
             active_agents = set()
 
+    # Dynamic default from registry
     if not active_agents:
-        active_agents = {"planner", "architecture-mapping", "design-assembler", "validator"}
+        try:
+            from registry.expert_registry import ExpertRegistry
+            registry = ExpertRegistry.get_instance()
+            active_agents = {"planner"} | set(registry.get_capabilities())
+        except RuntimeError:
+            active_agents = {"planner", "architecture-mapping", "design-assembler", "validator"}
 
     validator_status = "todo"
     val_log_path = logs_dir / "validator.log"
@@ -233,20 +254,22 @@ def _build_legacy_task_queue(project_id: str, version: str) -> list[dict]:
         content = val_log_path.read_text(encoding="utf-8")
         validator_status = "success" if "[SUCCESS]" in content else "failed"
 
-    full_map = [
-        {"id": "0", "agent_type": "planner", "status": "success"},
-        {"id": "1", "agent_type": "architecture-mapping", "status": "success" if _check_success(project_root, ["architecture.md"]) else "todo"},
-        {"id": "2", "agent_type": "integration-design", "status": "success" if _check_success(project_root, ["integration-*", "asyncapi.yaml"]) else "todo"},
-        {"id": "3", "agent_type": "data-design", "status": "success" if _check_success(project_root, ["schema.sql", "er.md"]) else "todo"},
-        {"id": "4", "agent_type": "ddd-structure", "status": "success" if _check_success(project_root, ["ddd-structure.md"]) else "todo"},
-        {"id": "5", "agent_type": "api-design", "status": "success" if _check_success(project_root, ["api-internal.yaml", "api-public.yaml"]) else "todo"},
-        {"id": "6", "agent_type": "config-design", "status": "success" if _check_success(project_root, ["config-catalog.yaml"]) else "todo"},
-        {"id": "7", "agent_type": "flow-design", "status": "success" if _check_success(project_root, ["sequence-*", "state-*"]) else "todo"},
-        {"id": "8", "agent_type": "test-design", "status": "success" if _check_success(project_root, ["test-inputs.md", "coverage-map.json"]) else "todo"},
-        {"id": "9", "agent_type": "ops-readiness", "status": "success" if _check_success(project_root, ["slo.yaml", "observability-spec.yaml"]) else "todo"},
-        {"id": "10", "agent_type": "design-assembler", "status": "success" if _check_success(project_root, ["detailed-design.md"]) else "todo"},
-        {"id": "11", "agent_type": "validator", "status": validator_status},
-    ]
+    # Build task map dynamically from registry
+    expert_outputs = _get_registry_expert_outputs()
+    full_map = [{"id": "0", "agent_type": "planner", "status": "success"}]
+
+    task_id = 1
+    for capability in active_agents:
+        if capability == "planner":
+            continue
+        if capability == "validator":
+            full_map.append({"id": str(task_id), "agent_type": capability, "status": validator_status})
+        else:
+            outputs = expert_outputs.get(capability, [])
+            status = "success" if _check_success(project_root, outputs) else "todo"
+            full_map.append({"id": str(task_id), "agent_type": capability, "status": status})
+        task_id += 1
+
     return [task for task in full_map if task["agent_type"] in active_agents or task["agent_type"] == "planner"]
 
 
@@ -1278,78 +1301,387 @@ def get_version_logs(project_id: str, version: str) -> list:
     return get_run_log(project_id, version, BASE_DIR)
 
 
-def list_agents():
-    if not SUBAGENTS_DIR.exists():
-        return []
-    agents = []
-    for item in SUBAGENTS_DIR.glob("*.agent.yaml"):
+def _resolve_experts_dir() -> Path:
+    if EXPERTS_DIR.exists():
+        return EXPERTS_DIR
+    return LEGACY_SUBAGENTS_DIR
+
+
+def _resolve_expert_profile_path(expert_id: str) -> Path:
+    experts_dir = _resolve_experts_dir()
+    candidate_paths = [
+        experts_dir / f"{expert_id}.expert.yaml",
+        experts_dir / f"{expert_id}.agent.yaml",
+    ]
+    for candidate in candidate_paths:
+        if candidate.exists():
+            return candidate
+    return candidate_paths[0]
+
+
+def _get_version_bucket(file_path: Path) -> Path:
+    relative = file_path.relative_to(BASE_DIR)
+    bucket_name = "__".join(relative.parts)
+    return EXPERT_CENTER_VERSIONS_DIR / bucket_name
+
+
+def _list_file_versions(file_path: Path) -> list[dict]:
+    versions = []
+    versions_dir = _get_version_bucket(file_path)
+    if not versions_dir.exists():
+        return versions
+
+    version_files = sorted(list(versions_dir.glob("*.v*")), key=os.path.getmtime, reverse=True)
+    for version_file in version_files:
         try:
-            with open(item, "r", encoding="utf-8") as f:
-                config = yaml.safe_load(f)
-                agents.append(
-                    {
-                        "id": item.stem.replace(".agent", ""),
-                        "name": config.get("name", item.stem),
-                        "description": config.get("description", ""),
-                        "config_path": str(item.relative_to(BASE_DIR)),
-                        "skills": config.get("skills", []),
-                        "current_config": item.read_text(encoding="utf-8"),
-                    }
-                )
+            name_parts = version_file.name.split(".v")
+            versions.append(
+                {
+                    "version_id": name_parts[1],
+                    "timestamp": name_parts[0],
+                    "content": version_file.read_text(encoding="utf-8"),
+                }
+            )
         except Exception:
             pass
-    return agents
+    return versions
+
+
+def _write_versioned_file(file_path: Path, content: str, *, validate_yaml: bool = False) -> bool:
+    if not file_path.exists():
+        return False
+    if validate_yaml:
+        try:
+            yaml.safe_load(content)
+        except Exception:
+            return False
+
+    old_content = file_path.read_text(encoding="utf-8")
+    versions_dir = _get_version_bucket(file_path)
+    versions_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+    version_count = len(list(versions_dir.glob("*.v*"))) + 1
+    (versions_dir / f"{timestamp}.v{version_count}").write_text(old_content, encoding="utf-8")
+    file_path.write_text(content, encoding="utf-8")
+    return True
+
+
+def list_experts():
+    experts_dir = _resolve_experts_dir()
+    if not experts_dir.exists():
+        return []
+
+    experts = []
+    for item in sorted(list(experts_dir.glob("*.expert.yaml")) + list(experts_dir.glob("*.agent.yaml"))):
+        try:
+            with open(item, "r", encoding="utf-8") as handle:
+                config = yaml.safe_load(handle) or {}
+            expert_id = item.stem.replace(".expert", "").replace(".agent", "")
+            experts.append(
+                {
+                    "id": expert_id,
+                    "name": config.get("name", expert_id),
+                    "description": config.get("description", ""),
+                    "expertise": config.get("keywords", []),
+                    "profile_path": str(item.relative_to(BASE_DIR)),
+                    "skill_path": str((SKILLS_DIR / expert_id).relative_to(BASE_DIR)) if (SKILLS_DIR / expert_id).exists() else None,
+                    "current_profile": item.read_text(encoding="utf-8"),
+                    "versions": _list_file_versions(item),
+                }
+            )
+        except Exception:
+            pass
+    return experts
+
+
+def get_expert(expert_id: str):
+    profile_path = _resolve_expert_profile_path(expert_id)
+    if not profile_path.exists():
+        return None
+
+    content = profile_path.read_text(encoding="utf-8")
+    config = yaml.safe_load(content) or {}
+    return {
+        "id": expert_id,
+        "name": config.get("name", expert_id),
+        "description": config.get("description", ""),
+        "expertise": config.get("keywords", []),
+        "profile_path": str(profile_path.relative_to(BASE_DIR)),
+        "skill_path": str((SKILLS_DIR / expert_id).relative_to(BASE_DIR)) if (SKILLS_DIR / expert_id).exists() else None,
+        "current_profile": content,
+        "versions": _list_file_versions(profile_path),
+    }
+
+
+def update_expert(expert_id: str, new_profile_yaml: str):
+    profile_path = _resolve_expert_profile_path(expert_id)
+    return _write_versioned_file(profile_path, new_profile_yaml, validate_yaml=True)
+
+
+# System experts that cannot be deleted
+SYSTEM_EXPERTS = {"expert-creator"}
+
+
+def create_expert(expert_id: str, name: str, description: str = ""):
+    """Create a new expert using the Expert Generator script.
+    
+    This function delegates to the expert-creator skill's generate_expert.py script
+    for intelligent expert generation with LLM support.
+    """
+    try:
+        from skills.expert_creator.scripts.generate_expert import create_expert as generate_expert
+        result = generate_expert(BASE_DIR, expert_id, name, description, use_llm=True)
+        if result:
+            return result
+    except Exception as e:
+        print(f"[Orchestrator] Expert generation script failed: {e}. Using inline fallback.")
+    
+    # Fallback: simple inline generation
+    initial_id = "".join(ch for ch in expert_id if ch.isalnum() or ch == "-").strip("-").lower()
+    if not initial_id:
+        initial_id = "expert-" + str(uuid.uuid4())[:8]
+
+    normalized_name = (name or initial_id).strip()
+    
+    final_id = initial_id
+    profile_path = _resolve_expert_profile_path(final_id)
+    if profile_path.exists():
+        final_id = f"{final_id}-{str(uuid.uuid4())[:4]}"
+        profile_path = _resolve_expert_profile_path(final_id)
+
+    experts_dir = _resolve_experts_dir()
+    experts_dir.mkdir(parents=True, exist_ok=True)
+    skill_dir = SKILLS_DIR / final_id
+    (skill_dir / "assets" / "templates").mkdir(parents=True, exist_ok=True)
+    (skill_dir / "references").mkdir(parents=True, exist_ok=True)
+    (skill_dir / "scripts").mkdir(parents=True, exist_ok=True)
+
+    profile_content = f"""name: {final_id.replace("-", " ").title()}
+capability: {final_id}
+description: "{description or normalized_name}"
+version: 0.1.0
+skills:
+  - {final_id}
+scheduling:
+  priority: 50
+  dependencies: []
+keywords: []
+tools:
+  allowed: ["list_files", "read_file_chunk", "grep_search", "write_file"]
+outputs:
+  expected: ["output.md"]
+policies: {{}}
+"""
+    skill_content = f"""---
+name: {normalized_name}
+description: "{description or normalized_name}"
+keywords: []
+---
+
+# {normalized_name}
+
+## Workflow
+
+1. Research existing context and requirements.
+2. Generate design artifacts.
+3. Validate output quality.
+"""
+
+    profile_path.write_text(profile_content, encoding="utf-8")
+    (skill_dir / "SKILL.md").write_text(skill_content, encoding="utf-8")
+    return get_expert(final_id)
+
+
+def delete_expert(expert_id: str) -> bool:
+    """Delete an expert by ID. System experts cannot be deleted."""
+    # Protect system experts
+    if expert_id in SYSTEM_EXPERTS:
+        return False
+    
+    profile_path = _resolve_expert_profile_path(expert_id)
+    skill_dir = SKILLS_DIR / expert_id
+
+    if not profile_path.exists() and not skill_dir.exists():
+        return False
+
+    if profile_path.exists():
+        profile_path.unlink()
+    if skill_dir.exists():
+        shutil.rmtree(skill_dir, ignore_errors=True)
+    return True
+
+
+def _build_skill_children(expert_id: str, path: Path) -> list[dict]:
+    nodes = []
+    for child in sorted(path.iterdir(), key=lambda item: (item.is_file(), item.name.lower())):
+        relative_path = str(child.relative_to(BASE_DIR)).replace("\\", "/")
+        node_type = "file" if child.is_file() else "folder"
+        children = _build_skill_children(expert_id, child) if child.is_dir() else []
+        nodes.append(
+            {
+                "id": relative_path,
+                "name": child.name,
+                "path": relative_path,
+                "node_type": node_type,
+                "expert_id": expert_id,
+                "children": children,
+            }
+        )
+    return nodes
+
+
+def get_expert_center_tree():
+    tree = []
+    for expert in list_experts():
+        expert_id = expert["id"]
+        children = [
+            {
+                "id": f"{expert_id}:profile",
+                "name": "Expert Profile",
+                "path": expert["profile_path"].replace("\\", "/"),
+                "node_type": "file",
+                "expert_id": expert_id,
+                "children": [],
+            }
+        ]
+
+        skill_dir = SKILLS_DIR / expert_id
+        if skill_dir.exists():
+            children.append(
+                {
+                    "id": f"{expert_id}:skills",
+                    "name": "Skill Files",
+                    "path": str(skill_dir.relative_to(BASE_DIR)).replace("\\", "/"),
+                    "node_type": "folder",
+                    "expert_id": expert_id,
+                    "children": _build_skill_children(expert_id, skill_dir),
+                }
+            )
+
+        tree.append(
+            {
+                "id": expert_id,
+                "name": expert["name"],
+                "path": expert_id,
+                "node_type": "expert",
+                "expert_id": expert_id,
+                "children": children,
+            }
+        )
+    return tree
+
+
+def get_file_content(relative_path: str):
+    normalized_path = (relative_path or "").replace("\\", "/").lstrip("/")
+    file_path = (BASE_DIR / normalized_path).resolve()
+    if not file_path.exists() or not file_path.is_file():
+        return None
+    if BASE_DIR.resolve() not in file_path.parents and file_path != BASE_DIR.resolve():
+        return None
+
+    return {
+        "path": normalized_path,
+        "name": file_path.name,
+        "content": file_path.read_text(encoding="utf-8"),
+        "versions": _list_file_versions(file_path),
+    }
+
+
+def update_file_content(relative_path: str, content: str):
+    normalized_path = (relative_path or "").replace("\\", "/").lstrip("/")
+    file_path = (BASE_DIR / normalized_path).resolve()
+    if not file_path.exists() or not file_path.is_file():
+        return False
+    if BASE_DIR.resolve() not in file_path.parents and file_path != BASE_DIR.resolve():
+        return False
+
+    validate_yaml = file_path.suffix.lower() in {".yaml", ".yml"}
+    return _write_versioned_file(file_path, content, validate_yaml=validate_yaml)
+
+
+def delete_file(relative_path: str) -> bool:
+    """Delete a file from the expert center.
+
+    Only allows deleting files in:
+    - skills/*/assets/templates/
+    - skills/*/references/
+    - skills/*/scripts/
+
+    Protected files (cannot be deleted):
+    - experts/*.expert.yaml (profile files)
+    - skills/*/SKILL.md
+    """
+    normalized_path = (relative_path or "").replace("\\", "/").lstrip("/")
+    file_path = (BASE_DIR / normalized_path).resolve()
+
+    # Security check: must be within BASE_DIR
+    if BASE_DIR.resolve() not in file_path.parents:
+        return False
+
+    if not file_path.exists() or not file_path.is_file():
+        return False
+
+    # Check if path is in allowed directories
+    path_str = normalized_path.lower()
+    allowed_patterns = [
+        "/assets/templates/",
+        "/references/",
+        "/scripts/",
+    ]
+
+    is_allowed = any(pattern in path_str for pattern in allowed_patterns)
+
+    # Protect profile and SKILL.md files
+    protected_patterns = [
+        ".expert.yaml",
+        ".agent.yaml",
+        "/skill.md",
+    ]
+    is_protected = any(pattern in path_str for pattern in protected_patterns)
+
+    if not is_allowed or is_protected:
+        return False
+
+    try:
+        file_path.unlink()
+        return True
+    except Exception:
+        return False
+
+
+def list_agents():
+    experts = list_experts()
+    return [
+        {
+            "id": expert["id"],
+            "name": expert["name"],
+            "description": expert["description"],
+            "config_path": expert["profile_path"],
+            "skills": [expert["id"]],
+            "current_config": expert["current_profile"],
+            "versions": expert["versions"],
+        }
+        for expert in experts
+    ]
 
 
 def get_agent(agent_id: str):
-    config_file = SUBAGENTS_DIR / f"{agent_id}.agent.yaml"
-    if not config_file.exists():
+    expert = get_expert(agent_id)
+    if not expert:
         return None
-    content = config_file.read_text(encoding="utf-8")
-    config = yaml.safe_load(content)
-    versions = []
-    versions_dir = SUBAGENTS_DIR / ".versions" / agent_id
-    if versions_dir.exists():
-        v_files = sorted(list(versions_dir.glob("*.v*")), key=os.path.getmtime, reverse=True)
-        for v_file in v_files:
-            try:
-                name_parts = v_file.name.split(".v")
-                versions.append(
-                    {
-                        "version_id": name_parts[1],
-                        "timestamp": name_parts[0],
-                        "content": v_file.read_text(encoding="utf-8"),
-                    }
-                )
-            except Exception:
-                pass
     return {
-        "id": agent_id,
-        "name": config.get("name", agent_id),
-        "description": config.get("description", ""),
-        "config_path": str(config_file.relative_to(BASE_DIR)),
-        "current_config": content,
-        "versions": versions,
-        "skills": config.get("skills", []),
+        "id": expert["id"],
+        "name": expert["name"],
+        "description": expert["description"],
+        "config_path": expert["profile_path"],
+        "current_config": expert["current_profile"],
+        "versions": expert["versions"],
+        "skills": [expert["id"]],
     }
 
 
 def update_agent(agent_id: str, new_config_yaml: str):
-    config_file = SUBAGENTS_DIR / f"{agent_id}.agent.yaml"
-    if not config_file.exists():
-        return False
-    try:
-        yaml.safe_load(new_config_yaml)
-    except Exception:
-        return False
-    old_content = config_file.read_text(encoding="utf-8")
-    versions_dir = SUBAGENTS_DIR / ".versions" / agent_id
-    versions_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-    v_count = len(list(versions_dir.glob("*.v*"))) + 1
-    (versions_dir / f"{timestamp}.v{v_count}").write_text(old_content, encoding="utf-8")
-    config_file.write_text(new_config_yaml, encoding="utf-8")
-    return True
+    return update_expert(agent_id, new_config_yaml)
 
 
 def list_skills():
@@ -1418,3 +1750,43 @@ def update_template(skill_id: str, template_name: str, new_content: str):
         (versions_dir / f"{timestamp}.v{v_count}").write_text(old_content, encoding="utf-8")
     tpl_path.write_text(new_content, encoding="utf-8")
     return True
+
+
+def list_system_tools() -> list:
+    """List all system built-in tools from the tool registry."""
+    registry_path = BASE_DIR / "skills" / "expert-creator" / "assets" / "TOOL_REGISTRY.yaml"
+    if not registry_path.exists():
+        return []
+    
+    try:
+        with open(registry_path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        
+        tools = data.get("tools", [])
+        
+        # Add script path for each tool
+        tools_dir = BASE_DIR / "api_server" / "graphs" / "tools"
+        for tool in tools:
+            tool_name = tool.get("name", "")
+            script_file = tools_dir / f"{tool_name}.py"
+            if script_file.exists():
+                tool["script_path"] = f"api_server/graphs/tools/{tool_name}.py"
+        
+        return tools
+    except Exception as e:
+        print(f"Error loading tools: {e}")
+        return []
+
+
+def get_tool_code(tool_name: str) -> str | None:
+    """Get the implementation code of a specific tool."""
+    tools_dir = BASE_DIR / "api_server" / "graphs" / "tools"
+    script_file = tools_dir / f"{tool_name}.py"
+    
+    if not script_file.exists():
+        return None
+    
+    try:
+        return script_file.read_text(encoding="utf-8")
+    except Exception:
+        return None

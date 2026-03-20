@@ -1,5 +1,5 @@
 ---
-name: ops-readiness
+name: ops-design
 description: 设计 SLO、告警规则、监控指标及发布回滚的运行手册，确保服务生产就绪。
 ---
 
@@ -10,7 +10,7 @@ description: 设计 SLO、告警规则、监控指标及发布回滚的运行手
 3. **SLO 生成**：生成服务等级目标 `artifacts/slo.yaml`。
 4. **可观测性生成**：生成监控指标和告警规范 `artifacts/observability-spec.yaml`。
 5. **Runbook 生成**：生成部署运行手册 `artifacts/deployment-runbook.md`。
-6. **证据沉淀**：将运维设计依据写入 `evidence/ops-readiness.json`。
+6. **证据沉淀**：将运维设计依据写入 `evidence/ops-design.json`。
 
 # 输入参数 (Inputs)
 
@@ -37,7 +37,7 @@ description: 设计 SLO、告警规则、监控指标及发布回滚的运行手
 | `artifacts/slo.yaml` | SLI/SLO 目标定义（可用性、延迟等）|
 | `artifacts/observability-spec.yaml` | 监控指标、Trace Span、告警规则定义 |
 | `artifacts/deployment-runbook.md` | 部署检查清单和回滚触发条件 |
-| `evidence/ops-readiness.json` | 运维设计依据和证据 |
+| `evidence/ops-design.json` | 运维设计依据和证据 |
 
 # 工具集 (Tools)
 

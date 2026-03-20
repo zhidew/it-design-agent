@@ -1,13 +1,14 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useLocation } from 'react-router-dom';
 import { api } from '../api';
-import { ArrowLeft, Play, RefreshCw, Activity, Check, X, Upload, FileText, Database, Layers, Book, List, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ArrowLeft, Play, RefreshCw, Activity, Check, X, Upload, FileText, Database, Layers, Book, List, Trash2, ChevronLeft, ChevronRight, Settings2, FolderGit2, BookOpen, Bot } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { TaskKanban } from './TaskKanban';
 import type { NodeStatus } from './TaskKanban';
 import { ArtifactViewer } from './ArtifactViewer';
 import { ToolEventCard } from './ToolEventCard';
+import { Mermaid } from './Mermaid';
 
 const AGENT_MAPPING: Record<string, string[]> = {
   planner: ['requirements.json', 'input-requirements.md', 'original-requirements.md'],
@@ -19,7 +20,7 @@ const AGENT_MAPPING: Record<string, string[]> = {
   'api-design': ['api-design.md', 'api-internal.yaml', 'api-public.yaml', 'errors-rfc9457.json'],
   'ddd-structure': ['ddd-structure.md', 'class-'],
   'test-design': ['test-inputs.md', 'coverage-map.json'],
-  'ops-readiness': ['slo.yaml', 'observability-spec.yaml', 'deployment-runbook.md'],
+  'ops-design': ['slo.yaml', 'observability-spec.yaml', 'deployment-runbook.md'],
   'design-assembler': ['detailed-design.md', 'traceability.json', 'review-checklist.md'],
   validator: [], // validator 使用独立的报告展示逻辑，不走产物清单
 };
@@ -37,6 +38,8 @@ interface WorkflowTask {
   id: string;
   agent_type: string;
   status: NodeStatus;
+  dependencies?: string[];
+  priority?: number;
 }
 
 interface WorkflowState {
@@ -66,6 +69,35 @@ interface VersionStateSummary {
   run_status: RunStatus;
   updated_at?: string;
   current_node?: string | null;
+}
+
+interface RepositoryResourceSummary {
+  id: string;
+  name: string;
+  branch?: string;
+  url: string;
+}
+
+interface DatabaseResourceSummary {
+  id: string;
+  name: string;
+  type: string;
+  host: string;
+  database: string;
+}
+
+interface KnowledgeBaseResourceSummary {
+  id: string;
+  name: string;
+  type: string;
+  path?: string;
+  index_url?: string;
+}
+
+interface ExpertResourceSummary {
+  id: string;
+  name: string;
+  enabled: boolean;
 }
 
 interface EventBase {
@@ -158,11 +190,12 @@ type ExecutionLogEntry =
   | { kind: 'tool'; id: string; event: ToolEvent };
 
 export function ProjectDetail() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { id } = useParams<{ id: string }>();
+  const location = useLocation();
   const [versions, setVersions] = useState<string[]>([]);
   const [requirement, setRequirement] = useState('');
-  
+
   const [inputFiles, setInputFiles] = useState<InputFile[]>([]);
 
   const [loading, setLoading] = useState(false);
@@ -194,27 +227,83 @@ export function ProjectDetail() {
   const [deletingVersion, setDeletingVersion] = useState<string | null>(null);
   const [retryingNode, setRetryingNode] = useState<string | null>(null);
   const [continuingWorkflow, setContinuingWorkflow] = useState(false);
+  const [resourceSummary, setResourceSummary] = useState<{
+    repositories: RepositoryResourceSummary[];
+    databases: DatabaseResourceSummary[];
+    knowledgeBases: KnowledgeBaseResourceSummary[];
+    experts: ExpertResourceSummary[];
+  }>({ repositories: [], databases: [], knowledgeBases: [], experts: [] });
 
   const pollInterval = useRef<NodeJS.Timeout | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const seenEventIdsRef = useRef<Set<string>>(new Set());
   const latestFetchedStateAtRef = useRef<number>(0);
 
+  const resourceCopy = useMemo(() => {
+    const isZh = i18n.language.toLowerCase().startsWith('zh');
+    const fallback = {
+      title: isZh ? '项目资源' : 'Project Resources',
+      repositories: isZh ? '代码仓库' : 'Code Repos',
+      databases: isZh ? '数据库' : 'Databases',
+      knowledgeBases: isZh ? '知识库' : 'Knowledge Bases',
+      experts: isZh ? '已启用专家' : 'Enabled Experts',
+      emptyRepositories: isZh ? '暂未配置代码仓库。' : 'No code repositories configured yet.',
+      emptyDatabases: isZh ? '暂未配置数据库。' : 'No databases configured yet.',
+      emptyKnowledgeBases: isZh ? '暂未配置知识库。' : 'No knowledge bases configured yet.',
+      emptyExperts: isZh ? '暂未配置已启用专家。' : 'No enabled experts configured yet.',
+    };
+    const pick = (key: string, fallbackValue: string) => {
+      const value = t(key);
+      return /\?{2,}/.test(value) ? fallbackValue : value;
+    };
+    return {
+      title: pick('projectDetail.resources.title', fallback.title),
+      repositories: pick('projectDetail.resources.repositories', fallback.repositories),
+      databases: pick('projectDetail.resources.databases', fallback.databases),
+      knowledgeBases: pick('projectDetail.resources.knowledgeBases', fallback.knowledgeBases),
+      experts: pick('projectDetail.resources.experts', fallback.experts),
+      emptyRepositories: pick('projectDetail.resources.emptyRepositories', fallback.emptyRepositories),
+      emptyDatabases: pick('projectDetail.resources.emptyDatabases', fallback.emptyDatabases),
+      emptyKnowledgeBases: pick('projectDetail.resources.emptyKnowledgeBases', fallback.emptyKnowledgeBases),
+      emptyExperts: pick('projectDetail.resources.emptyExperts', fallback.emptyExperts),
+    };
+  }, [i18n.language, t]);
+
   useEffect(() => {
     if (id) void loadVersions();
   }, [id]);
 
   useEffect(() => {
+    if (!id) return;
+    void loadResourceSummary();
+  }, [id]);
+
+  useEffect(() => {
     if (id && selectedVersion) {
       void fetchState();
+    }
+  }, [id, selectedVersion]);
+
+  useEffect(() => {
+    if (pollInterval.current) {
+      clearInterval(pollInterval.current);
+      pollInterval.current = null;
+    }
+
+    const shouldPoll =
+      Boolean(id && selectedVersion) &&
+      ['running', 'queued', 'waiting_human'].includes(workflowState?.run_status || '');
+
+    if (shouldPoll) {
       pollInterval.current = setInterval(() => {
         void fetchState();
       }, 3000);
     }
+
     return () => {
       if (pollInterval.current) clearInterval(pollInterval.current);
     };
-  }, [id, selectedVersion]);
+  }, [id, selectedVersion, workflowState?.run_status]);
 
   const updateTaskStatus = (tasks: WorkflowTask[], nodeType: string, status: NodeStatus): WorkflowTask[] => (
     tasks.map((task) => task.agent_type === nodeType ? { ...task, status } : task)
@@ -312,10 +401,10 @@ export function ProjectDetail() {
         case 'text_delta':
           return event.stream_name === 'history'
             ? {
-                ...baseState,
-                updated_at: event.timestamp,
-                history: [...baseState.history, event.delta],
-              }
+              ...baseState,
+              updated_at: event.timestamp,
+              history: [...baseState.history, event.delta],
+            }
             : baseState;
         case 'waiting_human':
           return {
@@ -475,7 +564,7 @@ export function ProjectDetail() {
       if (state.run_id) {
         setCurrentRunId(state.run_id);
       }
-      
+
       const newStatuses: Record<string, NodeStatus> = {};
       if (state.task_queue) {
         state.task_queue.forEach((t) => {
@@ -488,7 +577,7 @@ export function ProjectDetail() {
       if (state.run_status !== 'queued') {
         void loadArtifacts(selectedVersion);
       }
-      
+
     } catch (err: any) {
       if (err.response?.status === 404) {
         setWorkflowState(null);
@@ -508,33 +597,35 @@ export function ProjectDetail() {
       setPage(res.page);
       setPageSize(res.page_size);
 
-      if (versionIds.length > 0) {
-        const settled = await Promise.allSettled(
-          versionIds.map(async (version: string) => {
-            const state = await api.getProjectState(id, version) as WorkflowState;
-            return [version, {
-              run_status: state.run_status,
-              current_node: state.current_node,
-              updated_at: state.updated_at,
-            }] as const;
-          }),
-        );
-
-        const nextStateMap: Record<string, VersionStateSummary> = {};
-        settled.forEach((result) => {
-          if (result.status === 'fulfilled') {
-            const [version, summary] = result.value;
-            nextStateMap[version] = summary;
-          }
-        });
-        setVersionStateMap(nextStateMap);
-      } else {
-        setVersionStateMap({});
-      }
-      
       // Auto-select first version only on first load if none selected
       if (versionIds.length > 0 && !selectedVersion && targetPage === 1) {
         handleSelectVersion(versionIds[0]);
+      }
+
+      if (versionIds.length > 0) {
+        void (async () => {
+          const settled = await Promise.allSettled(
+            versionIds.map(async (version: string) => {
+              const state = await api.getProjectState(id, version) as WorkflowState;
+              return [version, {
+                run_status: state.run_status,
+                current_node: state.current_node,
+                updated_at: state.updated_at,
+              }] as const;
+            }),
+          );
+
+          const nextStateMap: Record<string, VersionStateSummary> = {};
+          settled.forEach((result) => {
+            if (result.status === 'fulfilled') {
+              const [version, summary] = result.value;
+              nextStateMap[version] = summary;
+            }
+          });
+          setVersionStateMap(nextStateMap);
+        })();
+      } else {
+        setVersionStateMap({});
       }
     } catch {
       setUiError(t('common.loadError'));
@@ -546,7 +637,7 @@ export function ProjectDetail() {
   const generateVersionId = () => {
     const d = new Date();
     const pad = (n: number, len: number) => String(n).padStart(len, '0');
-    return `v${d.getFullYear()}${pad(d.getMonth()+1, 2)}${pad(d.getDate(), 2)}${pad(d.getHours(), 2)}${pad(d.getMinutes(), 2)}${pad(d.getSeconds(), 2)}`;
+    return `v${d.getFullYear()}${pad(d.getMonth() + 1, 2)}${pad(d.getDate(), 2)}${pad(d.getHours(), 2)}${pad(d.getMinutes(), 2)}${pad(d.getSeconds(), 2)}`;
   };
 
   const handleFileChange = (type: InputFile['type'], e: React.ChangeEvent<HTMLInputElement>) => {
@@ -584,7 +675,7 @@ export function ProjectDetail() {
 
       const run = await api.runOrchestrator(id, timestampVersion, requirement);
       setCurrentRunId(run.job_id);
-      
+
       setRequirement('');
       setInputFiles([]);
       setSelectedInterruptOption('');
@@ -695,6 +786,26 @@ export function ProjectDetail() {
     setSelectedFile((prev) => (prev === filename ? null : filename));
   };
 
+  const loadResourceSummary = async () => {
+    if (!id) return;
+    try {
+      const [repoRes, dbRes, kbRes, expertRes] = await Promise.all([
+        api.getRepositoryConfigs(id),
+        api.getDatabaseConfigs(id),
+        api.getKnowledgeBaseConfigs(id),
+        api.getExpertConfigs(id),
+      ]);
+      setResourceSummary({
+        repositories: repoRes.repositories || [],
+        databases: dbRes.databases || [],
+        knowledgeBases: kbRes.knowledge_bases || [],
+        experts: expertRes.experts || [],
+      });
+    } catch {
+      setResourceSummary({ repositories: [], databases: [], knowledgeBases: [], experts: [] });
+    }
+  };
+
   const loadArtifacts = async (version: string) => {
     if (!id) return;
     setIsArtifactsLoading(true);
@@ -715,9 +826,9 @@ export function ProjectDetail() {
     const patterns = AGENT_MAPPING[selectedNode];
     return Object.keys(artifacts).filter((filename) =>
       !filename.endsWith('-reasoning.md') && patterns.some(
-        (pattern) => filename.startsWith(pattern) || filename === pattern || 
-        (pattern === 'requirements.json' && filename.includes('requirements')) ||
-        (selectedNode === 'planner' && (filename.includes('model') || filename.includes('lookup') || filename === 'original-requirements.md'))
+        (pattern) => filename.startsWith(pattern) || filename === pattern ||
+          (pattern === 'requirements.json' && filename.includes('requirements')) ||
+          (selectedNode === 'planner' && (filename.includes('model') || filename.includes('lookup') || filename === 'original-requirements.md'))
       ),
     );
   }, [selectedNode, artifacts]);
@@ -778,6 +889,121 @@ export function ProjectDetail() {
 
     return [];
   }, [selectedNode, artifacts]);
+
+  const selectedPipeline = useMemo(() => {
+    for (const log of reasoningLogs) {
+      const match = log.match(/Selected Pipeline:\s*(.+)/i);
+      if (!match) {
+        continue;
+      }
+      return match[1]
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean);
+    }
+    return [];
+  }, [reasoningLogs]);
+
+  const selectedPipelineChart = useMemo(() => {
+    if (selectedNode !== 'planner') {
+      return null;
+    }
+
+    const toNodeId = (agentId: string) => agentId.replace(/[^a-zA-Z0-9]/g, '_');
+    const lines = ['flowchart LR'];
+    const queuedTasks = workflowState?.task_queue ?? [];
+    const taskMap = new Map(queuedTasks.map((task) => [task.id, task]));
+    const nonPlannerTasks = queuedTasks.filter((task) => task.agent_type !== 'planner');
+
+    lines.push('requirements["Input Materials"]');
+    lines.push('planner["Planner"]');
+    lines.push('requirements --> planner');
+
+    if (nonPlannerTasks.length > 0) {
+      nonPlannerTasks.forEach((task) => {
+        const nodeId = toNodeId(task.agent_type);
+        const label = t(`agents.${task.agent_type}`);
+        lines.push(`${nodeId}["${label}"]`);
+      });
+
+      nonPlannerTasks.forEach((task) => {
+        const nodeId = toNodeId(task.agent_type);
+        const dependencyIds = (task.dependencies ?? []).filter((depId) => taskMap.has(depId));
+        const nonPlannerDependencyIds = dependencyIds.filter((depId) => taskMap.get(depId)?.agent_type !== 'planner');
+
+        if (nonPlannerDependencyIds.length === 0) {
+          lines.push(`planner --> ${nodeId}`);
+          return;
+        }
+
+        nonPlannerDependencyIds.forEach((depId) => {
+          const dependencyTask = taskMap.get(depId);
+          if (!dependencyTask) {
+            return;
+          }
+          lines.push(`${toNodeId(dependencyTask.agent_type)} --> ${nodeId}`);
+        });
+      });
+    } else if (selectedPipeline.length > 0) {
+      lines.push('delivery["Design Package"]');
+      lines.push('validatorHub["Quality Gate"]');
+
+      selectedPipeline.forEach((agentId) => {
+        const nodeId = toNodeId(agentId);
+        const label = t(`agents.${agentId}`);
+        lines.push(`${nodeId}["${label}"]`);
+      });
+
+      let previous = 'planner';
+      selectedPipeline.forEach((agentId) => {
+        const nodeId = toNodeId(agentId);
+        lines.push(`${previous} --> ${nodeId}`);
+        previous = nodeId;
+      });
+      lines.push(`${previous} --> delivery`);
+      lines.push('delivery --> validatorHub');
+    } else {
+      return null;
+    }
+
+    lines.push('classDef start fill:#eef2ff,stroke:#6366f1,stroke-width:1.5px,color:#312e81;');
+    lines.push('classDef worker fill:#f8fafc,stroke:#cbd5e1,stroke-width:1.2px,color:#0f172a;');
+    lines.push('classDef finalStage fill:#ecfeff,stroke:#0891b2,stroke-width:1.5px,color:#164e63;');
+    lines.push('classDef active fill:#fff7ed,stroke:#f97316,stroke-width:2px,color:#9a3412;');
+    lines.push('class requirements,planner start;');
+    if (nonPlannerTasks.length === 0 && selectedPipeline.length > 0) {
+      lines.push('class delivery,validatorHub finalStage;');
+    }
+
+    const workerNodeIds = (nonPlannerTasks.length > 0 ? nonPlannerTasks : selectedPipeline.map((agentId) => ({ agent_type: agentId } as WorkflowTask)))
+      .map((task) => toNodeId(task.agent_type))
+      .filter((nodeId) => nodeId !== 'design_assembler' && nodeId !== 'validator');
+    if (workerNodeIds.length > 0) {
+      lines.push(`class ${workerNodeIds.join(',')} worker;`);
+    }
+
+    if (
+      nonPlannerTasks.some((task) => task.agent_type === 'design-assembler') ||
+      selectedPipeline.includes('design-assembler')
+    ) {
+      lines.push('class design_assembler finalStage;');
+    }
+    if (nonPlannerTasks.some((task) => task.agent_type === 'validator') || selectedPipeline.includes('validator')) {
+      lines.push('class validator finalStage;');
+    }
+
+    const activePipelineNode =
+      workflowState?.current_node &&
+        (nonPlannerTasks.some((task) => task.agent_type === workflowState.current_node) ||
+          selectedPipeline.includes(workflowState.current_node))
+        ? toNodeId(workflowState.current_node)
+        : null;
+    if (activePipelineNode) {
+      lines.push(`class ${activePipelineNode} active;`);
+    }
+
+    return lines.join('\n');
+  }, [selectedNode, selectedPipeline, workflowState?.current_node, workflowState?.task_queue, t]);
 
   // validator 节点使用独立的报告展示，不显示设计产物清单
   const isValidatorNode = selectedNode === 'validator';
@@ -993,7 +1219,7 @@ export function ProjectDetail() {
               <h2 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">{t('projectDetail.newDesignRun')}</h2>
               {inputFiles.length > 0 && <button onClick={() => setInputFiles([])} className="text-[9px] font-black text-rose-500 uppercase tracking-widest hover:underline">{t('projectDetail.clearFiles')}</button>}
             </div>
-            
+
             <div className="grid grid-cols-1 gap-2">
               {renderUploadBtn('ir', t('projectDetail.uploadIR'), <FileText size={14} />, true)}
               {renderUploadBtn('physical', t('projectDetail.uploadPhysical'), <Database size={14} />)}
@@ -1017,9 +1243,8 @@ export function ProjectDetail() {
             <button
               onClick={handleRun}
               disabled={loading || !isIRProvided}
-              className={`w-full py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 transition-all ${
-                loading || !isIRProvided ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg shadow-indigo-200'
-              }`}
+              className={`w-full py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 transition-all ${loading || !isIRProvided ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg shadow-indigo-200'
+                }`}
             >
               {loading ? <RefreshCw size={16} className="animate-spin" /> : <Play size={16} fill="currentColor" />}
               {loading ? t('projectDetail.running') : t('projectDetail.startDesign')}
@@ -1041,11 +1266,10 @@ export function ProjectDetail() {
                   return (
                     <div
                       key={v}
-                      className={`w-full flex items-center justify-between gap-3 p-4 rounded-2xl transition-all text-xs text-left ${
-                        selectedVersion === v 
-                          ? 'bg-white border-2 border-indigo-500 shadow-md text-gray-900 font-bold' 
+                      className={`w-full flex items-center justify-between gap-3 p-4 rounded-2xl transition-all text-xs text-left ${selectedVersion === v
+                          ? 'bg-white border-2 border-indigo-500 shadow-md text-gray-900 font-bold'
                           : 'bg-transparent border border-transparent text-gray-500 hover:bg-gray-100'
-                      }`}
+                        }`}
                     >
                       <button
                         onClick={() => handleSelectVersion(v)}
@@ -1081,7 +1305,7 @@ export function ProjectDetail() {
                 <div className="flex items-center justify-between px-2">
                   <div className="flex items-center gap-2">
                     <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Size:</span>
-                    <select 
+                    <select
                       value={pageSize}
                       onChange={(e) => {
                         const newSize = parseInt(e.target.value);
@@ -1120,46 +1344,158 @@ export function ProjectDetail() {
               </div>
             )}
           </section>
+
+          <section className="bg-white rounded-3xl border border-gray-100 shadow-sm p-6 space-y-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">{resourceCopy.title}</h2>
+              </div>
+              <Link
+                to={`/projects/${id}/config`}
+                state={{ from: location.pathname }}
+                className="inline-flex min-w-[96px] items-center justify-center gap-2 px-3 py-2 rounded-xl bg-indigo-50 text-indigo-600 text-[10px] font-black uppercase tracking-wider hover:bg-indigo-100 transition-all whitespace-nowrap"
+              >
+                <Settings2 size={14} />
+                {t('common.configuration')}
+              </Link>
+            </div>
+
+            <div className="space-y-4">
+              <div className="rounded-2xl border border-gray-100 bg-gray-50/70 p-4">
+                <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-gray-500 mb-3">
+                  <FolderGit2 size={12} className="text-indigo-500" />
+                  {resourceCopy.repositories}
+                </div>
+                {resourceSummary.repositories.length > 0 ? (
+                  <div className="space-y-2">
+                    {resourceSummary.repositories.slice(0, 2).map((repo) => (
+                      <div key={repo.id} className="rounded-xl bg-white border border-gray-100 px-3 py-2">
+                        <div className="text-xs font-black text-gray-800">{repo.name}</div>
+                        <div className="text-[10px] font-mono text-gray-400 mt-1">{repo.id}{repo.branch ? ` / ${repo.branch}` : ''}</div>
+                      </div>
+                    ))}
+                    {resourceSummary.repositories.length > 2 && (
+                      <div className="text-[10px] font-bold text-gray-400 uppercase">{t('projectDetail.resources.more', { count: resourceSummary.repositories.length - 2 })}</div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-xs text-gray-400">{resourceCopy.emptyRepositories}</div>
+                )}
+              </div>
+
+              <div className="rounded-2xl border border-gray-100 bg-gray-50/70 p-4">
+                <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-gray-500 mb-3">
+                  <Database size={12} className="text-emerald-500" />
+                  {resourceCopy.databases}
+                </div>
+                {resourceSummary.databases.length > 0 ? (
+                  <div className="space-y-2">
+                    {resourceSummary.databases.slice(0, 2).map((db) => (
+                      <div key={db.id} className="rounded-xl bg-white border border-gray-100 px-3 py-2">
+                        <div className="text-xs font-black text-gray-800">{db.name}</div>
+                        <div className="text-[10px] font-mono text-gray-400 mt-1">{db.type} / {db.host}</div>
+                      </div>
+                    ))}
+                    {resourceSummary.databases.length > 2 && (
+                      <div className="text-[10px] font-bold text-gray-400 uppercase">{t('projectDetail.resources.more', { count: resourceSummary.databases.length - 2 })}</div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-xs text-gray-400">{resourceCopy.emptyDatabases}</div>
+                )}
+              </div>
+
+              <div className="rounded-2xl border border-gray-100 bg-gray-50/70 p-4">
+                <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-gray-500 mb-3">
+                  <BookOpen size={12} className="text-amber-500" />
+                  {resourceCopy.knowledgeBases}
+                </div>
+                {resourceSummary.knowledgeBases.length > 0 ? (
+                  <div className="space-y-2">
+                    {resourceSummary.knowledgeBases.slice(0, 2).map((kb) => (
+                      <div key={kb.id} className="rounded-xl bg-white border border-gray-100 px-3 py-2">
+                        <div className="text-xs font-black text-gray-800">{kb.name}</div>
+                        <div className="text-[10px] font-mono text-gray-400 mt-1">{kb.type} / {kb.path || kb.index_url || '-'}</div>
+                      </div>
+                    ))}
+                    {resourceSummary.knowledgeBases.length > 2 && (
+                      <div className="text-[10px] font-bold text-gray-400 uppercase">{t('projectDetail.resources.more', { count: resourceSummary.knowledgeBases.length - 2 })}</div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-xs text-gray-400">{resourceCopy.emptyKnowledgeBases}</div>
+                )}
+              </div>
+
+              <div className="rounded-2xl border border-gray-100 bg-gray-50/70 p-4">
+                <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-gray-500 mb-3">
+                  <Bot size={12} className="text-sky-500" />
+                  {resourceCopy.experts}
+                </div>
+                {resourceSummary.experts.filter((expert) => expert.enabled).length > 0 ? (
+                  <div className="flex flex-wrap gap-2">
+                    {resourceSummary.experts.filter((expert) => expert.enabled).slice(0, 5).map((expert) => (
+                      <div
+                        key={expert.id}
+                        title={expert.id}
+                        className="inline-flex max-w-full items-center gap-2 rounded-full bg-white border border-gray-100 px-3 py-2"
+                      >
+                        <span className="h-2 w-2 rounded-full bg-sky-400 flex-shrink-0" />
+                        <span className="text-[11px] font-black text-gray-800 truncate">{expert.name}</span>
+                      </div>
+                    ))}
+                    {resourceSummary.experts.filter((expert) => expert.enabled).length > 5 && (
+                      <div className="inline-flex items-center justify-center rounded-full border border-dashed border-gray-200 px-3 py-2 text-[10px] font-bold uppercase text-gray-400">
+                        {t('projectDetail.resources.more', { count: resourceSummary.experts.filter((expert) => expert.enabled).length - 5 })}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-xs text-gray-400">{resourceCopy.emptyExperts}</div>
+                )}
+              </div>
+            </div>
+          </section>
         </aside>
 
         <div className="col-span-12 lg:col-span-9 space-y-8">
           <section className="bg-white rounded-3xl border border-gray-100 shadow-sm p-8 space-y-8">
             <div className="flex items-center justify-between">
-               <div className="flex items-center gap-4">
-                 <div className="p-3 bg-indigo-50 rounded-2xl text-indigo-600">
-                   <Activity size={24} />
-                 </div>
-                 <div>
-                   <h2 className="text-xl font-black tracking-tight text-gray-800">{t('projectDetail.executionPipeline')}</h2>
-                   <p className="text-xs text-gray-400 font-bold uppercase tracking-wider mt-0.5">{t('projectDetail.realTimeOrchestration')}</p>
-                 </div>
-               </div>
-               
-               <div className="flex items-center gap-3">
-                 {workflowState?.run_status === 'queued' && hasPendingTodoTasks && (
-                   <button
-                     onClick={handleContinueWorkflow}
-                     disabled={continuingWorkflow || retryingNode !== null}
-                     className="px-4 py-2 bg-indigo-100 text-indigo-700 rounded-xl text-xs font-black uppercase tracking-wider hover:bg-indigo-200 transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                   >
-                     {continuingWorkflow ? <RefreshCw size={14} className="animate-spin" /> : <Play size={14} fill="currentColor" />}
-                     Continue Workflow
-                   </button>
-                 )}
-                 {selectedTask?.status === 'failed' && (
-                   <button
-                     onClick={handleRetryNode}
-                     disabled={retryingNode !== null || continuingWorkflow}
-                     className="px-4 py-2 bg-rose-100 text-rose-700 rounded-xl text-xs font-black uppercase tracking-wider hover:bg-rose-200 transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                   >
-                     {retryingNode === selectedNode ? <RefreshCw size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-                     Retry Node
-                   </button>
-                 )}
-               </div>
+              <div className="flex items-center gap-4">
+                <div className="p-3 bg-indigo-50 rounded-2xl text-indigo-600">
+                  <Activity size={24} />
+                </div>
+                <div>
+                  <h2 className="text-xl font-black tracking-tight text-gray-800">{t('projectDetail.executionPipeline')}</h2>
+                  <p className="text-xs text-gray-400 font-bold uppercase tracking-wider mt-0.5">{t('projectDetail.realTimeOrchestration')}</p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3">
+                {workflowState?.run_status === 'queued' && hasPendingTodoTasks && (
+                  <button
+                    onClick={handleContinueWorkflow}
+                    disabled={continuingWorkflow || retryingNode !== null}
+                    className="px-4 py-2 bg-indigo-100 text-indigo-700 rounded-xl text-xs font-black uppercase tracking-wider hover:bg-indigo-200 transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {continuingWorkflow ? <RefreshCw size={14} className="animate-spin" /> : <Play size={14} fill="currentColor" />}
+                    Continue Workflow
+                  </button>
+                )}
+                {selectedTask?.status === 'failed' && (
+                  <button
+                    onClick={handleRetryNode}
+                    disabled={retryingNode !== null || continuingWorkflow}
+                    className="px-4 py-2 bg-rose-100 text-rose-700 rounded-xl text-xs font-black uppercase tracking-wider hover:bg-rose-200 transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {retryingNode === selectedNode ? <RefreshCw size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                    Retry Node
+                  </button>
+                )}
+              </div>
             </div>
 
-            <TaskKanban 
+            <TaskKanban
               tasks={workflowState?.task_queue || []}
               nodeStatuses={effectiveNodeStatuses}
               selectedNode={selectedNode}
@@ -1219,6 +1555,92 @@ export function ProjectDetail() {
             </section>
           )}
 
+          {false && (
+            <section className="bg-white rounded-3xl border border-gray-100 shadow-sm p-6 space-y-5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Project Resources</h2>
+                  <p className="text-xs text-gray-500 mt-2">代码仓、数据库和知识库入口摘要。</p>
+                </div>
+                <Link
+                  to={`/projects/${id}/config`}
+                  className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-indigo-50 text-indigo-600 text-[10px] font-black uppercase tracking-wider hover:bg-indigo-100 transition-all"
+                >
+                  <Settings2 size={14} />
+                  Config
+                </Link>
+              </div>
+
+              <div className="space-y-4">
+                <div className="rounded-2xl border border-gray-100 bg-gray-50/70 p-4">
+                  <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-gray-500 mb-3">
+                    <FolderGit2 size={12} className="text-indigo-500" />
+                    Code Repos
+                  </div>
+                  {resourceSummary.repositories.length > 0 ? (
+                    <div className="space-y-2">
+                      {resourceSummary.repositories.slice(0, 2).map((repo) => (
+                        <div key={repo.id} className="rounded-xl bg-white border border-gray-100 px-3 py-2">
+                          <div className="text-xs font-black text-gray-800">{repo.name}</div>
+                          <div className="text-[10px] font-mono text-gray-400 mt-1">{repo.id}{repo.branch ? ` · ${repo.branch}` : ''}</div>
+                        </div>
+                      ))}
+                      {resourceSummary.repositories.length > 2 && (
+                        <div className="text-[10px] font-bold text-gray-400 uppercase">+{resourceSummary.repositories.length - 2} more</div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-xs text-gray-400">未配置代码仓</div>
+                  )}
+                </div>
+
+                <div className="rounded-2xl border border-gray-100 bg-gray-50/70 p-4">
+                  <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-gray-500 mb-3">
+                    <Database size={12} className="text-emerald-500" />
+                    Databases
+                  </div>
+                  {resourceSummary.databases.length > 0 ? (
+                    <div className="space-y-2">
+                      {resourceSummary.databases.slice(0, 2).map((db) => (
+                        <div key={db.id} className="rounded-xl bg-white border border-gray-100 px-3 py-2">
+                          <div className="text-xs font-black text-gray-800">{db.name}</div>
+                          <div className="text-[10px] font-mono text-gray-400 mt-1">{db.type} · {db.host}</div>
+                        </div>
+                      ))}
+                      {resourceSummary.databases.length > 2 && (
+                        <div className="text-[10px] font-bold text-gray-400 uppercase">+{resourceSummary.databases.length - 2} more</div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-xs text-gray-400">未配置数据库</div>
+                  )}
+                </div>
+
+                <div className="rounded-2xl border border-gray-100 bg-gray-50/70 p-4">
+                  <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-gray-500 mb-3">
+                    <BookOpen size={12} className="text-amber-500" />
+                    Knowledge Bases
+                  </div>
+                  {resourceSummary.knowledgeBases.length > 0 ? (
+                    <div className="space-y-2">
+                      {resourceSummary.knowledgeBases.slice(0, 2).map((kb) => (
+                        <div key={kb.id} className="rounded-xl bg-white border border-gray-100 px-3 py-2">
+                          <div className="text-xs font-black text-gray-800">{kb.name}</div>
+                          <div className="text-[10px] font-mono text-gray-400 mt-1">{kb.type} · {kb.path || kb.index_url || '-'}</div>
+                        </div>
+                      ))}
+                      {resourceSummary.knowledgeBases.length > 2 && (
+                        <div className="text-[10px] font-bold text-gray-400 uppercase">+{resourceSummary.knowledgeBases.length - 2} more</div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-xs text-gray-400">未配置知识库</div>
+                  )}
+                </div>
+              </div>
+            </section>
+          )}
+
           {workflowState?.run_status === 'waiting_human' && (
             <section className="bg-amber-50 rounded-3xl border border-amber-200 shadow-sm p-8 space-y-5">
               <div className="flex items-start justify-between gap-4">
@@ -1263,11 +1685,10 @@ export function ProjectDetail() {
                       return (
                         <label
                           key={option.value}
-                          className={`flex cursor-pointer gap-3 rounded-2xl border px-4 py-3 transition-all ${
-                            isSelected
+                          className={`flex cursor-pointer gap-3 rounded-2xl border px-4 py-3 transition-all ${isSelected
                               ? 'border-amber-400 bg-white shadow-sm'
                               : 'border-amber-200 bg-white/70 hover:border-amber-300'
-                          }`}
+                            }`}
                         >
                           <input
                             type="radio"
@@ -1343,9 +1764,9 @@ export function ProjectDetail() {
               <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-6 space-y-4">
                 <div className="flex items-center gap-3">
                   <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
-                    {selectedNode === 'planner' 
-                      ? t('projectDetail.reasoningChain') 
-                      : isValidatorNode 
+                    {selectedNode === 'planner'
+                      ? t('projectDetail.reasoningChain')
+                      : isValidatorNode
                         ? t('projectDetail.validationResult')
                         : t('projectDetail.subagentReasoning')}
                   </h3>
@@ -1357,28 +1778,38 @@ export function ProjectDetail() {
                 </div>
                 <div className="bg-gray-900 rounded-2xl p-4 font-mono text-[11px] leading-relaxed text-gray-300 overflow-y-auto max-h-72 space-y-1">
                   {reasoningLogs.map((log: string, idx: number) => (
-                    <div key={idx} className="flex gap-3 whitespace-pre-wrap">
-                      <span className="text-gray-600 flex-shrink-0">[{idx+1}]</span>
-                      <span className={isValidatorNode && log.includes('FAILED') ? 'text-rose-400' : isValidatorNode && log.includes('SUCCESS') ? 'text-emerald-400' : 'text-emerald-400/80'}>{log}</span>
-                    </div>
+                    <React.Fragment key={idx}>
+                      <div className="flex gap-3 whitespace-pre-wrap">
+                        <span className="text-gray-600 flex-shrink-0">[{idx + 1}]</span>
+                        <span className={isValidatorNode && log.includes('FAILED') ? 'text-rose-400' : isValidatorNode && log.includes('SUCCESS') ? 'text-emerald-400' : 'text-emerald-400/80'}>{log}</span>
+                      </div>
+                    </React.Fragment>
                   ))}
                 </div>
+                {selectedPipelineChart && (
+                  <div className="pt-2">
+                    <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">
+                      Expert Orchestration Flow
+                    </div>
+                    <Mermaid chart={selectedPipelineChart} />
+                  </div>
+                )}
               </div>
             )}
 
             <div className="flex items-center gap-3 px-2">
               <h2 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
-                {selectedNode === 'planner' 
-                  ? t('projectDetail.inputMaterials') 
-                  : isValidatorNode 
+                {selectedNode === 'planner'
+                  ? t('projectDetail.inputMaterials')
+                  : isValidatorNode
                     ? t('projectDetail.scanReport')
                     : t('projectDetail.designArtifacts')}
               </h2>
               <div className="h-px flex-1 bg-gray-100" />
             </div>
-            
+
             {!isValidatorNode && (
-              <ArtifactViewer 
+              <ArtifactViewer
                 artifacts={artifacts}
                 selectedFile={selectedFile}
                 onSelectFile={handleSelectFile}
@@ -1389,7 +1820,7 @@ export function ProjectDetail() {
           </section>
 
           <section className="bg-white rounded-3xl border border-gray-100 shadow-sm p-8 space-y-4">
-            <button 
+            <button
               onClick={() => setIsLogsOpen(!isLogsOpen)}
               className="flex items-center justify-between w-full group"
             >
@@ -1405,7 +1836,7 @@ export function ProjectDetail() {
                 {loading && <RefreshCw size={10} className="animate-spin text-indigo-500" />}
               </div>
               <div className={`text-gray-300 transition-transform duration-300 ${isLogsOpen ? 'rotate-180' : ''}`}>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6" /></svg>
               </div>
             </button>
 

@@ -3,9 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict
 
+from .list_files import _resolve_search_roots
+
 
 def read_file_chunk(root_dir: Path, tool_input: Dict[str, Any]) -> Dict[str, Any]:
     relative_path = tool_input.get("path")
+    search_root_label = tool_input.get("search_root", ".")
     start_line = int(tool_input.get("start_line", 1) or 1)
     end_line = int(tool_input.get("end_line", start_line + 19) or (start_line + 19))
 
@@ -14,9 +17,17 @@ def read_file_chunk(root_dir: Path, tool_input: Dict[str, Any]) -> Dict[str, Any
     if start_line < 1 or end_line < start_line:
         raise ValueError("Invalid line range.")
 
-    file_path = (root_dir / relative_path).resolve()
+    search_roots = {
+        item["label"]: item["path"]
+        for item in _resolve_search_roots(root_dir, tool_input)
+    }
+    if search_root_label not in search_roots:
+        raise ValueError(f"Unknown search_root: {search_root_label}")
+
+    selected_root = search_roots[search_root_label]
+    file_path = (selected_root / relative_path).resolve()
     try:
-        file_path.relative_to(root_dir.resolve())
+        file_path.relative_to(selected_root.resolve())
     except ValueError as exc:
         raise ValueError(f"File path escapes root: {relative_path}") from exc
 
@@ -27,6 +38,7 @@ def read_file_chunk(root_dir: Path, tool_input: Dict[str, Any]) -> Dict[str, Any
     selected = lines[start_line - 1 : end_line]
     return {
         "root_dir": str(root_dir),
+        "search_root": search_root_label,
         "path": relative_path,
         "start_line": start_line,
         "end_line": min(end_line, len(lines)),

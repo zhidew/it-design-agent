@@ -1,19 +1,30 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
-import { Link } from 'react-router-dom';
-import { Folder, Plus, RefreshCw, Settings, LayoutDashboard, Loader as LucideLoader } from 'lucide-react';
+import { Link, useLocation } from 'react-router-dom';
+import { Folder, Plus, RefreshCw, Settings, LayoutDashboard, Search } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { LanguageSwitcher } from './LanguageSwitcher';
 
 interface Project {
   id: string;
   name: string;
+  description?: string;
+  created_at?: string;
+  updated_at?: string;
+  total_versions?: number;
+  enabled_experts_count?: number;
+  running_versions?: number;
+  has_versions?: boolean;
+  is_active?: boolean;
+  status?: string;
 }
 
 export function ProjectList() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const location = useLocation();
   const [projects, setProjects] = useState<Project[]>([]);
   const [newProjectName, setNewProjectName] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -51,6 +62,28 @@ export function ProjectList() {
     }
   };
 
+  const filteredProjects = useMemo(() => {
+    if (!searchTerm.trim()) {
+      return projects;
+    }
+    const term = searchTerm.toLowerCase();
+    return projects.filter((proj) => {
+      return (
+        proj.id.toLowerCase().includes(term) ||
+        proj.name.toLowerCase().includes(term) ||
+        (proj.description?.toLowerCase().includes(term) || false)
+      );
+    });
+  }, [projects, searchTerm]);
+
+  const expertsEnabledLabel = useMemo(() => {
+    const isZh = i18n.language.toLowerCase().startsWith('zh');
+    const value = t('projectList.hasExpertsEnabled', { count: 0 });
+    return /\?{2,}/.test(value) || value === 'projectList.hasExpertsEnabled'
+      ? (count: number) => (isZh ? `${count} ?????` : `${count} experts enabled`)
+      : (count: number) => t('projectList.hasExpertsEnabled', { count });
+  }, [i18n.language, t]);
+
   return (
     <div className="max-w-[1400px] mx-auto p-6 bg-gray-50/30 min-h-screen">
       <div className="flex justify-between items-center mb-8">
@@ -65,11 +98,11 @@ export function ProjectList() {
         </div>
         <div className="flex items-center gap-3">
           <Link
-            to="/management"
+            to="/expert-center"
             className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-xl font-bold text-xs uppercase text-gray-600 hover:text-indigo-600 hover:border-indigo-200 transition-all shadow-sm"
           >
             <Settings size={16} />
-            {t('common.systemRegistry')}
+            {t('management.title')}
           </Link>
           <button
             type="button"
@@ -98,7 +131,7 @@ export function ProjectList() {
         </div>
         <h2 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-4">{t('projectList.createTitle')}</h2>
         <form onSubmit={handleCreate} className="flex flex-col sm:flex-row gap-4 relative z-10">
-          <div className="flex-1">
+          <div className="flex-1 relative">
             <input
               id="project-name"
               type="text"
@@ -119,6 +152,24 @@ export function ProjectList() {
         </form>
       </div>
 
+      {/* Search Box */}
+      {projects.length > 0 && (
+        <div className="mb-6">
+          <div className="relative">
+            <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-gray-400">
+              <Search size={16} />
+            </div>
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder={t('projectList.searchPlaceholder') || 'Search projects by name or ID...'}
+              className="w-full bg-white border border-gray-200 rounded-xl pl-11 pr-4 py-3 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition-all"
+            />
+          </div>
+        </div>
+      )}
+
       {isLoading ? (
         <div className="rounded-2xl border border-gray-200 bg-white p-20 text-center flex flex-col items-center gap-4">
            <RefreshCw size={32} className="text-indigo-500 animate-spin" />
@@ -126,32 +177,82 @@ export function ProjectList() {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {projects.map((proj) => (
-            <Link
+          {filteredProjects.map((proj) => (
+            <div
               key={proj.id}
-              to={`/projects/${proj.id}`}
               className="group bg-white p-6 rounded-2xl shadow-sm border border-gray-200 hover:border-indigo-500 hover:shadow-xl hover:shadow-indigo-50 transition-all relative overflow-hidden"
             >
-              <div className="absolute top-0 right-0 p-4 opacity-0 group-hover:opacity-10 transition-opacity">
-                <Folder size={48} className="text-indigo-600" />
+              <div className="flex items-start justify-between gap-4 mb-4">
+                <Link to={`/projects/${proj.id}`} className="flex items-center gap-4 min-w-0">
+                  <div className="p-3 bg-gray-50 rounded-xl text-indigo-600 group-hover:bg-indigo-600 group-hover:text-white transition-all">
+                    <Folder size={20} />
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="text-sm font-black text-gray-900 uppercase truncate max-w-[200px]">{proj.name}</h3>
+                    <span className="text-[10px] font-mono text-gray-400 uppercase">{t('common.id')}: {proj.id}</span>
+                  </div>
+                </Link>
+                <Link
+                  to={`/projects/${proj.id}/config`}
+                  state={{ from: location.pathname }}
+                  onClick={(e) => e.stopPropagation()}
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-400 hover:text-indigo-600 hover:border-indigo-200 transition-all shadow-sm"
+                  title={t('common.configuration')}
+                >
+                  <Settings size={16} />
+                </Link>
               </div>
-              <div className="flex items-center gap-4 mb-4">
-                <div className="p-3 bg-gray-50 rounded-xl text-indigo-600 group-hover:bg-indigo-600 group-hover:text-white transition-all">
-                  <Folder size={20} />
+              <Link to={`/projects/${proj.id}`} className="block">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="p-3 bg-gray-50 rounded-xl group-hover:bg-indigo-50 transition-all">
+                    <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">{t('projectList.totalVersions')}</div>
+                    <div className="text-xl font-black text-gray-900">{proj.total_versions ?? 0}</div>
+                  </div>
+                  <div className="p-3 bg-gray-50 rounded-xl group-hover:bg-indigo-50 transition-all">
+                    <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">{t('projectList.runningVersions')}</div>
+                    <div className="text-xl font-black text-gray-900">{proj.running_versions ?? 0}</div>
+                  </div>
                 </div>
-                <div>
-                  <h3 className="text-sm font-black text-gray-900 uppercase truncate max-w-[200px]">{proj.name}</h3>
-                  <span className="text-[10px] font-mono text-gray-400 uppercase">{t('common.id')}: {proj.id}</span>
-                </div>
-              </div>
+              </Link>
               <div className="pt-4 border-t border-gray-50 flex items-center justify-between">
-                 <span className="text-[10px] font-bold text-gray-400 uppercase">{t('projectList.workspaceActive')}</span>
-                 <div className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-500 uppercase">
-                    <div className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> {t('projectList.ready')}
-                 </div>
+                    <span className="text-[10px] font-bold text-gray-400 uppercase">
+                      {proj.status === 'active' 
+                        ? t('projectList.workspaceActive')
+                        : proj.has_versions 
+                          ? expertsEnabledLabel(proj.enabled_experts_count ?? 0)
+                          : t('projectList.emptyWorkspace') || 'Empty workspace'
+                      }
+                    </span>
+                {proj.status !== 'empty' && (
+                  <div className={`flex items-center gap-1.5 text-[10px] font-bold uppercase ${
+                    proj.status === 'active' 
+                      ? 'text-amber-500' 
+                      : 'text-emerald-500'
+                  }`}>
+                    <div className={`h-1.5 w-1.5 rounded-full ${
+                      proj.status === 'active' 
+                        ? 'bg-amber-500' 
+                        : 'bg-emerald-500'
+                    }`} /> 
+                    {proj.status === 'active' 
+                      ? t('projectList.running') || 'Running'
+                      : t('projectList.ready') 
+                    }
+                  </div>
+                )}
               </div>
-            </Link>
+            </div>
           ))}
+          {filteredProjects.length === 0 && searchTerm && (
+            <div className="col-span-full text-center py-20 bg-white rounded-2xl border border-gray-200 border-dashed">
+              <div className="max-w-xs mx-auto flex flex-col items-center gap-4">
+                <Search size={48} className="text-gray-200" />
+                <p className="text-sm font-bold text-gray-400 uppercase tracking-widest leading-relaxed">
+                  {t('projectList.noSearchResults') || 'No projects match your search'}
+                </p>
+              </div>
+            </div>
+          )}
           {projects.length === 0 && (
             <div className="col-span-full text-center py-20 bg-white rounded-2xl border border-gray-200 border-dashed">
               <div className="max-w-xs mx-auto flex flex-col items-center gap-4">

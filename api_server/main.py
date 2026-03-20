@@ -27,32 +27,32 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 from models.events import dump_event, validate_event_payload
-from routers import projects, management
+from routers import config, projects, management
 from services import orchestrator_service as orch
-from registry.agent_registry import AgentRegistry
+from registry.expert_registry import ExpertRegistry
 
 
 # --- Lifespan for startup/shutdown ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize resources on startup, cleanup on shutdown."""
-    # Startup: Initialize AgentRegistry
+    # Startup: Initialize ExpertRegistry
     base_dir = Path(__file__).resolve().parent.parent
     try:
-        registry = AgentRegistry.initialize(base_dir)
+        registry = ExpertRegistry.initialize(base_dir)
         stats = registry.get_stats()
-        print(f"[Startup] AgentRegistry initialized: {stats['total_agents']} agents loaded")
+        print(f"[Startup] ExpertRegistry initialized: {stats['total_experts']} experts loaded")
         if stats['load_errors']:
             for error in stats['load_errors']:
                 print(f"[Startup] Warning: {error}")
     except Exception as e:
-        print(f"[Startup] Failed to initialize AgentRegistry: {e}")
+        print(f"[Startup] Failed to initialize ExpertRegistry: {e}")
     
     yield  # Application runs here
     
     # Shutdown: Cleanup
-    AgentRegistry.reset()
-    print("[Shutdown] AgentRegistry cleaned up")
+    ExpertRegistry.reset()
+    print("[Shutdown] ExpertRegistry cleaned up")
 
 
 # --- 巧妙的日志过滤器 ---
@@ -93,6 +93,9 @@ app.add_middleware(
 
 app.include_router(projects.router)
 app.include_router(management.router)
+app.include_router(management.expert_center_router)
+app.include_router(config.router)
+app.include_router(config.system_router)
 
 @app.get("/api/v1/jobs/{job_id}/status")
 async def get_job_status_stream(request: Request, job_id: str):

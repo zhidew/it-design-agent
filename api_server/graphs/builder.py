@@ -10,6 +10,23 @@ CHECKPOINTS_DIR = BASE_DIR / "projects" / ".orchestrator"
 CHECKPOINT_DB_PATH = CHECKPOINTS_DIR / "langgraph-checkpoints.sqlite"
 
 
+def _get_agents_from_registry() -> list[str]:
+    """Dynamically get agent list from ExpertRegistry.
+    
+    This enables hot-pluggable experts - new experts are automatically
+    included in the workflow without code changes.
+    """
+    builtin_agents = {"validator", "design-assembler"}
+    
+    try:
+        from registry.expert_registry import ExpertRegistry
+        registry = ExpertRegistry.get_instance()
+        return list(set(registry.get_capabilities()) | builtin_agents)
+    except RuntimeError:
+        # Fallback for when registry is not initialized (e.g., during tests)
+        return list(builtin_agents)
+
+
 def create_design_graph(checkpointer=None):
     workflow = StateGraph(DesignState)
 
@@ -17,19 +34,8 @@ def create_design_graph(checkpointer=None):
     workflow.add_node("planner", planner_node)
     workflow.add_node("supervisor", supervisor)
 
-    agents = [
-        "architecture-mapping",
-        "integration-design",
-        "data-design",
-        "ddd-structure",
-        "flow-design",
-        "api-design",
-        "config-design",
-        "test-design",
-        "ops-readiness",
-        "design-assembler",
-        "validator",
-    ]
+    # Dynamically get agents from registry (hot-pluggable)
+    agents = _get_agents_from_registry()
 
     for agent in agents:
         workflow.add_node(agent, create_worker_node(agent))

@@ -6,8 +6,11 @@ from typing import Any, Callable, Dict, Optional, TYPE_CHECKING
 
 from .extract_structure import extract_structure
 from .extract_lookup_values import extract_lookup_values
+from .clone_repository import clone_repository
 from .grep_search import grep_search
 from .list_files import list_files
+from .query_database import query_database
+from .query_knowledge_base import query_knowledge_base
 from .read_file_chunk import read_file_chunk
 from .write_file import write_file
 from .patch_file import patch_file
@@ -133,6 +136,17 @@ def _run_list_files(tool_input: Dict[str, Any]) -> Dict[str, Any]:
     return list_files(_require_root_dir(tool_input), tool_input)
 
 
+def _run_clone_repository(tool_input: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        return clone_repository(_require_root_dir(tool_input), tool_input)
+    except ValueError as exc:
+        raise ToolInputError(TOOL_ERROR_INVALID_INPUT, str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise ToolInputError(TOOL_ERROR_NOT_FOUND, str(exc)) from exc
+    except RuntimeError as exc:
+        raise ToolInputError(TOOL_ERROR_INTERNAL, str(exc)) from exc
+
+
 def _run_extract_structure(tool_input: Dict[str, Any]) -> Dict[str, Any]:
     try:
         return extract_structure(_require_root_dir(tool_input), tool_input)
@@ -163,6 +177,24 @@ def _run_extract_lookup_values(tool_input: Dict[str, Any]) -> Dict[str, Any]:
         raise ToolInputError(TOOL_ERROR_INVALID_INPUT, str(exc)) from exc
 
 
+def _run_query_database(tool_input: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        return query_database(_require_root_dir(tool_input), tool_input)
+    except ValueError as exc:
+        raise ToolInputError(TOOL_ERROR_INVALID_INPUT, str(exc)) from exc
+    except RuntimeError as exc:
+        raise ToolInputError(TOOL_ERROR_INTERNAL, str(exc)) from exc
+
+
+def _run_query_knowledge_base(tool_input: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        return query_knowledge_base(_require_root_dir(tool_input), tool_input)
+    except ValueError as exc:
+        raise ToolInputError(TOOL_ERROR_INVALID_INPUT, str(exc)) from exc
+    except RuntimeError as exc:
+        raise ToolInputError(TOOL_ERROR_INTERNAL, str(exc)) from exc
+
+
 def _run_write_file(tool_input: Dict[str, Any]) -> Dict[str, Any]:
     try:
         return write_file(_require_root_dir(tool_input), tool_input)
@@ -190,10 +222,13 @@ def _run_run_command(tool_input: Dict[str, Any]) -> Dict[str, Any]:
 
 _TOOL_REGISTRY: Dict[str, Callable[[Dict[str, Any]], Dict[str, Any]]] = {
     "list_files": _run_list_files,
+    "clone_repository": _run_clone_repository,
     "extract_structure": _run_extract_structure,
     "grep_search": _run_grep_search,
     "read_file_chunk": _run_read_file_chunk,
     "extract_lookup_values": _run_extract_lookup_values,
+    "query_database": _run_query_database,
+    "query_knowledge_base": _run_query_knowledge_base,
     "write_file": _run_write_file,
     "patch_file": _run_patch_file,
     "run_command": _run_run_command,
