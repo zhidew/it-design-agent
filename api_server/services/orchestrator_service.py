@@ -7,6 +7,7 @@ import shutil
 import sqlite3
 import uuid
 from pathlib import Path
+from typing import Optional
 
 import yaml
 
