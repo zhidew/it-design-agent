@@ -398,7 +398,9 @@ def _build_task_queue(active_agents: set[str]) -> List[Task]:
             })
 
     # Add design-assembler (depends on all other active agents)
-    if "design-assembler" in active_agents or len([t for t in tasks if t["id"] != "0"]) > 0:
+    # Only auto-include if there are other experts to assemble
+    has_other_experts = len([t for t in tasks if t["id"] != "0"]) > 0
+    if ("design-assembler" in active_agents or has_other_experts) and has_other_experts:
         current_ids = [task["id"] for task in tasks if task["id"] != "0"]
         assembler_id = str(task_counter)
         task_counter += 1
@@ -413,7 +415,7 @@ def _build_task_queue(active_agents: set[str]) -> List[Task]:
         print(f"[DEBUG] _build_task_queue: Added design-assembler (auto-included), dependencies: {current_ids}")
 
     # Add validator (depends on design-assembler)
-    if "validator" in active_agents:
+    if "validator" in active_agents and has_other_experts:
         validator_id = str(task_counter)
         task_counter += 1
         task_id_map["validator"] = validator_id
@@ -866,6 +868,32 @@ Output JSON format:
             "tool_results": tool_results,
         }
     
+    if not active_agents:
+        print("[DEBUG] Planner: No active_agents selected by LLM.")
+        reasoning_sections = [
+            "### LLM Orchestration Reasoning",
+            "",
+            llm_decision.reasoning,
+            "",
+            "**Status:** Failed - No experts selected for the current requirement.",
+        ]
+        reasoning_content = "\n".join(reasoning_sections)
+        (project_path / "logs" / "planner-reasoning.md").write_text(reasoning_content, encoding="utf-8")
+        
+        return {
+            "workflow_phase": "ANALYSIS",
+            "task_queue": _planner_success_task(), # Use success task for planner itself
+            "history": [
+                "[SYSTEM] Planner: No suitable experts identified for the provided requirement.",
+            ],
+            "human_intervention_required": False,
+            "waiting_reason": "No design experts selected. Please refine your requirement and try again.",
+            "run_status": "failed",
+            "last_worker": "planner",
+            "current_node": "planner",
+            "tool_results": tool_results,
+        }
+
     # Build task queue only when we have a clear pipeline
     tasks = _build_task_queue(active_agents)
     print(f"[DEBUG] Planner: task_queue built with {len(tasks)} tasks: {[t['agent_type'] for t in tasks]}")

@@ -991,15 +991,17 @@ export function ProjectDetail() {
     if (selectedNode !== 'planner') {
       return null;
     }
-    if (selectedPipeline.length === 0) {
+    const queuedTasks = workflowState?.task_queue ?? [];
+    const nonPlannerTasks = queuedTasks.filter((task) => task.agent_type !== 'planner');
+    
+    // Don't show chart if no experts are selected (only planner)
+    if (nonPlannerTasks.length === 0 && selectedPipeline.length === 0) {
       return null;
     }
 
     const toNodeId = (agentId: string) => agentId.replace(/[^a-zA-Z0-9]/g, '_');
     const lines = ['flowchart LR'];
-    const queuedTasks = workflowState?.task_queue ?? [];
     const taskMap = new Map(queuedTasks.map((task) => [task.id, task]));
-    const nonPlannerTasks = queuedTasks.filter((task) => task.agent_type !== 'planner');
 
     lines.push('requirements["Input Materials"]');
     lines.push('planner["Planner"]');
@@ -1138,7 +1140,7 @@ export function ProjectDetail() {
       .filter((option): option is InterruptOption => option !== null);
   }, [pendingInterrupt]);
   const hasPendingTodoTasks = useMemo(
-    () => Boolean(workflowState?.task_queue?.some((task) => task.status === 'todo')),
+    () => Boolean(workflowState?.task_queue?.some((task) => task.agent_type !== 'planner' && task.status === 'todo')),
     [workflowState?.task_queue],
   );
 
