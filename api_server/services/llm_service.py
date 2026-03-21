@@ -18,12 +18,20 @@ class SubagentOutput(BaseModel):
     reasoning: str = Field(description="LLM reasoning process and decision logic (Markdown format)")
     artifacts: dict[str, str] = Field(description="Generated files dictionary, key is filename, value is content.")
 
+from services.log_service import save_llm_interaction
+
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
+
 def generate_with_llm(
     system_prompt: str,
     user_prompt: str,
     expected_files: list[str],
     max_retries: int = 2,
     llm_settings: dict | None = None,
+    project_id: str | None = None,
+    version: str | None = None,
+    node_id: str | None = None,
+    include_full_artifacts_in_log: bool = False,
 ) -> SubagentOutput:
     """
     Generic LLM generator that enforces output containing reasoning log and specified file contents in JSON.
@@ -48,6 +56,12 @@ def generate_with_llm(
     """
 
     last_error = None
+    model_name = ""
+    if provider == "gemini":
+        model_name = _resolve_llm_setting(llm_settings, "gemini_model_name", "GEMINI_MODEL_NAME", "gemini-2.0-flash")
+    else:
+        model_name = _resolve_llm_setting(llm_settings, "openai_model_name", "OPENAI_MODEL_NAME", "gpt-4o")
+
     for attempt in range(max_retries + 1):
         try:
             raw_data = None
@@ -56,6 +70,22 @@ def generate_with_llm(
             else:
                 raw_data = _call_openai_raw(enhanced_system_prompt, user_prompt, llm_settings=llm_settings)
             
+            # Log interaction if project info is provided
+            if project_id and version:
+                save_llm_interaction(
+                    project_id=project_id,
+                    version=version,
+                    base_dir=BASE_DIR,
+                    node_id=node_id or "unknown",
+                    system_prompt=enhanced_system_prompt,
+                    user_prompt=user_prompt,
+                    response=raw_data,
+                    provider=provider,
+                    model=model_name,
+                    status="success",
+                    include_full_artifacts=include_full_artifacts_in_log
+                )
+
             # --- Robust data repair logic ---
             # 1. Ensure artifacts is a dict
             artifacts = raw_data.get("artifacts", {})
@@ -87,10 +117,38 @@ def generate_with_llm(
         except json.JSONDecodeError as e:
             last_error = e
             print(f"  [LLM Service] JSON parse failed (attempt {attempt + 1}/{max_retries + 1}): {e}")
+            if project_id and version:
+                save_llm_interaction(
+                    project_id=project_id,
+                    version=version,
+                    base_dir=BASE_DIR,
+                    node_id=node_id or "unknown",
+                    system_prompt=enhanced_system_prompt,
+                    user_prompt=user_prompt,
+                    response=None,
+                    provider=provider,
+                    model=model_name,
+                    status="error",
+                    error=f"JSONDecodeError: {str(e)}"
+                )
             time.sleep(2)
         except Exception as e:
             last_error = e
             print(f"  [LLM Service] Data validation/call failed (attempt {attempt + 1}/{max_retries + 1}): {e}")
+            if project_id and version:
+                save_llm_interaction(
+                    project_id=project_id,
+                    version=version,
+                    base_dir=BASE_DIR,
+                    node_id=node_id or "unknown",
+                    system_prompt=enhanced_system_prompt,
+                    user_prompt=user_prompt,
+                    response=None,
+                    provider=provider,
+                    model=model_name,
+                    status="error",
+                    error=f"Exception: {str(e)}"
+                )
             time.sleep(2)
             
     raise Exception(f"LLM generation failed after {max_retries} retries. Last error: {last_error}")

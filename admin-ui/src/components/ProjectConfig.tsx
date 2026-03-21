@@ -63,26 +63,6 @@ interface ModelConfig {
   description?: string;
 }
 
-interface LlmConfigState {
-  llm_provider: string;
-  openai_api_key: string;
-  openai_base_url: string;
-  openai_model_name: string;
-  gemini_api_key: string;
-  gemini_model_name: string;
-  has_openai_api_key?: boolean;
-  has_gemini_api_key?: boolean;
-}
-
-const EMPTY_LLM_CONFIG: LlmConfigState = {
-  llm_provider: 'openai',
-  openai_api_key: '',
-  openai_base_url: '',
-  openai_model_name: '',
-  gemini_api_key: '',
-  gemini_model_name: '',
-};
-
 const createModel = (): ModelConfig => ({
   id: Math.random().toString(36).substring(2, 9),
   name: '',
@@ -150,7 +130,6 @@ export function ProjectConfig() {
   const [databases, setDatabases] = useState<DatabaseConfig[]>([]);
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseConfig[]>([]);
   const [experts, setExperts] = useState<ExpertConfig[]>([]);
-  const [llmConfig, setLlmConfig] = useState<LlmConfigState>(EMPTY_LLM_CONFIG);
   const [models, setModels] = useState<ModelConfig[]>([]);
   const [isModelModalOpen, setIsModelModalOpen] = useState(false);
   const [editingModel, setEditingModel] = useState<ModelConfig | null>(null);
@@ -216,7 +195,7 @@ export function ProjectConfig() {
     setLoading(true);
     setMessage(null);
     try {
-      const [repoRes, dbRes, kbRes, expertRes, llmRes, modelRes] = await Promise.all([
+      const [repoRes, dbRes, kbRes, expertRes, modelRes] = await Promise.all([
         api.getRepositoryConfigs(projectId),
         api.getDatabaseConfigs(projectId),
         api.getKnowledgeBaseConfigs(projectId),
@@ -228,16 +207,6 @@ export function ProjectConfig() {
       setDatabases(dbRes.databases || []);
       setKnowledgeBases(kbRes.knowledge_bases || []);
       setExperts(expertRes.experts || []);
-      setLlmConfig({
-        llm_provider: llmRes.llm_provider || 'openai',
-        openai_api_key: '',
-        openai_base_url: llmRes.openai_base_url || '',
-        openai_model_name: llmRes.openai_model_name || '',
-        gemini_api_key: '',
-        gemini_model_name: llmRes.gemini_model_name || '',
-        has_openai_api_key: llmRes.has_openai_api_key || false,
-        has_gemini_api_key: llmRes.has_gemini_api_key || false,
-      });
       setModels(modelRes.models || []);
     } catch {
       setMessage({ type: 'error', text: t('projectConfig.messages.loadError') });

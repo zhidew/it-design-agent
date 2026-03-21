@@ -777,7 +777,15 @@ Output JSON format:
 
     try:
         print("[DEBUG] Planner: Calling LLM for intent analysis...")
-        llm_decision = await asyncio.to_thread(generate_with_llm, system_prompt, user_prompt, ["active_agents"])
+        llm_decision = await asyncio.to_thread(
+            generate_with_llm, 
+            system_prompt, 
+            user_prompt, 
+            ["active_agents"],
+            project_id=project_id,
+            version=version,
+            node_id="planner"
+        )
 
         decision_data = json.loads(llm_decision.artifacts.get("active_agents", "[]"))
         if isinstance(decision_data, dict):

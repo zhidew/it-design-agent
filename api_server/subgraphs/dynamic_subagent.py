@@ -186,7 +186,7 @@ Requirements:
 
 
 def default_next_react_decision(
-    generate_with_llm_fn: Callable[[str, str, List[str]], SubagentOutput],
+    generate_with_llm_fn: Callable[[str, str, List[str], int, Dict[str, Any] | None, str | None, str | None, str | None], SubagentOutput],
     capability: str,
     project_id: str,
     version: str,
@@ -242,7 +242,14 @@ def default_next_react_decision(
         indent=2,
     )
     
-    llm_output = generate_with_llm_fn(system_prompt, user_prompt, ["decision"])
+    llm_output = generate_with_llm_fn(
+        system_prompt, 
+        user_prompt, 
+        ["decision"],
+        project_id=project_id,
+        version=version,
+        node_id=f"{capability}-react-step-{step}"
+    )
     raw_decision = llm_output.artifacts.get("decision", "")
     
     try:
@@ -264,7 +271,7 @@ def default_next_react_decision(
 
 
 def default_generate_final_artifacts(
-    generate_with_llm_fn: Callable[[str, str, List[str]], SubagentOutput],
+    generate_with_llm_fn: Callable[[str, str, List[str], int, Dict[str, Any] | None, str | None, str | None, str | None], SubagentOutput],
     capability: str,
     project_id: str,
     version: str,
@@ -302,7 +309,14 @@ def default_generate_final_artifacts(
         indent=2,
     )
     
-    return generate_with_llm_fn(system_prompt, user_prompt, expected_files)
+    return generate_with_llm_fn(
+        system_prompt, 
+        user_prompt, 
+        expected_files,
+        project_id=project_id,
+        version=version,
+        node_id=f"{capability}-final"
+    )
 
 
 def _fallback_decision(candidate_files: List[str]) -> Dict[str, Any]:
@@ -391,7 +405,7 @@ async def run_dynamic_subagent(
     capability: str,
     state: Dict[str, Any],
     base_dir: Path,
-    generate_with_llm_fn: Callable[[str, str, List[str]], SubagentOutput],
+    generate_with_llm_fn: Callable[[str, str, List[str], int, Dict[str, Any] | None, str | None, str | None, str | None], SubagentOutput],
     execute_tool_fn: Callable[[str, Dict[str, Any] | None], Dict[str, Any]],
     update_task_status_fn: Callable[[List[Dict[str, Any]], str, str], List[Dict[str, Any]]],
     agent_config: Optional["AgentFullConfig"] = None,
