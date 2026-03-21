@@ -8,6 +8,9 @@ scheduling:
   priority: 50
   dependencies:
     - flow-design
+    - api-design
+    - integration-design
+    - ops-design
 policies:
   asset_baseline_required: true
   evidence_required: true

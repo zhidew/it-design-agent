@@ -43,8 +43,11 @@
     "hasVersions": "{{count}} 个版本",
     "emptyWorkspace": "空工作空间",
     "workspaceActive": "工作空间活跃",
-    "totalVersions": "总版本数",
-    "runningVersions": "运行中",
+    "total": "总计",
+    "success": "成功",
+    "failed": "失败",
+    "waiting": "等待",
+    "unknown": "其他",
     "hasExpertsEnabled": "{{count}} 个专家启用"
   },
   "projectDetail": {
@@ -52,7 +55,7 @@
     "noVersion": "无版本",
     "activeProject": "活跃工作空间",
     "newDesignRun": "新建设计会话",
-    "startDesign": "启动编排",
+    "startDesign": "启动设计",
     "uploadIR": "IT需求文档",
     "uploadPhysical": "物理数据模型",
     "uploadLogical": "逻辑数据模型",
@@ -344,7 +347,13 @@
     "MODELING": "领域与数据建模",
     "INTERFACE": "流程与集成",
     "QUALITY": "测试与运维",
-    "DELIVERY": "聚合与审核"
+    "DELIVERY": "聚合与审核",
+    "initializing": "初始化中...",
+    "waiting": "等待中..."
+  },
+  "pipeline": {
+    "preparing": "正在准备流水线...",
+    "expertsWaiting": "设计专家正在等待加载..."
   },
   "agents": {
     "planner": "任务分解",

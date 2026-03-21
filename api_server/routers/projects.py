@@ -55,7 +55,7 @@ async def delete_project_version(project_id: str, version: str):
 
 @router.post("/{project_id}/versions/{version}/run", response_model=JobResponse)
 async def run_design_orchestrator(project_id: str, version: str, req: VersionRunRequest):
-    job_id = orch.trigger_orchestrator(project_id, version, req.requirement_text)
+    job_id = orch.trigger_orchestrator(project_id, version, req.requirement_text, req.model)
     return {"job_id": job_id, "status": "queued", "message": "Orchestrator job queued."}
 
 @router.get("/{project_id}/versions/{version}/artifacts")

@@ -628,8 +628,6 @@ def _handle_structured_graph_event(
         elif payload.get("human_intervention_required"):
             completed_status = "skipped"
 
-    _emit_node_completed(job_id, run_id, node_id, node_type, completed_status)
-
     for history_entry in payload.get("history", []):
         _append_job_log(job_id, history_entry)
         _emit_text_delta(job_id, run_id, node_id, node_type, history_entry, "history")
@@ -652,6 +650,8 @@ def _handle_structured_graph_event(
             interrupt_id=pending_interrupt.get("interrupt_id"),
             context=pending_interrupt.get("context") or {},
         )
+
+    _emit_node_completed(job_id, run_id, node_id, node_type, completed_status)
 
     if node_name == "bootstrap":
         resume_target_node = payload.get("resume_target_node")
@@ -753,6 +753,7 @@ def _build_graph_input_state(
     *,
     resume_action: str | None = None,
     feedback: str = "",
+    model: str | None = None,
 ) -> dict:
     messages = list((persisted_state or {}).get("messages", []))
     history = list((persisted_state or {}).get("history", []))
@@ -769,12 +770,33 @@ def _build_graph_input_state(
             f"[HUMAN] Action: {resume_action}. Feedback: {feedback or 'None'}"
         )
 
+    design_context = (persisted_state or {}).get("design_context", {})
+    if model:
+        design_context["model"] = model
+        # Try to lookup specific config for this model ID in the project
+        try:
+            from services.db_service import metadata_db
+            project_models = metadata_db.list_project_models(project_id, include_secrets=True)
+            # Find the model by ID (passed from frontend selectedModel)
+            model_config = next((m for m in project_models if m["id"] == model), None)
+            if model_config:
+                design_context["model_config"] = {
+                    "provider": model_config["provider"],
+                    "api_key": model_config["api_key"],
+                    "base_url": model_config["base_url"],
+                    "model_name": model_config["model_name"]
+                }
+                # Also set the model_name for easy access
+                design_context["model"] = model_config["model_name"]
+        except Exception as e:
+            print(f"[ERROR] Failed to lookup model config for {model}: {e}")
+
     state = {
         "project_id": project_id,
         "version": version,
         "run_id": job_id,
         "requirement": requirement_text or (persisted_state or {}).get("requirement", ""),
-        "design_context": (persisted_state or {}).get("design_context", {}),
+        "design_context": design_context,
         "task_queue": _build_resume_task_queue(persisted_state or {}, resume_action or "", resume_target_node),
         "workflow_phase": (persisted_state or {}).get("workflow_phase", "INIT"),
         "history": _initial_history(project_id, history),
@@ -806,6 +828,7 @@ async def run_orchestrator_task(
     resume_action: str | None = None,
     feedback: str = "",
     persisted_state_override: dict | None = None,
+    model: str | None = None,
 ):
     thread_id = _thread_id(project_id, version)
     print(f"\n[DEBUG] Starting/Resuming Job: {job_id} for Thread: {thread_id}")
@@ -838,6 +861,7 @@ async def run_orchestrator_task(
             persisted_state,
             resume_action=resume_action,
             feedback=feedback,
+            model=model,
         )
 
         config = _graph_config(project_id, version, job_id)
@@ -1193,7 +1217,7 @@ async def continue_workflow(project_id: str, version: str):
     return True
 
 
-def trigger_orchestrator(project_id: str, version: str, requirement_text: str) -> str:
+def trigger_orchestrator(project_id: str, version: str, requirement_text: str, model: str | None = None) -> str:
     job_id = str(uuid.uuid4())
     _ensure_job(job_id)
     jobs[job_id]["status"] = RUN_STATUS_QUEUED
@@ -1207,7 +1231,7 @@ def trigger_orchestrator(project_id: str, version: str, requirement_text: str) -
     )
     _launch_runtime_task(
         _thread_id(project_id, version),
-        run_orchestrator_task(job_id, project_id, version, requirement_text),
+        run_orchestrator_task(job_id, project_id, version, requirement_text, model=model),
     )
     return job_id
 
@@ -1238,12 +1262,27 @@ def list_projects():
             if d.is_dir() and not d.name.startswith("."):
                 metadata_db.upsert_project(d.name, d.name)
     
-    return metadata_db.list_projects()
+    # Pass runtime states to merge with DB states
+    return metadata_db.list_projects(runtime_states=runtime_registry)
 
 
 def create_project(project_id: str, name: Optional[str] = None, description: Optional[str] = None):
     (PROJECTS_DIR / project_id).mkdir(parents=True, exist_ok=True)
     metadata_db.upsert_project(project_id, name or project_id, description)
+    
+    # Initialize all experts as enabled by default (for backward compatibility)
+    try:
+        from registry.expert_registry import ExpertRegistry
+        registry = ExpertRegistry.get_instance()
+        for manifest in registry.get_all_manifests():
+            metadata_db.upsert_project_expert(project_id, {
+                "id": manifest.capability,
+                "enabled": True,
+                "description": manifest.description
+            })
+        print(f"[Project] Initialized {len(registry.get_all_manifests())} experts for project {project_id}")
+    except RuntimeError:
+        print(f"[Project] Warning: ExpertRegistry not initialized, cannot setup default experts")
 
 
 def list_versions(project_id: str, page: int = 1, page_size: int = 10):

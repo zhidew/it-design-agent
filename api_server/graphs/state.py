@@ -26,6 +26,10 @@ def merge_task_queue(
 ) -> List["Task"]:
     current = current or []
     incoming = incoming or []
+    if any(task.get("agent_type") == "planner" for task in incoming):
+        # Planner outputs represent the authoritative execution plan for the run.
+        # Replace the entire queue so stale expert nodes from an earlier plan cannot survive.
+        return [dict(task) for task in incoming]
     merged_by_id: Dict[str, Task] = {task["id"]: dict(task) for task in current}
     order = [task["id"] for task in current]
 
@@ -73,6 +77,8 @@ def merge_run_status(current: RunStatus, incoming: RunStatus) -> RunStatus:
 class Task(TypedDict, total=False):
     id: str
     agent_type: str
+    stage: int
+    phase: str
     priority: int
     input_keys: List[str]
     status: NodeStatus

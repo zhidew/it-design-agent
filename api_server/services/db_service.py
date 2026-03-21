@@ -225,6 +225,24 @@ class MetadataDB:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS project_model_configs (
+                    id TEXT NOT NULL,
+                    project_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    api_key TEXT,
+                    base_url TEXT,
+                    model_name TEXT NOT NULL,
+                    is_default INTEGER DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (project_id, id),
+                    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+                )
+                """
+            )
             conn.commit()
 
     def _load_env_lines(self) -> List[str]:
@@ -261,6 +279,104 @@ class MetadataDB:
             result["gemini_api_key"] = self.codec.mask(gemini_api_key)
         return result
 
+    def upsert_project_model(self, project_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        now = self._utcnow()
+        model_id = payload.get("id")
+        existing = self.get_project_model(project_id, model_id, include_secrets=True) if model_id else None
+
+        api_key = payload.get("api_key")
+        encrypted_api_key = (
+            self.codec.encrypt(api_key)
+            if api_key not in (None, "", "******")
+            else (existing.get("_api_key_encrypted") if existing else None)
+        )
+
+        with self._get_connection() as conn:
+            if payload.get("is_default"):
+                # Reset other default models for this project
+                conn.execute(
+                    "UPDATE project_model_configs SET is_default = 0 WHERE project_id = ?",
+                    (project_id,),
+                )
+
+            conn.execute(
+                """
+                INSERT INTO project_model_configs (
+                    id, project_id, name, provider, api_key, base_url, model_name, is_default, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(project_id, id) DO UPDATE SET
+                    name=excluded.name,
+                    provider=excluded.provider,
+                    api_key=excluded.api_key,
+                    base_url=excluded.base_url,
+                    model_name=excluded.model_name,
+                    is_default=excluded.is_default,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    model_id,
+                    project_id,
+                    payload.get("name"),
+                    payload.get("provider"),
+                    encrypted_api_key,
+                    payload.get("base_url"),
+                    payload.get("model_name"),
+                    1 if payload.get("is_default") else 0,
+                    (existing.get("created_at") if existing else now),
+                    now,
+                ),
+            )
+            conn.commit()
+        return self.get_project_model(project_id, model_id, include_secrets=False)
+
+    def list_project_models(self, project_id: str, include_secrets: bool = False) -> List[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM project_model_configs WHERE project_id = ? ORDER BY is_default DESC, updated_at DESC",
+                (project_id,),
+            ).fetchall()
+        return [self._row_to_model_config(dict(row), include_secrets=include_secrets) for row in rows]
+
+    def delete_project_model(self, project_id: str, model_id: str) -> bool:
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                "DELETE FROM project_model_configs WHERE project_id = ? AND id = ?",
+                (project_id, model_id),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def get_project_model(self, project_id: str, model_id: str, include_secrets: bool = False) -> Optional[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM project_model_configs WHERE project_id = ? AND id = ?",
+                (project_id, model_id),
+            ).fetchone()
+        return self._row_to_model_config(dict(row), include_secrets=include_secrets) if row else None
+
+    def _row_to_model_config(self, row: Dict[str, Any], include_secrets: bool) -> Dict[str, Any]:
+        encrypted_api_key = row.pop("api_key", None)
+        api_key = self.codec.decrypt(encrypted_api_key) if encrypted_api_key else None
+
+        result: Dict[str, Any] = {
+            "id": row["id"],
+            "project_id": row["project_id"],
+            "name": row["name"],
+            "provider": row["provider"],
+            "base_url": row["base_url"],
+            "model_name": row["model_name"],
+            "is_default": bool(row["is_default"]),
+            "has_api_key": bool(encrypted_api_key),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+        if include_secrets:
+            result["api_key"] = api_key
+            result["_api_key_encrypted"] = encrypted_api_key
+        else:
+            result["api_key"] = self.codec.mask(api_key)
+        return result
+
     def upsert_project(self, project_id: str, name: str, description: Optional[str] = None):
         now = self._utcnow()
         with self._get_connection() as conn:
@@ -282,7 +398,7 @@ class MetadataDB:
             row = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
         return dict(row) if row else None
 
-    def list_projects(self) -> List[Dict[str, Any]]:
+    def list_projects(self, runtime_states: Optional[Dict[str, Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
         with self._get_connection() as conn:
             rows = conn.execute("SELECT * FROM projects ORDER BY updated_at DESC").fetchall()
         
@@ -292,23 +408,52 @@ class MetadataDB:
             # Get project status info
             project_id = proj['id']
             
-            # Count versions
+            # Count versions with all status breakdown
             with self._get_connection() as conn:
                 version_rows = conn.execute(
-                    "SELECT run_status FROM versions WHERE project_id = ?",
+                    "SELECT version_id, run_status FROM versions WHERE project_id = ?",
                     (project_id,)
                 ).fetchall()
             
-            total_versions = len(version_rows)
-            running_versions = sum(1 for v in version_rows if v['run_status'] == 'running')
+            # Build version status map, overlay with runtime states
+            version_statuses = {v['version_id']: v['run_status'] for v in version_rows}
+            if runtime_states:
+                for version_id, rt_state in runtime_states.items():
+                    if rt_state.get('project_id') == project_id:
+                        rt_status = rt_state.get('run_status')
+                        if rt_status:
+                            version_statuses[version_id] = rt_status
+            
+            # Count all statuses
+            status_counts = {
+                'running': 0,
+                'success': 0,
+                'failed': 0,
+                'waiting_human': 0,
+                'queued': 0,
+                'unknown': 0,
+            }
+            for status in version_statuses.values():
+                if status in status_counts:
+                    status_counts[status] += 1
+                else:
+                    status_counts['unknown'] += 1
+            
+            total_versions = len(version_statuses)
             
             # Determine status
             has_versions = total_versions > 0
-            is_active = running_versions > 0
+            is_active = status_counts['running'] > 0 or status_counts['waiting_human'] > 0
             
             proj['total_versions'] = total_versions
             proj['enabled_experts_count'] = len(self.list_enabled_expert_ids(project_id))
-            proj['running_versions'] = running_versions
+            proj['running_versions'] = status_counts['running']
+            proj['success_versions'] = status_counts['success']
+            proj['failed_versions'] = status_counts['failed']
+            proj['waiting_versions'] = status_counts['waiting_human']
+            proj['queued_versions'] = status_counts['queued']
+            proj['unknown_versions'] = status_counts['unknown']
+            proj['status_counts'] = status_counts
             proj['has_versions'] = has_versions
             proj['is_active'] = is_active
             proj['status'] = 'active' if is_active else ('ready' if has_versions else 'empty')
@@ -502,7 +647,7 @@ class MetadataDB:
                     encrypted_password,
                     self._dumps_json(payload.get("schema_filter", [])),
                     payload.get("description"),
-                    existing.get("created_at") if existing else now,
+                    (existing.get("created_at") if existing and existing.get("created_at") else now),
                     now,
                 ),
             )
@@ -651,7 +796,7 @@ class MetadataDB:
                     project_id,
                     1 if payload.get("enabled", True) else 0,
                     payload.get("description"),
-                    existing.get("created_at") if existing else now,
+                    (existing.get("created_at") if existing and existing.get("created_at") else now),
                     now,
                 ),
             )
@@ -662,7 +807,7 @@ class MetadataDB:
             "name": payload.get("name", payload["id"]),
             "enabled": bool(payload.get("enabled", True)),
             "description": payload.get("description"),
-            "created_at": existing.get("created_at") if existing else now,
+            "created_at": (existing.get("created_at") if existing and existing.get("created_at") else now),
             "updated_at": now,
         }
 
@@ -682,15 +827,21 @@ class MetadataDB:
         except RuntimeError:
             manifests = []
 
+        # System experts that should not be configurable per project
+        system_experts = {"expert-creator"}
+
         experts: List[Dict[str, Any]] = []
         for manifest in manifests:
+            if manifest.capability in system_experts:
+                continue
+
             row = stored.pop(manifest.capability, None)
             experts.append(
                 {
                     "id": manifest.capability,
                     "project_id": project_id,
                     "name": manifest.name or manifest.capability,
-                    "enabled": bool(row["enabled"]) if row else True,
+                    "enabled": bool(row["enabled"]) if row else False,
                     "description": row["description"] if row and row.get("description") else manifest.description,
                     "created_at": row["created_at"] if row else None,
                     "updated_at": row["updated_at"] if row else None,
@@ -698,6 +849,9 @@ class MetadataDB:
             )
 
         for expert_id, row in stored.items():
+            if expert_id in system_experts:
+                continue
+
             experts.append(
                 {
                     "id": expert_id,
@@ -763,7 +917,7 @@ class MetadataDB:
                     payload.get("openai_model_name"),
                     encrypted_gemini_api_key,
                     payload.get("gemini_model_name"),
-                    existing.get("created_at") if existing else now,
+                    (existing.get("created_at") if existing and existing.get("created_at") else now),
                     now,
                 ),
             )

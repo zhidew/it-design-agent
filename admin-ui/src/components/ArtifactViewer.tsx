@@ -1,8 +1,6 @@
-import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { FileText, FileJson, Database } from 'lucide-react';
-import { Mermaid } from './Mermaid'; // Assuming we'll extract Mermaid too
 import { CodeBlock } from './CodeBlock'; // Assuming we'll extract CodeBlock too
 
 interface ArtifactViewerProps {
@@ -24,6 +22,42 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
     if (filename.endsWith('.sql')) return <Database size={16} className="text-purple-500" />;
     if (filename.endsWith('.yaml') || filename.endsWith('.json')) return <FileJson size={16} className="text-yellow-500" />;
     return <FileText size={16} className="text-blue-500" />;
+  };
+
+  const renderContent = () => {
+    if (!selectedFile) return null;
+    
+    let content = artifacts[selectedFile] || '';
+    
+    // For JSON files, try to pretty print
+    if (selectedFile.endsWith('.json')) {
+      try {
+        const parsed = JSON.parse(content);
+        content = '```json\n' + JSON.stringify(parsed, null, 2) + '\n```';
+      } catch (e) {
+        // Fallback to raw with highlighting if parse fails
+        content = '```json\n' + content + '\n```';
+      }
+    } else if (selectedFile.endsWith('.sql')) {
+      content = '```sql\n' + content + '\n```';
+    } else if (selectedFile.endsWith('.yaml') || selectedFile.endsWith('.yml')) {
+      content = '```yaml\n' + content + '\n```';
+    }
+
+    return (
+      <div className="flex-1 overflow-auto bg-white rounded-2xl border border-gray-100 shadow-sm p-6 sm:p-10 min-h-[500px] animate-in fade-in zoom-in-95 duration-300">
+        <div className="prose prose-sm prose-slate max-w-none prose-headings:text-gray-800 prose-headings:font-black prose-a:text-indigo-600 prose-strong:text-gray-900 prose-code:text-indigo-600 prose-pre:bg-transparent prose-pre:p-0">
+          <ReactMarkdown 
+            remarkPlugins={[remarkGfm]}
+            components={{
+              code: CodeBlock
+            }}
+          >
+            {content}
+          </ReactMarkdown>
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -53,20 +87,7 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
         )}
       </div>
 
-      {selectedFile && (
-        <div className="flex-1 overflow-auto bg-white rounded-2xl border border-gray-100 shadow-sm p-6 sm:p-10 min-h-[500px] animate-in fade-in zoom-in-95 duration-300">
-          <div className="prose prose-sm prose-slate max-w-none prose-headings:text-gray-800 prose-headings:font-black prose-a:text-indigo-600 prose-strong:text-gray-900 prose-code:text-indigo-600 prose-pre:bg-transparent prose-pre:p-0">
-            <ReactMarkdown 
-              remarkPlugins={[remarkGfm]}
-              components={{
-                code: CodeBlock
-              }}
-            >
-              {artifacts[selectedFile]}
-            </ReactMarkdown>
-          </div>
-        </div>
-      )}
+      {renderContent()}
     </div>
   );
 };

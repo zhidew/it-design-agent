@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
 import { ArrowLeft, BookOpen, Bot, Cpu, Database, FolderGit2, Plus, RefreshCw, Save, Settings2, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -51,6 +51,18 @@ interface ExpertConfig {
   description?: string;
 }
 
+interface ModelConfig {
+  id: string;
+  name: string;
+  provider: string;
+  model_name: string;
+  api_key?: string;
+  base_url?: string;
+  is_default: boolean;
+  has_api_key?: boolean;
+  description?: string;
+}
+
 interface LlmConfigState {
   llm_provider: string;
   openai_api_key: string;
@@ -70,6 +82,17 @@ const EMPTY_LLM_CONFIG: LlmConfigState = {
   gemini_api_key: '',
   gemini_model_name: '',
 };
+
+const createModel = (): ModelConfig => ({
+  id: Math.random().toString(36).substring(2, 9),
+  name: '',
+  provider: 'openai',
+  model_name: '',
+  api_key: '',
+  base_url: '',
+  is_default: false,
+  description: '',
+});
 
 const createRepository = (): RepositoryConfig => ({
   id: '',
@@ -128,6 +151,9 @@ export function ProjectConfig() {
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseConfig[]>([]);
   const [experts, setExperts] = useState<ExpertConfig[]>([]);
   const [llmConfig, setLlmConfig] = useState<LlmConfigState>(EMPTY_LLM_CONFIG);
+  const [models, setModels] = useState<ModelConfig[]>([]);
+  const [isModelModalOpen, setIsModelModalOpen] = useState(false);
+  const [editingModel, setEditingModel] = useState<ModelConfig | null>(null);
 
   const expertCopy = useMemo(() => {
     const isZh = i18n.language.toLowerCase().startsWith('zh');
@@ -160,8 +186,8 @@ export function ProjectConfig() {
       eyebrow: isZh ? '系统模型配置' : 'System Model Setup',
       title: isZh ? '大模型配置' : 'LLM CONFIG',
       description: isZh
-        ? '配置当前项目使用的模型提供商、网关地址、模型名称与密钥；未覆盖时回退系统默认。'
-        : 'Configure project-level provider, gateway URL, model names, and API keys. Unset fields fall back to system defaults.',
+        ? '配置当前项目使用的模型提供商、网关地址、模型名称与密钥。可以配置多个模型供执行时选择。'
+        : 'Configure project-level models. You can add multiple configurations to choose from during execution.',
       refresh: isZh ? '刷新配置' : 'Refresh Config',
       provider: isZh ? '模型提供商' : 'Provider',
       openaiBaseUrl: isZh ? 'OpenAI 网关地址' : 'OpenAI Base URL',
@@ -175,6 +201,13 @@ export function ProjectConfig() {
       saveSuccess: isZh ? '大模型配置已保存。' : 'LLM config saved.',
       saveError: isZh ? '保存大模型配置失败。' : 'Failed to save LLM config.',
       loadError: isZh ? '加载大模型配置失败。' : 'Failed to load LLM config.',
+      addModel: isZh ? '添加模型配置' : 'Add Model',
+      editModel: isZh ? '编辑模型' : 'Edit Model',
+      deleteModel: isZh ? '删除模型' : 'Delete Model',
+      modelName: isZh ? '显示名称' : 'Display Name',
+      modelId: isZh ? '模型 ID' : 'Model ID',
+      isDefault: isZh ? '设为默认' : 'Set as Default',
+      defaultLabel: isZh ? '默认' : 'Default',
     };
   }, [i18n.language]);
 
@@ -183,12 +216,13 @@ export function ProjectConfig() {
     setLoading(true);
     setMessage(null);
     try {
-      const [repoRes, dbRes, kbRes, expertRes, llmRes] = await Promise.all([
+      const [repoRes, dbRes, kbRes, expertRes, llmRes, modelRes] = await Promise.all([
         api.getRepositoryConfigs(projectId),
         api.getDatabaseConfigs(projectId),
         api.getKnowledgeBaseConfigs(projectId),
         api.getExpertConfigs(projectId),
         api.getProjectLlmConfig(projectId),
+        api.getProjectModels(projectId),
       ]);
       setRepositories(repoRes.repositories || []);
       setDatabases(dbRes.databases || []);
@@ -204,6 +238,7 @@ export function ProjectConfig() {
         has_openai_api_key: llmRes.has_openai_api_key || false,
         has_gemini_api_key: llmRes.has_gemini_api_key || false,
       });
+      setModels(modelRes.models || []);
     } catch {
       setMessage({ type: 'error', text: t('projectConfig.messages.loadError') });
     } finally {
@@ -311,24 +346,34 @@ export function ProjectConfig() {
     }
   };
 
-  const saveLlmConfig = async () => {
+  const saveModel = async (model: ModelConfig) => {
     if (!projectId) return;
     setSaving(true);
     try {
-      await api.saveProjectLlmConfig(projectId, {
-        llm_provider: llmConfig.llm_provider,
-        openai_api_key: llmConfig.openai_api_key || undefined,
-        openai_base_url: llmConfig.openai_base_url,
-        openai_model_name: llmConfig.openai_model_name,
-        gemini_api_key: llmConfig.gemini_api_key || undefined,
-        gemini_model_name: llmConfig.gemini_model_name,
+      await api.saveProjectModel(projectId, {
+        ...model,
+        api_key: model.api_key?.trim() ? model.api_key.trim() : undefined,
       });
-      setMessage({ type: 'success', text: llmCopy.saveSuccess });
+      setMessage({ type: 'success', text: t('common.saveSuccess') });
+      setIsModelModalOpen(false);
+      setEditingModel(null);
       await loadAll();
     } catch {
-      setMessage({ type: 'error', text: llmCopy.saveError });
+      setMessage({ type: 'error', text: t('common.saveError') });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleDeleteModel = async (modelId: string) => {
+    if (!projectId || !modelId) return;
+    if (!window.confirm(t('common.confirmDelete'))) return;
+    try {
+      await api.deleteProjectModel(projectId, modelId);
+      setMessage({ type: 'success', text: t('common.deleteSuccess') });
+      await loadAll();
+    } catch {
+      setMessage({ type: 'error', text: t('common.deleteError') });
     }
   };
 
@@ -650,94 +695,175 @@ export function ProjectConfig() {
             )}
 
             {activeTab === 'llm' && (
-              <section className="bg-white rounded-3xl border border-gray-100 shadow-sm p-8 space-y-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">{llmCopy.eyebrow}</div>
-                    <h2 className="text-xl font-black text-gray-900">{llmCopy.title}</h2>
-                    <p className="text-sm text-gray-500 mt-2">{llmCopy.description}</p>
+              <section className="space-y-6">
+                <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-8 space-y-6">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">{llmCopy.eyebrow}</div>
+                      <h2 className="text-xl font-black text-gray-900">{llmCopy.title}</h2>
+                      <p className="text-sm text-gray-500 mt-2">{llmCopy.description}</p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => {
+                          setEditingModel(createModel());
+                          setIsModelModalOpen(true);
+                        }}
+                        className="inline-flex items-center gap-2 px-4 py-2 bg-gray-100 rounded-xl text-xs font-black uppercase text-gray-700 hover:bg-gray-200 transition-all"
+                      >
+                        <Plus size={14} />
+                        {llmCopy.addModel}
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <button
-                      type="button"
-                      onClick={() => void loadAll()}
-                      disabled={loading}
-                      className="inline-flex items-center gap-2 px-4 py-2 bg-gray-100 rounded-xl text-xs font-black uppercase text-gray-700 hover:bg-gray-200 transition-all"
-                    >
-                      <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-                      {llmCopy.refresh}
-                    </button>
-                    <button onClick={() => void saveLlmConfig()} disabled={saving} className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-black uppercase hover:bg-indigo-700 transition-all disabled:opacity-50">
-                      <Save size={14} />
-                      {t('common.save')}
-                    </button>
+
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    {models.map((model) => (
+                      <div key={model.id} className={`rounded-2xl border p-5 transition-all flex flex-col justify-between gap-4 ${model.is_default ? 'border-indigo-200 bg-indigo-50/30' : 'border-gray-200 bg-white hover:border-indigo-100'}`}>
+                        <div className="flex items-start justify-between">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-black text-gray-900 truncate">{model.name}</span>
+                              {model.is_default && (
+                                <span className="px-1.5 py-0.5 rounded-md bg-indigo-600 text-white text-[8px] font-black uppercase tracking-wider">
+                                  {llmCopy.defaultLabel}
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[10px] font-mono text-gray-400 mt-1 flex items-center gap-2">
+                              <span className="uppercase">{model.provider}</span>
+                              <span className="w-1 h-1 rounded-full bg-gray-300" />
+                              <span>{model.model_name}</span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => {
+                                setEditingModel({ ...model, api_key: '' });
+                                setIsModelModalOpen(true);
+                              }}
+                              className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
+                              title={llmCopy.editModel}
+                            >
+                              <Settings2 size={14} />
+                            </button>
+                            <button
+                              onClick={() => void handleDeleteModel(model.id)}
+                              className="p-2 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"
+                              title={llmCopy.deleteModel}
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        </div>
+                        {model.description && <p className="text-[10px] text-gray-500 line-clamp-2">{model.description}</p>}
+                      </div>
+                    ))}
+                    {models.length === 0 && (
+                      <div className="md:col-span-2 rounded-2xl border border-dashed border-gray-200 p-10 text-center text-sm text-gray-400">
+                        {t('projectConfig.llm.empty') || 'No models configured yet.'}
+                      </div>
+                    )}
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">{llmCopy.provider}</div>
-                    <select
-                      value={llmConfig.llm_provider}
-                      onChange={(e) => setLlmConfig((prev) => ({ ...prev, llm_provider: e.target.value }))}
-                      className="w-full p-3 bg-white border border-gray-200 rounded-xl"
-                    >
-                      <option value="openai">OpenAI Compatible</option>
-                      <option value="gemini">Gemini</option>
-                    </select>
-                  </div>
-                  <div>
-                    <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">{llmCopy.openaiBaseUrl}</div>
-                    <input
-                      value={llmConfig.openai_base_url}
-                      onChange={(e) => setLlmConfig((prev) => ({ ...prev, openai_base_url: e.target.value }))}
-                      placeholder="https://api.openai.com/v1"
-                      className="w-full p-3 bg-white border border-gray-200 rounded-xl"
-                    />
-                  </div>
-                  <div>
-                    <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">{llmCopy.openaiModel}</div>
-                    <input
-                      value={llmConfig.openai_model_name}
-                      onChange={(e) => setLlmConfig((prev) => ({ ...prev, openai_model_name: e.target.value }))}
-                      placeholder="gpt-4o"
-                      className="w-full p-3 bg-white border border-gray-200 rounded-xl"
-                    />
-                  </div>
-                  <div>
-                    <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">{llmCopy.geminiModel}</div>
-                    <input
-                      value={llmConfig.gemini_model_name}
-                      onChange={(e) => setLlmConfig((prev) => ({ ...prev, gemini_model_name: e.target.value }))}
-                      placeholder="gemini-2.5-flash"
-                      className="w-full p-3 bg-white border border-gray-200 rounded-xl"
-                    />
-                  </div>
-                  <div>
-                    <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">
-                      {llmCopy.openaiKey} {llmConfig.has_openai_api_key ? `(${llmCopy.saved})` : ''}
+                {isModelModalOpen && editingModel && (
+                  <div className="bg-white rounded-3xl border border-indigo-100 shadow-xl p-8 space-y-6 animate-in slide-in-from-bottom-4 duration-300">
+                    <div className="flex items-center justify-between border-b border-gray-50 pb-4">
+                      <h3 className="text-lg font-black text-gray-900 uppercase tracking-tight flex items-center gap-3">
+                        <Cpu size={20} className="text-indigo-600" />
+                        {editingModel.id ? llmCopy.editModel : llmCopy.addModel}
+                      </h3>
+                      <button onClick={() => setIsModelModalOpen(false)} className="text-gray-400 hover:text-gray-600">
+                        <Trash2 size={18} />
+                      </button>
                     </div>
-                    <input
-                      type="password"
-                      value={llmConfig.openai_api_key}
-                      onChange={(e) => setLlmConfig((prev) => ({ ...prev, openai_api_key: e.target.value }))}
-                      placeholder={llmConfig.has_openai_api_key ? llmCopy.keepCurrent : llmCopy.enterKey}
-                      className="w-full p-3 bg-white border border-gray-200 rounded-xl"
-                    />
-                  </div>
-                  <div>
-                    <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">
-                      {llmCopy.geminiKey} {llmConfig.has_gemini_api_key ? `(${llmCopy.saved})` : ''}
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                      <div className="md:col-span-2">
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block">{llmCopy.modelName}</label>
+                        <input
+                          value={editingModel.name}
+                          onChange={(e) => setEditingModel({ ...editingModel, name: e.target.value })}
+                          placeholder="e.g. My Custom GPT-4"
+                          className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block">{llmCopy.provider}</label>
+                        <select
+                          value={editingModel.provider}
+                          onChange={(e) => setEditingModel({ ...editingModel, provider: e.target.value })}
+                          className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                        >
+                          <option value="openai">OpenAI Compatible</option>
+                          <option value="gemini">Gemini</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block">{llmCopy.modelId}</label>
+                        <input
+                          value={editingModel.model_name}
+                          onChange={(e) => setEditingModel({ ...editingModel, model_name: e.target.value })}
+                          placeholder="gpt-4o"
+                          className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                        />
+                      </div>
+
+                      <div className="md:col-span-2">
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block">{llmCopy.openaiBaseUrl}</label>
+                        <input
+                          value={editingModel.base_url || ''}
+                          onChange={(e) => setEditingModel({ ...editingModel, base_url: e.target.value })}
+                          placeholder="https://api.openai.com/v1"
+                          className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                        />
+                      </div>
+
+                      <div className="md:col-span-2">
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block">
+                          API Key {editingModel.has_api_key ? `(${llmCopy.saved})` : ''}
+                        </label>
+                        <input
+                          type="password"
+                          value={editingModel.api_key || ''}
+                          onChange={(e) => setEditingModel({ ...editingModel, api_key: e.target.value })}
+                          placeholder={editingModel.has_api_key ? llmCopy.keepCurrent : llmCopy.enterKey}
+                          className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                        />
+                      </div>
+
+                      <div className="md:col-span-2 flex items-center gap-3 p-1">
+                        <button
+                          type="button"
+                          onClick={() => setEditingModel({ ...editingModel, is_default: !editingModel.is_default })}
+                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${editingModel.is_default ? 'bg-indigo-600' : 'bg-gray-200'}`}
+                        >
+                          <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${editingModel.is_default ? 'translate-x-6' : 'translate-x-1'}`} />
+                        </button>
+                        <span className="text-xs font-bold text-gray-600">{llmCopy.isDefault}</span>
+                      </div>
                     </div>
-                    <input
-                      type="password"
-                      value={llmConfig.gemini_api_key}
-                      onChange={(e) => setLlmConfig((prev) => ({ ...prev, gemini_api_key: e.target.value }))}
-                      placeholder={llmConfig.has_gemini_api_key ? llmCopy.keepCurrent : llmCopy.enterKey}
-                      className="w-full p-3 bg-white border border-gray-200 rounded-xl"
-                    />
+
+                    <div className="flex items-center gap-3 pt-4 border-t border-gray-50">
+                      <button
+                        onClick={() => void saveModel(editingModel)}
+                        disabled={saving || !editingModel.name || !editingModel.model_name}
+                        className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 disabled:opacity-50"
+                      >
+                        {saving ? <RefreshCw size={16} className="animate-spin mx-auto" /> : llmCopy.saved}
+                      </button>
+                      <button
+                        onClick={() => setIsModelModalOpen(false)}
+                        className="px-8 py-4 bg-gray-100 text-gray-500 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-gray-200 transition-all"
+                      >
+                        {t('common.cancel')}
+                      </button>
+                    </div>
                   </div>
-                </div>
+                )}
               </section>
             )}
           </div>

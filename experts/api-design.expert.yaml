@@ -9,6 +9,7 @@ scheduling:
   dependencies:
     - data-design
     - ddd-structure
+    - integration-design
 tools:
   allowed:
     - clone_repository

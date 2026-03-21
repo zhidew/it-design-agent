@@ -6,6 +6,29 @@ export const apiClient = axios.create({
   baseURL: API_BASE_URL,
 });
 
+export interface ModelConfig {
+  id: string;
+  name: string;
+  provider: string;
+  model_name: string;
+  api_key?: string;
+  base_url?: string;
+  is_default: boolean;
+  has_api_key?: boolean;
+  description?: string;
+}
+
+export interface LlmConfig {
+  llm_provider: string;
+  openai_api_key?: string;
+  openai_base_url?: string;
+  openai_model_name?: string;
+  gemini_api_key?: string;
+  gemini_model_name?: string;
+  has_openai_api_key?: boolean;
+  has_gemini_api_key?: boolean;
+}
+
 export const api = {
   getProjects: () => apiClient.get('/projects').then(res => res.data),
   createProject: (name: string, description?: string) => 
@@ -14,8 +37,9 @@ export const api = {
     apiClient.get(`/projects/${projectId}/versions`, { params: { page, page_size: pageSize } }).then(res => res.data),
   deleteProjectVersion: (projectId: string, version: string) =>
     apiClient.delete(`/projects/${projectId}/versions/${version}`).then(res => res.data),
-  runOrchestrator: (projectId: string, version: string, requirementText: string) => 
-    apiClient.post(`/projects/${projectId}/versions/${version}/run`, { requirement_text: requirementText }).then(res => res.data),
+  runOrchestrator: (projectId: string, version: string, requirementText: string, model?: string) =>
+   apiClient.post(`/projects/${projectId}/versions/${version}/run`, { requirement_text: requirementText, model }).then(res => res.data),
+
   uploadBaselineFiles: (projectId: string, version: string, files: File[]) => {
     const formData = new FormData();
     files.forEach(file => formData.append('files', file));
@@ -109,6 +133,20 @@ export const api = {
     gemini_api_key?: string;
     gemini_model_name?: string;
   }) => apiClient.post(`/projects/${projectId}/config/llm`, payload).then(res => res.data),
+  getProjectModels: (projectId: string) =>
+    apiClient.get(`/projects/${projectId}/config/models`).then(res => res.data),
+  saveProjectModel: (projectId: string, payload: {
+    id: string;
+    name: string;
+    provider: string;
+    model_name: string;
+    api_key?: string;
+    base_url?: string;
+    is_default: boolean;
+    description?: string;
+  }) => apiClient.post(`/projects/${projectId}/config/models`, payload).then(res => res.data),
+  deleteProjectModel: (projectId: string, modelId: string) =>
+    apiClient.delete(`/projects/${projectId}/config/models/${modelId}`).then(res => res.data),
   getSystemLlmDefaults: () =>
     apiClient.get('/system/llm-config').then(res => res.data),
 };

@@ -14,6 +14,12 @@ interface Project {
   total_versions?: number;
   enabled_experts_count?: number;
   running_versions?: number;
+  success_versions?: number;
+  failed_versions?: number;
+  waiting_versions?: number;
+  queued_versions?: number;
+  unknown_versions?: number;
+  status_counts?: Record<string, number>;
   has_versions?: boolean;
   is_active?: boolean;
   status?: string;
@@ -203,15 +209,33 @@ export function ProjectList() {
                 </Link>
               </div>
               <Link to={`/projects/${proj.id}`} className="block">
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="p-3 bg-gray-50 rounded-xl group-hover:bg-indigo-50 transition-all">
-                    <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">{t('projectList.totalVersions')}</div>
-                    <div className="text-xl font-black text-gray-900">{proj.total_versions ?? 0}</div>
+                <div className={`grid gap-1.5 mb-2 ${(proj.unknown_versions ?? 0) > 0 ? 'grid-cols-6' : 'grid-cols-5'}`}>
+                  <div className="p-1.5 bg-gray-50 rounded-lg group-hover:bg-indigo-50 transition-all text-center">
+                    <div className="text-[8px] font-bold text-gray-400 uppercase tracking-wider mb-0.5">{t('projectList.total') || 'Total'}</div>
+                    <div className="text-base font-black text-gray-900">{proj.total_versions ?? 0}</div>
                   </div>
-                  <div className="p-3 bg-gray-50 rounded-xl group-hover:bg-indigo-50 transition-all">
-                    <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">{t('projectList.runningVersions')}</div>
-                    <div className="text-xl font-black text-gray-900">{proj.running_versions ?? 0}</div>
+                  <div className="p-1.5 bg-indigo-50 rounded-lg text-center">
+                    <div className="text-[8px] font-bold text-indigo-400 uppercase tracking-wider mb-0.5">{t('projectList.running') || 'Run'}</div>
+                    <div className="text-base font-black text-indigo-600">{proj.running_versions ?? 0}</div>
                   </div>
+                  <div className="p-1.5 bg-emerald-50 rounded-lg text-center">
+                    <div className="text-[8px] font-bold text-emerald-400 uppercase tracking-wider mb-0.5">{t('projectList.success') || 'OK'}</div>
+                    <div className="text-base font-black text-emerald-600">{proj.success_versions ?? 0}</div>
+                  </div>
+                  <div className="p-1.5 bg-rose-50 rounded-lg text-center">
+                    <div className="text-[8px] font-bold text-rose-400 uppercase tracking-wider mb-0.5">{t('projectList.failed') || 'Fail'}</div>
+                    <div className="text-base font-black text-rose-600">{proj.failed_versions ?? 0}</div>
+                  </div>
+                  <div className="p-1.5 bg-amber-50 rounded-lg text-center">
+                    <div className="text-[8px] font-bold text-amber-400 uppercase tracking-wider mb-0.5">{t('projectList.waiting') || 'Wait'}</div>
+                    <div className="text-base font-black text-amber-600">{(proj.waiting_versions ?? 0) + (proj.queued_versions ?? 0)}</div>
+                  </div>
+                  {(proj.unknown_versions ?? 0) > 0 && (
+                    <div className="p-1.5 bg-gray-100 rounded-lg text-center">
+                      <div className="text-[8px] font-bold text-gray-400 uppercase tracking-wider mb-0.5">{t('projectList.unknown') || 'Other'}</div>
+                      <div className="text-base font-black text-gray-500">{proj.unknown_versions}</div>
+                    </div>
+                  )}
                 </div>
               </Link>
               <div className="pt-4 border-t border-gray-50 flex items-center justify-between">

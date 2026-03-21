@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 
-from models.project_config import DatabaseConfig, ExpertConfig, KnowledgeBaseConfig, LlmConfig, RepositoryConfig
+from models.project_config import DatabaseConfig, ExpertConfig, KnowledgeBaseConfig, LlmConfig, RepositoryConfig, ModelConfig, ModelConfigs
 from services.db_service import metadata_db
 
 
@@ -112,6 +112,28 @@ async def save_project_llm_config(project_id: str, req: LlmConfig):
     _require_project(project_id)
     payload = req.model_dump() if hasattr(req, "model_dump") else req.dict()
     return metadata_db.upsert_project_llm_config(project_id, payload)
+
+
+@router.get("/models")
+async def list_project_models(project_id: str):
+    _require_project(project_id)
+    return {"models": metadata_db.list_project_models(project_id)}
+
+
+@router.post("/models")
+async def save_project_model_config(project_id: str, req: ModelConfig):
+    _require_project(project_id)
+    payload = req.model_dump() if hasattr(req, "model_dump") else req.dict()
+    return metadata_db.upsert_project_model(project_id, payload)
+
+
+@router.delete("/models/{model_id}")
+async def delete_project_model_config(project_id: str, model_id: str):
+    _require_project(project_id)
+    deleted = metadata_db.delete_project_model(project_id, model_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Model config '{model_id}' not found.")
+    return {"success": True, "project_id": project_id, "model_id": model_id}
 
 
 @system_router.get("/llm-config")

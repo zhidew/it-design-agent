@@ -44,15 +44,18 @@
     "hasExpertsEnabled": "{{count}} experts enabled",
     "emptyWorkspace": "Empty workspace",
     "workspaceActive": "Workspace Active",
-    "totalVersions": "Total Versions",
-    "runningVersions": "Running"
+    "total": "Total",
+    "success": "OK",
+    "failed": "Fail",
+    "waiting": "Wait",
+    "unknown": "Other"
   },
   "projectDetail": {
     "workspace": "Project Workspace",
     "noVersion": "No Version",
     "activeProject": "Active Workspace",
     "newDesignRun": "New Design Session",
-    "startDesign": "Launch Orchestration",
+    "startDesign": "Launch Design",
     "uploadIR": "IR(IT Requirement)",
     "uploadPhysical": "Physical Data Model",
     "uploadLogical": "Logical Data Model",
@@ -344,7 +347,13 @@
     "MODELING": "Domain & Data Modeling",
     "INTERFACE": "Flow & Integration",
     "QUALITY": "Test & Ops",
-    "DELIVERY": "Assembly & Review"
+    "DELIVERY": "Assembly & Review",
+    "initializing": "Initializing...",
+    "waiting": "Waiting..."
+  },
+  "pipeline": {
+    "preparing": "Preparing pipeline...",
+    "expertsWaiting": "Design experts are waiting to load..."
   },
   "agents": {
     "planner": "Mission Decomposition",

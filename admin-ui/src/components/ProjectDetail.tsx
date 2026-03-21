@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { useParams, Link, useLocation } from 'react-router-dom';
 import { api } from '../api';
-import { ArrowLeft, Play, RefreshCw, Activity, Check, X, Upload, FileText, Database, Layers, Book, List, Trash2, ChevronLeft, ChevronRight, Settings2, FolderGit2, BookOpen, Bot } from 'lucide-react';
+import { ArrowLeft, Play, RefreshCw, Activity, Check, X, Upload, FileText, Database, Layers, Book, List, Trash2, ChevronLeft, ChevronRight, Settings2, FolderGit2, BookOpen, Bot, Cpu } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { TaskKanban } from './TaskKanban';
@@ -37,6 +37,7 @@ interface InputFile {
 interface WorkflowTask {
   id: string;
   agent_type: string;
+  stage?: number;
   status: NodeStatus;
   dependencies?: string[];
   priority?: number;
@@ -195,11 +196,13 @@ export function ProjectDetail() {
   const location = useLocation();
   const [versions, setVersions] = useState<string[]>([]);
   const [requirement, setRequirement] = useState('');
+  const [selectedModel, setSelectedModel] = useState<string>('');
+  const [projectModels, setProjectModels] = useState<any[]>([]);
 
   const [inputFiles, setInputFiles] = useState<InputFile[]>([]);
 
   const [loading, setLoading] = useState(false);
-  const [streamStatus, setStreamStatus] = useState<StreamStatus>('idle');
+  const [_streamStatus, setStreamStatus] = useState<StreamStatus>('idle');
 
   const [nodeStatuses, setNodeStatuses] = useState<Record<string, NodeStatus>>({});
   const [selectedNode, setSelectedNode] = useState<string | null>('planner');
@@ -209,6 +212,7 @@ export function ProjectDetail() {
   const [artifacts, setArtifacts] = useState<Record<string, string>>({});
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [workflowState, setWorkflowState] = useState<WorkflowState | null>(null);
+  const [versionLogs, setVersionLogs] = useState<string[]>([]);
   const [runEvents, setRunEvents] = useState<OrchestratorEvent[]>([]);
   const [versionStateMap, setVersionStateMap] = useState<Record<string, VersionStateSummary>>({});
 
@@ -217,10 +221,11 @@ export function ProjectDetail() {
   const [pageSize, setPageSize] = useState(5);
 
   const [isVersionsLoading, setIsVersionsLoading] = useState(false);
-  const [isArtifactsLoading, setIsArtifactsLoading] = useState(false);
+  const [_isArtifactsLoading, setIsArtifactsLoading] = useState(false);
   const [uiError, setUiError] = useState<string | null>(null);
 
   const [isLogsOpen, setIsLogsOpen] = useState(true);
+  const [isReasoningOpen, setIsReasoningOpen] = useState(false);
   const [reviewFeedback, setReviewFeedback] = useState('');
   const [selectedInterruptOption, setSelectedInterruptOption] = useState<string>('');
   const [resumeActionLoading, setResumeActionLoading] = useState<'approve' | 'revise' | 'answer' | null>(null);
@@ -234,10 +239,11 @@ export function ProjectDetail() {
     experts: ExpertResourceSummary[];
   }>({ repositories: [], databases: [], knowledgeBases: [], experts: [] });
 
-  const pollInterval = useRef<NodeJS.Timeout | null>(null);
+  const pollInterval = useRef<ReturnType<typeof setInterval> | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const seenEventIdsRef = useRef<Set<string>>(new Set());
   const latestFetchedStateAtRef = useRef<number>(0);
+  const selectedVersionRef = useRef<string | null>(null);
 
   const resourceCopy = useMemo(() => {
     const isZh = i18n.language.toLowerCase().startsWith('zh');
@@ -269,8 +275,26 @@ export function ProjectDetail() {
     };
   }, [i18n.language, t]);
 
+  const loadProjectModels = async () => {
+    if (!id) return;
+    try {
+      const res = await api.getProjectModels(id);
+      const models = res.models || [];
+      setProjectModels(models);
+      if (models.length > 0) {
+        const defaultModel = models.find((m: any) => m.is_default) || models[0];
+        setSelectedModel(defaultModel.id);
+      }
+    } catch (err) {
+      console.error('Failed to load project models:', err);
+    }
+  };
+
   useEffect(() => {
-    if (id) void loadVersions();
+    if (id) {
+      void loadVersions();
+      void loadProjectModels();
+    }
   }, [id]);
 
   useEffect(() => {
@@ -278,11 +302,26 @@ export function ProjectDetail() {
     void loadResourceSummary();
   }, [id]);
 
+  const fetchLogs = async () => {
+    if (!id || !selectedVersion) return;
+    try {
+      const { logs } = await api.getVersionLogs(id, selectedVersion);
+      setVersionLogs(logs || []);
+    } catch (err) {
+      console.error('Failed to fetch version logs:', err);
+    }
+  };
+
   useEffect(() => {
     if (id && selectedVersion) {
       void fetchState();
+      void fetchLogs();
     }
   }, [id, selectedVersion]);
+
+  useEffect(() => {
+    selectedVersionRef.current = selectedVersion;
+  }, [selectedVersion]);
 
   useEffect(() => {
     if (pollInterval.current) {
@@ -550,13 +589,14 @@ export function ProjectDetail() {
     };
   }, [currentRunId, selectedVersion]);
 
-  const fetchState = async () => {
-    if (!id || !selectedVersion) return;
+  const fetchState = async (versionOverride?: string) => {
+    const versionToFetch = versionOverride ?? selectedVersionRef.current;
+    if (!id || !versionToFetch) return;
     try {
-      const state = await api.getProjectState(id, selectedVersion) as WorkflowState;
+      const state = await api.getProjectState(id, versionToFetch) as WorkflowState;
       setWorkflowState(state);
       latestFetchedStateAtRef.current = Date.parse(state.updated_at || '') || 0;
-      syncVersionState(selectedVersion, {
+      syncVersionState(versionToFetch, {
         run_status: state.run_status,
         current_node: state.current_node,
         updated_at: state.updated_at,
@@ -575,7 +615,7 @@ export function ProjectDetail() {
       setStreamStatus(state.run_status === 'running' ? 'connected' : 'idle');
 
       if (state.run_status !== 'queued') {
-        void loadArtifacts(selectedVersion);
+        void loadArtifacts(versionToFetch);
       }
 
     } catch (err: any) {
@@ -586,7 +626,11 @@ export function ProjectDetail() {
     }
   };
 
-  const loadVersions = async (targetPage: number = page, targetPageSize: number = pageSize) => {
+  const loadVersions = async (
+    targetPage: number = page,
+    targetPageSize: number = pageSize,
+    preferredVersion?: string | null,
+  ) => {
     if (!id) return;
     setIsVersionsLoading(true);
     try {
@@ -598,8 +642,12 @@ export function ProjectDetail() {
       setPageSize(res.page_size);
 
       // Auto-select first version only on first load if none selected
-      if (versionIds.length > 0 && !selectedVersion && targetPage === 1) {
-        handleSelectVersion(versionIds[0]);
+      const activeVersion = selectedVersionRef.current;
+      if (versionIds.length > 0 && !activeVersion && targetPage === 1) {
+        const versionToSelect = preferredVersion && versionIds.includes(preferredVersion)
+          ? preferredVersion
+          : versionIds[0];
+        handleSelectVersion(versionToSelect);
       }
 
       if (versionIds.length > 0) {
@@ -655,6 +703,7 @@ export function ProjectDetail() {
     setUiError(null);
     try {
       const timestampVersion = generateVersionId();
+      selectedVersionRef.current = timestampVersion;
       setSelectedVersion(timestampVersion);
       setCurrentRunId(null);
       setNodeStatuses({});
@@ -673,14 +722,15 @@ export function ProjectDetail() {
         await api.uploadBaselineFiles(id, timestampVersion, inputFiles.map(f => f.file));
       }
 
-      const run = await api.runOrchestrator(id, timestampVersion, requirement);
+      const run = await api.runOrchestrator(id, timestampVersion, requirement, selectedModel);
       setCurrentRunId(run.job_id);
+      void fetchState(timestampVersion);
 
       setRequirement('');
       setInputFiles([]);
       setSelectedInterruptOption('');
       void loadArtifacts(timestampVersion);
-      void loadVersions();
+      void loadVersions(page, pageSize, timestampVersion);
     } catch {
       setUiError(t('common.error'));
       setLoading(false);
@@ -726,6 +776,7 @@ export function ProjectDetail() {
   const handleSelectVersion = (version: string) => {
     eventSourceRef.current?.close();
     eventSourceRef.current = null;
+    selectedVersionRef.current = version;
     setSelectedVersion(version);
     setCurrentRunId(null);
     setRunEvents([]);
@@ -834,6 +885,7 @@ export function ProjectDetail() {
   }, [selectedNode, artifacts]);
 
   const executionEntries = useMemo<ExecutionLogEntry[]>(() => {
+    // 1. Live session events take priority
     if (runEvents.length > 0) {
       return runEvents.map((event) => {
         switch (event.event_type) {
@@ -859,6 +911,17 @@ export function ProjectDetail() {
       }).filter((entry): entry is ExecutionLogEntry => entry !== null);
     }
 
+    // 2. Persistent logs from disk (orchestrator_run.log)
+    if (versionLogs.length > 0) {
+      return versionLogs.map((log, idx) => ({
+        kind: 'text' as const,
+        id: `log-${idx}`,
+        text: log,
+        tone: log.includes('[ERROR]') ? 'error' as const : 'default' as const,
+      }));
+    }
+
+    // 3. Fallback to state history
     if (!workflowState?.history) return [];
     return workflowState.history.map((log, idx) => ({
       kind: 'text' as const,
@@ -866,7 +929,7 @@ export function ProjectDetail() {
       text: log,
       tone: log.includes('[ERROR]') ? 'error' as const : 'default' as const,
     }));
-  }, [runEvents, workflowState?.history]);
+  }, [runEvents, versionLogs, workflowState?.history]);
 
   const reasoningLogs = useMemo(() => {
     if (!selectedNode) return [];
@@ -890,22 +953,45 @@ export function ProjectDetail() {
     return [];
   }, [selectedNode, artifacts]);
 
+  const plannerReasoningLog = useMemo(
+    () => artifacts['planner-reasoning.md'] || '',
+    [artifacts],
+  );
+
   const selectedPipeline = useMemo(() => {
-    for (const log of reasoningLogs) {
-      const match = log.match(/Selected Pipeline:\s*(.+)/i);
-      if (!match) {
-        continue;
-      }
-      return match[1]
-        .split(',')
-        .map((item) => item.trim())
-        .filter(Boolean);
+    const match = plannerReasoningLog.match(/Selected Experts:\s*(.+)/i)
+      || plannerReasoningLog.match(/Selected Pipeline:\s*(.+)/i);
+    if (!match) {
+      return [];
     }
-    return [];
-  }, [reasoningLogs]);
+    return match[1]
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }, [plannerReasoningLog]);
+
+  const canPreviewPlannedPipeline = useMemo(() => {
+    if (workflowState?.run_status === 'waiting_human') {
+      return false;
+    }
+    if (selectedPipeline.length === 0) {
+      return false;
+    }
+    // Check if only planner is active (running or waiting_human)
+    const taskQueue = workflowState?.task_queue || [];
+    const nonPlannerTasks = taskQueue.filter((task) => task.agent_type !== 'planner');
+    if (nonPlannerTasks.length === 0) {
+      // Only planner in queue - don't show pending stages
+      return false;
+    }
+    return true;
+  }, [selectedPipeline.length, workflowState?.run_status, workflowState?.task_queue]);
 
   const selectedPipelineChart = useMemo(() => {
     if (selectedNode !== 'planner') {
+      return null;
+    }
+    if (selectedPipeline.length === 0) {
       return null;
     }
 
@@ -944,7 +1030,7 @@ export function ProjectDetail() {
           lines.push(`${toNodeId(dependencyTask.agent_type)} --> ${nodeId}`);
         });
       });
-    } else if (selectedPipeline.length > 0) {
+    } else if (canPreviewPlannedPipeline && selectedPipeline.length > 0) {
       lines.push('delivery["Design Package"]');
       lines.push('validatorHub["Quality Gate"]');
 
@@ -971,11 +1057,13 @@ export function ProjectDetail() {
     lines.push('classDef finalStage fill:#ecfeff,stroke:#0891b2,stroke-width:1.5px,color:#164e63;');
     lines.push('classDef active fill:#fff7ed,stroke:#f97316,stroke-width:2px,color:#9a3412;');
     lines.push('class requirements,planner start;');
-    if (nonPlannerTasks.length === 0 && selectedPipeline.length > 0) {
+    if (nonPlannerTasks.length === 0 && canPreviewPlannedPipeline && selectedPipeline.length > 0) {
       lines.push('class delivery,validatorHub finalStage;');
     }
 
-    const workerNodeIds = (nonPlannerTasks.length > 0 ? nonPlannerTasks : selectedPipeline.map((agentId) => ({ agent_type: agentId } as WorkflowTask)))
+    const workerNodeIds = (nonPlannerTasks.length > 0
+      ? nonPlannerTasks
+      : (canPreviewPlannedPipeline ? selectedPipeline.map((agentId) => ({ agent_type: agentId } as WorkflowTask)) : []))
       .map((task) => toNodeId(task.agent_type))
       .filter((nodeId) => nodeId !== 'design_assembler' && nodeId !== 'validator');
     if (workerNodeIds.length > 0) {
@@ -984,18 +1072,18 @@ export function ProjectDetail() {
 
     if (
       nonPlannerTasks.some((task) => task.agent_type === 'design-assembler') ||
-      selectedPipeline.includes('design-assembler')
+      (canPreviewPlannedPipeline && selectedPipeline.includes('design-assembler'))
     ) {
       lines.push('class design_assembler finalStage;');
     }
-    if (nonPlannerTasks.some((task) => task.agent_type === 'validator') || selectedPipeline.includes('validator')) {
+    if (nonPlannerTasks.some((task) => task.agent_type === 'validator') || (canPreviewPlannedPipeline && selectedPipeline.includes('validator'))) {
       lines.push('class validator finalStage;');
     }
 
     const activePipelineNode =
       workflowState?.current_node &&
         (nonPlannerTasks.some((task) => task.agent_type === workflowState.current_node) ||
-          selectedPipeline.includes(workflowState.current_node))
+          (canPreviewPlannedPipeline && selectedPipeline.includes(workflowState.current_node)))
         ? toNodeId(workflowState.current_node)
         : null;
     if (activePipelineNode) {
@@ -1003,7 +1091,7 @@ export function ProjectDetail() {
     }
 
     return lines.join('\n');
-  }, [selectedNode, selectedPipeline, workflowState?.current_node, workflowState?.task_queue, t]);
+  }, [canPreviewPlannedPipeline, selectedNode, selectedPipeline, workflowState?.current_node, workflowState?.task_queue, t]);
 
   // validator 节点使用独立的报告展示，不显示设计产物清单
   const isValidatorNode = selectedNode === 'validator';
@@ -1207,6 +1295,22 @@ export function ProjectDetail() {
             </div>
           </div>
           <div className="flex items-center gap-4">
+            {projectModels.length > 0 && (
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-50 rounded-xl border border-gray-100">
+                <Cpu size={14} className="text-indigo-500" />
+                <select
+                  value={selectedModel}
+                  onChange={(e) => setSelectedModel(e.target.value)}
+                  className="bg-transparent border-none text-[10px] font-black text-gray-600 outline-none focus:ring-0 focus:ring-offset-0 cursor-pointer hover:text-indigo-600 transition-colors uppercase tracking-wider"
+                >
+                  {projectModels.map((model) => (
+                    <option key={model.id} value={model.id}>
+                      {model.name} ({model.model_name})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
             <LanguageSwitcher />
           </div>
         </div>
@@ -1254,7 +1358,7 @@ export function ProjectDetail() {
           <section className="space-y-4">
             <div className="flex items-center justify-between px-2">
               <h2 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">{t('projectDetail.versionHistory')}</h2>
-              <button onClick={loadVersions} className="p-1.5 text-gray-400 hover:text-indigo-600 transition-colors">
+              <button onClick={() => void loadVersions()} className="p-1.5 text-gray-400 hover:text-indigo-600 transition-colors">
                 <RefreshCw size={14} className={isVersionsLoading ? 'animate-spin' : ''} />
               </button>
             </div>
@@ -1502,6 +1606,9 @@ export function ProjectDetail() {
               onSelectNode={setSelectedNode}
               t={t}
               currentPhase={workflowState?.workflow_phase}
+              selectedPipeline={selectedPipeline}
+              isInitializing={workflowState?.run_status === 'running' && (workflowState?.task_queue?.length || 0) === 0}
+              showPlannedStages={canPreviewPlannedPipeline}
             />
 
           </section>
@@ -1542,15 +1649,24 @@ export function ProjectDetail() {
                     {retryingNode === selectedNode ? 'Retrying...' : 'Retry Current Node'}
                   </button>
                 )}
-                {workflowState?.run_status === 'queued' && hasPendingTodoTasks && (
-                  <button
-                    onClick={handleContinueWorkflow}
-                    disabled={continuingWorkflow || retryingNode !== null}
-                    className="flex-1 rounded-2xl bg-white px-5 py-4 text-sm font-black uppercase tracking-widest text-rose-700 border border-rose-200 transition-all hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {continuingWorkflow ? 'Resuming...' : 'Resume Queue'}
-                  </button>
-                )}
+              </div>
+            </section>
+          )}
+
+          {workflowState?.run_status === 'queued' && hasPendingTodoTasks && (
+            <section className="bg-amber-50 rounded-3xl border border-amber-200 shadow-sm p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-sm font-bold text-amber-800">Queue Paused</h2>
+                  <p className="text-xs text-amber-600">The workflow queue is paused. Resume when ready.</p>
+                </div>
+                <button
+                  onClick={handleContinueWorkflow}
+                  disabled={continuingWorkflow || retryingNode !== null}
+                  className="rounded-xl bg-amber-600 px-4 py-2 text-sm font-bold text-white transition-all hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {continuingWorkflow ? 'Resuming...' : 'Resume Queue'}
+                </button>
               </div>
             </section>
           )}
@@ -1665,7 +1781,7 @@ export function ProjectDetail() {
               {/* Hidden: Technical interrupt details (node_id, interrupt_id, raw context) not shown to end users */}
 
               {/* Show why this clarification is needed */}
-              {pendingInterrupt?.context?.why_needed && (
+              {pendingInterrupt?.context?.why_needed !== undefined && pendingInterrupt?.context?.why_needed !== null && (
                 <div className="rounded-2xl border border-amber-200 bg-white/60 px-4 py-3">
                   <p className="text-xs text-amber-800">
                     <span className="font-bold">Why this matters: </span>
@@ -1762,36 +1878,49 @@ export function ProjectDetail() {
           <section className="space-y-6">
             {reasoningLogs.length > 0 && (
               <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-6 space-y-4">
-                <div className="flex items-center gap-3">
-                  <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
-                    {selectedNode === 'planner'
-                      ? t('projectDetail.reasoningChain')
-                      : isValidatorNode
-                        ? t('projectDetail.validationResult')
-                        : t('projectDetail.subagentReasoning')}
-                  </h3>
-                  {selectedNode && (
-                    <span className="rounded-full bg-gray-100 px-2.5 py-1 text-[9px] font-black uppercase tracking-wider text-gray-500">
-                      {selectedNode}
-                    </span>
-                  )}
-                </div>
-                <div className="bg-gray-900 rounded-2xl p-4 font-mono text-[11px] leading-relaxed text-gray-300 overflow-y-auto max-h-72 space-y-1">
-                  {reasoningLogs.map((log: string, idx: number) => (
-                    <React.Fragment key={idx}>
-                      <div className="flex gap-3 whitespace-pre-wrap">
-                        <span className="text-gray-600 flex-shrink-0">[{idx + 1}]</span>
-                        <span className={isValidatorNode && log.includes('FAILED') ? 'text-rose-400' : isValidatorNode && log.includes('SUCCESS') ? 'text-emerald-400' : 'text-emerald-400/80'}>{log}</span>
-                      </div>
-                    </React.Fragment>
-                  ))}
-                </div>
-                {selectedPipelineChart && (
-                  <div className="pt-2">
-                    <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">
-                      Expert Orchestration Flow
+                <button
+                  onClick={() => setIsReasoningOpen(!isReasoningOpen)}
+                  className="flex items-center justify-between w-full group"
+                >
+                  <div className="flex items-center gap-3">
+                    <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest group-hover:text-indigo-500 transition-colors">
+                      {selectedNode === 'planner'
+                        ? t('projectDetail.reasoningChain')
+                        : isValidatorNode
+                          ? t('projectDetail.validationResult')
+                          : t('projectDetail.subagentReasoning')}
+                    </h3>
+                    {selectedNode && (
+                      <span className="rounded-full bg-gray-100 px-2.5 py-1 text-[9px] font-black uppercase tracking-wider text-gray-500">
+                        {selectedNode}
+                      </span>
+                    )}
+                  </div>
+                  <div className={`text-gray-300 transition-transform duration-300 ${isReasoningOpen ? 'rotate-180' : ''}`}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6" /></svg>
+                  </div>
+                </button>
+
+                {isReasoningOpen && (
+                  <div className="space-y-4 animate-in slide-in-from-top-2 duration-300">
+                    <div className="bg-gray-900 rounded-2xl p-4 font-mono text-[11px] leading-relaxed text-gray-300 overflow-y-auto max-h-72 space-y-1">
+                      {reasoningLogs.map((log: string, idx: number) => (
+                        <React.Fragment key={idx}>
+                          <div className="flex gap-3 whitespace-pre-wrap">
+                            <span className="text-gray-600 flex-shrink-0">[{idx + 1}]</span>
+                            <span className={isValidatorNode && log.includes('FAILED') ? 'text-rose-400' : isValidatorNode && log.includes('SUCCESS') ? 'text-emerald-400' : 'text-emerald-400/80'}>{log}</span>
+                          </div>
+                        </React.Fragment>
+                      ))}
                     </div>
-                    <Mermaid chart={selectedPipelineChart} />
+                    {selectedPipelineChart && (
+                      <div className="pt-2 border-t border-gray-50 mt-4">
+                        <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">
+                          Expert Orchestration Flow
+                        </div>
+                        <Mermaid chart={selectedPipelineChart} />
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -1828,11 +1957,6 @@ export function ProjectDetail() {
                 <h2 className="text-[10px] font-black text-gray-400 uppercase tracking-widest group-hover:text-indigo-500 transition-colors">
                   {t('projectDetail.orchestrationLogs')}
                 </h2>
-                {workflowState?.current_node && (
-                  <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-[9px] font-black uppercase tracking-wider text-indigo-600">
-                    {workflowState.current_node}
-                  </span>
-                )}
                 {loading && <RefreshCw size={10} className="animate-spin text-indigo-500" />}
               </div>
               <div className={`text-gray-300 transition-transform duration-300 ${isLogsOpen ? 'rotate-180' : ''}`}>
@@ -1841,7 +1965,7 @@ export function ProjectDetail() {
             </button>
 
             {isLogsOpen && (
-              <div className="bg-gray-900 rounded-2xl p-4 font-mono text-[11px] leading-relaxed text-gray-300 overflow-y-auto max-h-72 space-y-1 animate-in slide-in-from-top-2 duration-300">
+              <div className="bg-gray-900 rounded-2xl p-4 font-mono text-[11px] leading-relaxed text-gray-300 overflow-y-auto max-h-[432px] space-y-1 animate-in slide-in-from-top-2 duration-300">
                 {executionEntries.length > 0 ? (
                   executionEntries.map((entry, idx) => (
                     entry.kind === 'tool' ? (

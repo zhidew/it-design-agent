@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import mermaid from 'mermaid';
 import { useTranslation } from 'react-i18next';
 import { Loader as LucideLoader, Maximize2, Copy, Check, X, FileText } from 'lucide-react';

@@ -88,6 +88,21 @@ class ExpertsConfig(BaseModel):
     experts: List[ExpertConfig] = Field(default_factory=list)
 
 
+class ModelConfig(BaseModel):
+    id: str
+    name: str
+    provider: str
+    model_name: str
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
+    is_default: bool = False
+    description: Optional[str] = None
+
+
+class ModelConfigs(BaseModel):
+    models: List[ModelConfig] = Field(default_factory=list)
+
+
 class LlmConfig(BaseModel):
     llm_provider: str = "openai"
     openai_api_key: Optional[str] = None

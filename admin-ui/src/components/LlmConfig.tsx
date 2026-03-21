@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, RefreshCw, Save, Settings2 } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Settings2 } from 'lucide-react';
 import { api } from '../api';
 import { LanguageSwitcher } from './LanguageSwitcher';
 
@@ -27,14 +27,13 @@ const EMPTY_CONFIG: LlmConfigState = {
 export function LlmConfig() {
   const [config, setConfig] = useState<LlmConfigState>(EMPTY_CONFIG);
   const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
+  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   const loadConfig = async () => {
     setLoading(true);
     setMessage(null);
     try {
-      const data = await api.getLlmConfig();
+      const data = await api.getSystemLlmDefaults();
       setConfig({
         llm_provider: data.llm_provider || 'openai',
         openai_api_key: '',
@@ -46,7 +45,7 @@ export function LlmConfig() {
         has_gemini_api_key: data.has_gemini_api_key || false,
       });
     } catch {
-      setMessage('Failed to load LLM config.');
+      setMessage({ type: 'error', text: 'Failed to load LLM config.' });
     } finally {
       setLoading(false);
     }
@@ -55,27 +54,6 @@ export function LlmConfig() {
   useEffect(() => {
     void loadConfig();
   }, []);
-
-  const saveConfig = async () => {
-    setSaving(true);
-    setMessage(null);
-    try {
-      await api.saveLlmConfig({
-        llm_provider: config.llm_provider,
-        openai_api_key: config.openai_api_key || undefined,
-        openai_base_url: config.openai_base_url,
-        openai_model_name: config.openai_model_name,
-        gemini_api_key: config.gemini_api_key || undefined,
-        gemini_model_name: config.gemini_model_name,
-      });
-      setMessage('LLM config saved.');
-      await loadConfig();
-    } catch {
-      setMessage('Failed to save LLM config.');
-    } finally {
-      setSaving(false);
-    }
-  };
 
   return (
     <div className="min-h-screen bg-[#F8FAFC]">
@@ -91,7 +69,7 @@ export function LlmConfig() {
                 <Settings2 size={24} className="text-indigo-600" />
                 LLM Model Config
               </h1>
-              <p className="text-sm text-gray-500 mt-1">Manage provider, base URL, model names, and API keys used by the orchestrator.</p>
+              <p className="text-sm text-gray-500 mt-1">View system-level LLM defaults. Configure via <code className="bg-gray-100 px-1 rounded">.env</code> file.</p>
             </div>
           </div>
           <div className="flex items-center gap-3">
@@ -109,87 +87,83 @@ export function LlmConfig() {
         </div>
 
         {message && (
-          <div className="mb-6 rounded-xl border border-gray-200 bg-white p-4 text-sm text-gray-700 shadow-sm">
-            {message}
+          <div className={`mb-6 rounded-xl border p-4 text-sm shadow-sm ${
+            message.type === 'success' 
+              ? 'border-green-200 bg-green-50 text-green-800' 
+              : 'border-red-200 bg-red-50 text-red-800'
+          }`}>
+            {message.text}
           </div>
         )}
 
+        <div className="mb-4 p-4 rounded-xl border border-amber-200 bg-amber-50 text-amber-800 text-sm">
+          <strong>Note:</strong> System-level LLM configuration is read-only. To modify defaults, update the <code className="bg-amber-100 px-1 rounded">.env</code> file in the server directory.
+        </div>
+
         <section className="bg-white rounded-3xl border border-gray-100 shadow-sm p-8 space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
+            <div className="md:col-span-2">
               <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Provider</div>
-              <select
-                value={config.llm_provider}
-                onChange={(e) => setConfig((prev) => ({ ...prev, llm_provider: e.target.value }))}
-                className="w-full p-3 bg-white border border-gray-200 rounded-xl"
-              >
-                <option value="openai">OpenAI Compatible</option>
-                <option value="gemini">Gemini</option>
-              </select>
-            </div>
-            <div>
-              <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">OpenAI Base URL</div>
               <input
-                value={config.openai_base_url}
-                onChange={(e) => setConfig((prev) => ({ ...prev, openai_base_url: e.target.value }))}
-                placeholder="https://api.openai.com/v1"
-                className="w-full p-3 bg-white border border-gray-200 rounded-xl"
+                value={config.llm_provider === 'openai' ? 'OpenAI Compatible' : 'Gemini'}
+                disabled
+                className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-600"
               />
             </div>
-            <div>
-              <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">OpenAI Model</div>
-              <input
-                value={config.openai_model_name}
-                onChange={(e) => setConfig((prev) => ({ ...prev, openai_model_name: e.target.value }))}
-                placeholder="gpt-4o"
-                className="w-full p-3 bg-white border border-gray-200 rounded-xl"
-              />
-            </div>
-            <div>
-              <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Gemini Model</div>
-              <input
-                value={config.gemini_model_name}
-                onChange={(e) => setConfig((prev) => ({ ...prev, gemini_model_name: e.target.value }))}
-                placeholder="gemini-2.5-flash"
-                className="w-full p-3 bg-white border border-gray-200 rounded-xl"
-              />
-            </div>
-            <div>
-              <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">
-                OpenAI API Key {config.has_openai_api_key ? '(saved)' : ''}
-              </div>
-              <input
-                type="password"
-                value={config.openai_api_key}
-                onChange={(e) => setConfig((prev) => ({ ...prev, openai_api_key: e.target.value }))}
-                placeholder={config.has_openai_api_key ? 'Leave blank to keep current key' : 'Enter API key'}
-                className="w-full p-3 bg-white border border-gray-200 rounded-xl"
-              />
-            </div>
-            <div>
-              <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">
-                Gemini API Key {config.has_gemini_api_key ? '(saved)' : ''}
-              </div>
-              <input
-                type="password"
-                value={config.gemini_api_key}
-                onChange={(e) => setConfig((prev) => ({ ...prev, gemini_api_key: e.target.value }))}
-                placeholder={config.has_gemini_api_key ? 'Leave blank to keep current key' : 'Enter Gemini key'}
-                className="w-full p-3 bg-white border border-gray-200 rounded-xl"
-              />
-            </div>
-          </div>
-
-          <div className="flex justify-end">
-            <button
-              type="button"
-              onClick={() => void saveConfig()}
-              disabled={saving}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-black uppercase hover:bg-indigo-700 transition-all disabled:opacity-50"
-            >
-              <Save size={14} />
-              {saving ? 'Saving...' : 'Save Config'}
-            </button>
+            
+            {config.llm_provider === 'openai' && (
+              <>
+                <div>
+                  <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">OpenAI Base URL</div>
+                  <input
+                    value={config.openai_base_url || '(not set)'}
+                    disabled
+                    className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-600"
+                  />
+                </div>
+                <div>
+                  <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">OpenAI Model</div>
+                  <input
+                    value={config.openai_model_name || '(not set)'}
+                    disabled
+                    className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-600"
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">
+                    OpenAI API Key
+                  </div>
+                  <input
+                    value={config.has_openai_api_key ? '•••••••• (configured)' : '(not configured)'}
+                    disabled
+                    className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-600"
+                  />
+                </div>
+              </>
+            )}
+            
+            {config.llm_provider === 'gemini' && (
+              <>
+                <div>
+                  <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Gemini Model</div>
+                  <input
+                    value={config.gemini_model_name || '(not set)'}
+                    disabled
+                    className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-600"
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">
+                    Gemini API Key
+                  </div>
+                  <input
+                    value={config.has_gemini_api_key ? '•••••••• (configured)' : '(not configured)'}
+                    disabled
+                    className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-600"
+                  />
+                </div>
+              </>
+            )}
           </div>
         </section>
       </div>

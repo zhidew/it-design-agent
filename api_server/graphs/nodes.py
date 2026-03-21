@@ -67,6 +67,24 @@ USE_DYNAMIC_SUBAGENT = os.getenv("USE_DYNAMIC_SUBAGENT", "true").lower() in ("tr
 # Set to empty to use dynamic subagent for all agents
 _HARDCODED_AGENTS: set = set()
 
+AGENT_PHASE_MAP = {
+    "planner": "ANALYSIS",
+    "architecture-mapping": "ARCHITECTURE",
+    "integration-design": "ARCHITECTURE",
+    "data-design": "MODELING",
+    "ddd-structure": "MODELING",
+    "flow-design": "INTERFACE",
+    "api-design": "INTERFACE",
+    "config-design": "INTERFACE",
+    "test-design": "QUALITY",
+    "ops-design": "QUALITY",
+    "design-assembler": "DELIVERY",
+    "validator": "DELIVERY",
+}
+
+PHASE_ORDER = ["INIT", "ANALYSIS", "ARCHITECTURE", "MODELING", "INTERFACE", "QUALITY", "DELIVERY", "DONE"]
+EXECUTION_PHASES = ["ARCHITECTURE", "MODELING", "INTERFACE", "QUALITY", "DELIVERY"]
+
 
 def _should_use_dynamic_subagent(agent_type: str) -> bool:
     """
@@ -85,7 +103,7 @@ def _should_use_dynamic_subagent(agent_type: str) -> bool:
 
 def supervisor(state: DesignState) -> Dict[str, Any]:
     queue = state.get("task_queue", [])
-    phase = state.get("workflow_phase", "INIT")
+    workflow_phase = state.get("workflow_phase", "INIT")
 
     if state.get("human_intervention_required"):
         return {"next": "END"}
@@ -96,9 +114,17 @@ def supervisor(state: DesignState) -> Dict[str, Any]:
         # If tasks are already running (e.g. in parallel branch), we wait for them to re-enter supervisor
         return {"next": "END"}
 
-    todo_tasks = [task for task in queue if task["status"] == "todo"]
+    executable_tasks = [task for task in queue if task.get("agent_type") != "planner"]
+    unfinished_tasks = [task for task in executable_tasks if task.get("status") not in {"success", "skipped"}]
+    if not unfinished_tasks:
+        return {"next": "END", "workflow_phase": "DONE", "current_node": None}
+
+    current_phase = _resolve_active_phase(workflow_phase, unfinished_tasks)
+    current_phase_tasks = [task for task in executable_tasks if _get_task_phase(task) == current_phase]
+
+    todo_tasks = [task for task in current_phase_tasks if task["status"] == "todo"]
     if todo_tasks:
-        ready_tasks = [task for task in sorted(todo_tasks, key=lambda item: item["priority"], reverse=True) if _dependencies_met(task, queue)]
+        ready_tasks = [task for task in sorted(todo_tasks, key=lambda item: item.get("priority", 0), reverse=True) if _dependencies_met(task, queue)]
         if ready_tasks:
             limit = _resolve_parallel_limit(state)
             selected_tasks = ready_tasks[:limit]
@@ -114,27 +140,18 @@ def supervisor(state: DesignState) -> Dict[str, Any]:
                     "current_task_id": task["id"],
                     "current_node": task["agent_type"],
                     "dispatched_tasks": dispatched_tasks,
+                    "workflow_phase": current_phase,
                 }
             return {
                 "next": [task["agent_type"] for task in selected_tasks],
                 "current_task_ids": [task["id"] for task in selected_tasks],
                 "current_node": selected_tasks[0]["agent_type"],
                 "dispatched_tasks": dispatched_tasks,
+                "workflow_phase": current_phase,
             }
+        return {"next": "END", "workflow_phase": current_phase}
 
-    # Phase transition logic (only if no tasks are todo or running)
-    phases = ["INIT", "ANALYSIS", "ARCHITECTURE", "MODELING", "INTERFACE", "QUALITY", "DELIVERY", "DONE"]
-    try:
-        current_idx = phases.index(phase)
-        if current_idx < len(phases) - 1:
-            next_phase = phases[current_idx + 1]
-            # Advance phase
-            return {"next": "supervisor_advance", "workflow_phase": next_phase}
-        
-        # If we are in DONE phase or no more phases
-        return {"next": "END"}
-    except ValueError:
-        return {"next": "END"}
+    return {"next": "END", "workflow_phase": current_phase}
 
 
 def create_worker_node(agent_type: str):
@@ -214,6 +231,73 @@ def _resolve_parallel_limit(state: DesignState) -> int:
         return 2
 
 
+def _get_base_phase(agent_type: str) -> str:
+    return AGENT_PHASE_MAP.get(agent_type, "ARCHITECTURE")
+
+
+def _phase_rank(phase: str) -> int:
+    return EXECUTION_PHASES.index(phase) if phase in EXECUTION_PHASES else len(EXECUTION_PHASES)
+
+
+def _get_task_phase(task: Task) -> str:
+    if task.get("phase"):
+        return task["phase"]
+    metadata = task.get("metadata") or {}
+    return str(metadata.get("workflow_phase") or _get_base_phase(task.get("agent_type", "")))
+
+
+def _resolve_task_phases(tasks: List[Task]) -> Dict[str, str]:
+    tasks_by_id: Dict[str, Task] = {task["id"]: task for task in tasks}
+    non_planner_tasks = [task for task in tasks if task.get("agent_type") != "planner"]
+    phase_cache: Dict[str, str] = {}
+
+    def resolve_phase(task_id: str) -> str:
+        if task_id in phase_cache:
+            return phase_cache[task_id]
+        task = tasks_by_id[task_id]
+        resolved_phase = _get_base_phase(task.get("agent_type", ""))
+        
+        # We NO LONGER promote tasks to the next phase based on dependencies here.
+        # Intra-phase dependencies are handled by the priority-based scheduler in the supervisor.
+        # This keeps the UI consistent with the business phases defined in AGENT_PHASE_MAP.
+        
+        phase_cache[task_id] = resolved_phase
+        return resolved_phase
+
+    return {task["id"]: resolve_phase(task["id"]) for task in non_planner_tasks}
+
+
+def _resolve_active_phase(workflow_phase: str, unfinished_tasks: List[Task]) -> str:
+    unfinished_phases = {_get_task_phase(task) for task in unfinished_tasks}
+    if workflow_phase in EXECUTION_PHASES and workflow_phase in unfinished_phases:
+        return workflow_phase
+
+    for phase in EXECUTION_PHASES:
+        if phase in unfinished_phases:
+            return phase
+    return "DELIVERY"
+
+
+def _annotate_execution_stages(tasks: List[Task]) -> List[Task]:
+    phase_by_id = _resolve_task_phases(tasks)
+    annotated_tasks: List[Task] = []
+
+    for task in tasks:
+        metadata = dict(task.get("metadata") or {})
+        if task.get("agent_type") == "planner":
+            metadata.setdefault("workflow_phase", "ANALYSIS")
+            annotated_tasks.append({**task, "stage": 0, "phase": "ANALYSIS", "metadata": metadata})
+            continue
+
+        phase = phase_by_id.get(task["id"], _get_base_phase(task.get("agent_type", "")))
+        stage = _phase_rank(phase) + 1
+        metadata["execution_stage"] = stage
+        metadata["workflow_phase"] = phase
+        annotated_tasks.append({**task, "stage": stage, "phase": phase, "metadata": metadata})
+
+    return annotated_tasks
+
+
 def _build_task_queue(active_agents: set[str]) -> List[Task]:
     """Build task queue dynamically from expert configurations.
     
@@ -255,28 +339,29 @@ def _build_task_queue(active_agents: set[str]) -> List[Task]:
                 # Expert not in registry, use defaults
                 expert_configs.append((agent, 50, []))
         
-        # Sort by priority descending
+        # Sort by priority descending for stable scheduling, but resolve dependencies in a second pass.
+        # Otherwise a task can silently lose a dependency when it depends on a lower-priority expert
+        # whose task id has not been assigned yet.
         expert_configs.sort(key=lambda x: x[1], reverse=True)
-        
-        # Create tasks for each expert
-        for agent, priority, deps in expert_configs:
-            task_id = str(task_counter)
+
+        for agent, _priority, _deps in expert_configs:
+            task_id_map[agent] = str(task_counter)
             task_counter += 1
-            
-            # Resolve dependencies to task IDs
+
+        # Create tasks for each expert after every selected expert has a stable task id.
+        for agent, priority, deps in expert_configs:
             resolved_deps = ["0"]  # Always depend on planner
             for dep in deps:
                 if dep in task_id_map:
                     resolved_deps.append(task_id_map[dep])
-            
+
             tasks.append({
-                "id": task_id,
+                "id": task_id_map[agent],
                 "agent_type": agent,
                 "status": "todo",
                 "dependencies": resolved_deps,
                 "priority": priority
             })
-            task_id_map[agent] = task_id
             
     except RuntimeError:
         # Fallback: registry not initialized, use default ordering
@@ -292,24 +377,25 @@ def _build_task_queue(active_agents: set[str]) -> List[Task]:
             ("integration-design", 85, ["api-design"]),
         ]
         
-        for agent, priority, deps in default_order:
-            if agent in active_agents:
-                task_id = str(task_counter)
-                task_counter += 1
-                
-                resolved_deps = ["0"]
-                for dep in deps:
-                    if dep in task_id_map:
-                        resolved_deps.append(task_id_map[dep])
-                
-                tasks.append({
-                    "id": task_id,
-                    "agent_type": agent,
-                    "status": "todo",
-                    "dependencies": resolved_deps,
-                    "priority": priority
-                })
-                task_id_map[agent] = task_id
+        active_defaults = [(agent, priority, deps) for agent, priority, deps in default_order if agent in active_agents]
+
+        for agent, _priority, _deps in active_defaults:
+            task_id_map[agent] = str(task_counter)
+            task_counter += 1
+
+        for agent, priority, deps in active_defaults:
+            resolved_deps = ["0"]
+            for dep in deps:
+                if dep in task_id_map:
+                    resolved_deps.append(task_id_map[dep])
+
+            tasks.append({
+                "id": task_id_map[agent],
+                "agent_type": agent,
+                "status": "todo",
+                "dependencies": resolved_deps,
+                "priority": priority
+            })
 
     # Add design-assembler (depends on all other active agents)
     if "design-assembler" in active_agents or len([t for t in tasks if t["id"] != "0"]) > 0:
@@ -324,20 +410,26 @@ def _build_task_queue(active_agents: set[str]) -> List[Task]:
             "priority": 20
         })
         task_id_map["design-assembler"] = assembler_id
+        print(f"[DEBUG] _build_task_queue: Added design-assembler (auto-included), dependencies: {current_ids}")
 
     # Add validator (depends on design-assembler)
     if "validator" in active_agents:
+        validator_id = str(task_counter)
+        task_counter += 1
+        task_id_map["validator"] = validator_id
+        
         assembler_task = next((t for t in tasks if t["agent_type"] == "design-assembler"), None)
         validator_deps = [assembler_task["id"]] if assembler_task else []
         tasks.append({
-            "id": str(task_counter),
+            "id": validator_id,
             "agent_type": "validator",
             "status": "todo",
             "dependencies": validator_deps,
             "priority": 10
         })
+        print(f"[DEBUG] _build_task_queue: Added validator (in active_agents), dependencies: {validator_deps}")
 
-    return tasks
+    return _annotate_execution_stages(tasks)
 
 
 def _format_execution_topology(tasks: List[Task]) -> str:
@@ -348,34 +440,28 @@ def _format_execution_topology(tasks: List[Task]) -> str:
     if not non_planner_tasks:
         return ""
 
-    stage_cache: Dict[str, int] = {"0": 0}
-
-    def resolve_stage(task_id: str) -> int:
-        if task_id in stage_cache:
-            return stage_cache[task_id]
-        task = tasks_by_id[task_id]
-        dependency_ids = [
-            dep_id
-            for dep_id in task.get("dependencies", [])
-            if dep_id in tasks_by_id and tasks_by_id[dep_id].get("agent_type") != "planner"
-        ]
-        if not dependency_ids:
-            stage_cache[task_id] = 1
-        else:
-            stage_cache[task_id] = max(resolve_stage(dep_id) for dep_id in dependency_ids) + 1
-        return stage_cache[task_id]
-
-    stages: Dict[int, List[Task]] = {}
+    phases: Dict[str, List[Task]] = {}
     for task in non_planner_tasks:
-        stage = resolve_stage(task["id"])
-        stages.setdefault(stage, []).append(task)
+        phase = _get_task_phase(task)
+        phases.setdefault(phase, []).append(task)
 
     lines = ["**Execution Topology:**", "- Stage 0: planner"]
-    for stage in sorted(stages):
-        stage_tasks = stages[stage]
-        mode = "parallel" if len(stage_tasks) > 1 else "sequential"
+    stage_number = 1
+    for phase in EXECUTION_PHASES:
+        phase_tasks = phases.get(phase, [])
+        if not phase_tasks:
+            continue
+
+        has_intra_phase_dependencies = any(
+            any(
+                dep_id in tasks_by_id and _get_task_phase(tasks_by_id[dep_id]) == phase and tasks_by_id[dep_id].get("agent_type") != "planner"
+                for dep_id in task.get("dependencies", [])
+            )
+            for task in phase_tasks
+        )
+        mode = "parallel" if len(phase_tasks) > 1 and not has_intra_phase_dependencies else "sequential"
         entries: List[str] = []
-        for task in stage_tasks:
+        for task in sorted(phase_tasks, key=lambda item: item.get("priority", 0), reverse=True):
             dependency_names = [
                 tasks_by_id[dep_id]["agent_type"]
                 for dep_id in task.get("dependencies", [])
@@ -385,7 +471,8 @@ def _format_execution_topology(tasks: List[Task]) -> str:
                 entries.append(f"{task['agent_type']} (after: {', '.join(dependency_names)})")
             else:
                 entries.append(str(task["agent_type"]))
-        lines.append(f"- Stage {stage} ({mode}): {' | '.join(entries)}")
+        lines.append(f"- Stage {stage_number} ({phase.lower()}, {mode}): {' | '.join(entries)}")
+        stage_number += 1
 
     dependency_lines: List[str] = []
     for task in non_planner_tasks:
@@ -514,7 +601,11 @@ def _summarize_human_inputs(answer_entries: List[Dict[str, Any]], human_feedback
 
 
 def _planner_success_task() -> List[Task]:
-    return [{"id": "0", "agent_type": "planner", "status": "success", "dependencies": [], "priority": 100}]
+    return [{"id": "0", "agent_type": "planner", "stage": 0, "phase": "ANALYSIS", "status": "success", "dependencies": [], "priority": 100}]
+
+
+def _planner_waiting_task() -> List[Task]:
+    return [{"id": "0", "agent_type": "planner", "stage": 0, "phase": "ANALYSIS", "status": "waiting_human", "dependencies": [], "priority": 100}]
 
 
 async def bootstrap_node(state: DesignState) -> Dict[str, Any]:
@@ -560,7 +651,7 @@ async def bootstrap_node(state: DesignState) -> Dict[str, Any]:
         return {
             "workflow_phase": "ANALYSIS",
             "task_queue": [
-                {"id": "0", "agent_type": "planner", "status": "running", "dependencies": [], "priority": 100}
+                    {"id": "0", "agent_type": "planner", "stage": 0, "phase": "ANALYSIS", "status": "running", "dependencies": [], "priority": 100}
             ],
             "history": [f"[SYSTEM] Bootstrap: restarting planner with human feedback for {project_id}."],
             "last_worker": "bootstrap",
@@ -579,7 +670,7 @@ async def bootstrap_node(state: DesignState) -> Dict[str, Any]:
     return {
         "workflow_phase": "ANALYSIS",
         "task_queue": [
-            {"id": "0", "agent_type": "planner", "status": "running", "dependencies": [], "priority": 100}
+                {"id": "0", "agent_type": "planner", "stage": 0, "phase": "ANALYSIS", "status": "running", "dependencies": [], "priority": 100}
         ],
         "history": [
             f"[SYSTEM] Bootstrap: initialized workflow context for {project_id}.",
@@ -637,8 +728,8 @@ Your task is to analyze the user's requirements and provide a tailored design pi
 We have the following Subagents available:
 {agent_descriptions}
 
-ALWAYS INCLUDE: architecture-mapping, design-assembler, validator.
-ONLY INCLUDE others if the requirement clearly involves those domains.
+Select experts based on the requirement. User can enable/disable any expert via project configuration.
+ONLY INCLUDE experts if the requirement clearly involves those domains.
 You must first evaluate the current input materials, uploaded file structure, and any prior human clarifications.
 Treat this as a material sufficiency assessment:
 - If the existing materials are already sufficient to choose a grounded pipeline, do NOT ask the human anything.
@@ -698,15 +789,86 @@ Output JSON format:
             active_agents = {"architecture-mapping"}
     except Exception as exc:
         print(f"[ERROR] Planner LLM failed: {exc}. Falling back to default.")
-        active_agents = {"architecture-mapping", "data-design", "api-design", "flow-design"}
+        active_agents = {"architecture-mapping"}
 
     active_agents = _normalize_active_agents(active_agents)
-    mandatory_agents = {"architecture-mapping", "design-assembler", "validator"}
-    active_agents.update(mandatory_agents)
+    print(f"[DEBUG] Planner: active_agents after normalization: {sorted(active_agents)}")
+    
+    # Filter by enabled experts from project configuration
     enabled_experts = set(metadata_db.list_enabled_expert_ids(project_id))
+    print(f"[DEBUG] Planner: enabled_experts from project config: {sorted(enabled_experts)}")
+    
     if enabled_experts:
-        active_agents = {agent for agent in active_agents if agent in enabled_experts or agent in mandatory_agents}
+        # Only use experts that are explicitly enabled
+        active_agents = {agent for agent in active_agents if agent in enabled_experts}
+        print(f"[DEBUG] Planner: active_agents after filtering by enabled_experts: {sorted(active_agents)}")
+    else:
+        print(f"[DEBUG] Planner: No enabled_experts configured, using all LLM-selected agents")
+    
+    # Early return if human intervention is needed - don't build full task queue yet
+    if needs_human:
+        print(f"[DEBUG] Planner: needs_human=True, returning early without building task queue")
+        pending_interrupt = _build_pending_interrupt(
+            node_id="planner",
+            node_type="planner",
+            question=ask_human_question or "Please clarify the missing planning information before the workflow continues.",
+            context=ask_human_context,
+            resume_target="planner",
+            interrupt_kind="ask_human",
+        )
+        
+        # Write reasoning without pipeline info (since we don't have it yet)
+        reasoning_sections = [
+            "### LLM Orchestration Reasoning",
+            "",
+            llm_decision.reasoning,
+            "",
+            "**Status:** Waiting for human clarification before pipeline selection.",
+        ]
+        reasoning_content = "\n".join(reasoning_sections)
+        (project_path / "logs" / "planner-reasoning.md").write_text(reasoning_content, encoding="utf-8")
+        
+        baseline_payload = {
+            "project_name": project_id,
+            "project_id": project_id,
+            "version": version,
+            "requirement": requirement_text,
+            "uploaded_files": uploaded_files,
+            "tool_context": {
+                "list_files": list_files_result["output"],
+                "extract_structure": extract_structure_result["output"],
+            },
+            "active_agents": [],  # Not decided yet
+            "domain_name": "Domain",
+            "aggregate_root": "Entity",
+            "provider": "ExternalSystem",
+            "consumer": "ConsumerSystem",
+        }
+        if human_inputs:
+            baseline_payload["human_inputs"] = human_inputs
+        (baseline_dir / "requirements.json").write_text(
+            json.dumps(baseline_payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        
+        return {
+            "workflow_phase": "ANALYSIS",
+            "task_queue": _planner_waiting_task(),
+            "history": [
+                "[SYSTEM] Planner: insufficient information detected, requesting human clarification.",
+            ],
+            "human_intervention_required": True,
+            "waiting_reason": pending_interrupt["question"],
+            "pending_interrupt": pending_interrupt,
+            "run_status": "waiting_human",
+            "last_worker": "planner",
+            "current_node": "planner",
+            "tool_results": tool_results,
+        }
+    
+    # Build task queue only when we have a clear pipeline
     tasks = _build_task_queue(active_agents)
+    print(f"[DEBUG] Planner: task_queue built with {len(tasks)} tasks: {[t['agent_type'] for t in tasks]}")
 
     execution_topology = _format_execution_topology(tasks)
     reasoning_sections = [
@@ -714,7 +876,7 @@ Output JSON format:
         "",
         llm_decision.reasoning,
         "",
-        f"**Selected Pipeline:** {', '.join(sorted(list(active_agents)))}",
+        f"**Selected Experts:** {', '.join(sorted(list(active_agents)))}",
     ]
     if execution_topology:
         reasoning_sections.extend(["", execution_topology])
@@ -743,30 +905,6 @@ Output JSON format:
         json.dumps(baseline_payload, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-
-    if needs_human:
-        pending_interrupt = _build_pending_interrupt(
-            node_id="planner",
-            node_type="planner",
-            question=ask_human_question or "Please clarify the missing planning information before the workflow continues.",
-            context=ask_human_context,
-            resume_target="planner",
-            interrupt_kind="ask_human",
-        )
-        return {
-            "workflow_phase": "ANALYSIS",
-            "task_queue": _planner_success_task(),
-            "history": [
-                "[SYSTEM] Planner: insufficient information detected, requesting human clarification.",
-            ],
-            "human_intervention_required": True,
-            "waiting_reason": pending_interrupt["question"],
-            "pending_interrupt": pending_interrupt,
-            "run_status": "waiting_human",
-            "last_worker": "planner",
-            "current_node": "planner",
-            "tool_results": tool_results,
-        }
 
     return {
         "workflow_phase": "ARCHITECTURE",

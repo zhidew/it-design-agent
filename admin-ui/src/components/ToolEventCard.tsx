@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { ChevronDown, Clock3, Wrench } from 'lucide-react';
 
 export interface ToolEventViewModel {

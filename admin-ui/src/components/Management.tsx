@@ -76,7 +76,7 @@ interface WorkbenchSection {
 const TAB_ORDER: WorkbenchTab[] = ['profile', 'skill', 'templates', 'references', 'scripts', 'tools'];
 
 export function ExpertCenter() {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const [experts, setExperts] = useState<Expert[]>([]);
   const [tree, setTree] = useState<FileNode[]>([]);
   const [selectedExpertId, setSelectedExpertId] = useState<string>('');
@@ -225,7 +225,7 @@ export function ExpertCenter() {
     return path;
   };
 
-  const normalizeProfileContent = (path: string, content: string) => {
+  const normalizeProfileContent = (_path: string, content: string) => {
     // Return content as-is since expert.yaml already contains proper localized values
     return content;
   };
