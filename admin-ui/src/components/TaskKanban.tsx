@@ -253,6 +253,13 @@ const TaskKanbanComponent: React.FC<TaskKanbanProps> = ({
             const stageAgentsInQueue = stage.agents.filter((agentId) => tasks.some((task) => task.agent_type === agentId));
             const statuses = stageAgentsInQueue.map((agentId) => nodeStatuses[agentId] || 'idle');
             const isAllSuccess = statuses.length > 0 && statuses.every((status) => status === 'success');
+            
+            // Special handling for ANALYSIS stage to prevent premature success checkmark
+            // while the planner might still be finalizing its state.
+            const isAnalysisStageReallyDone = stage.id === 'ANALYSIS' 
+              ? (isAllSuccess && currentPhase !== 'ANALYSIS')
+              : isAllSuccess;
+
             const hasFailed = statuses.some((status) => status === 'failed');
             const hasWaitingHuman = statuses.some((status) => status === 'waiting_human');
             const hasSuccess = statuses.some((status) => status === 'success');
@@ -266,7 +273,7 @@ const TaskKanbanComponent: React.FC<TaskKanbanProps> = ({
               circleColor = 'bg-indigo-500 border-indigo-500 text-white shadow-lg shadow-indigo-200';
               textColor = 'text-indigo-600';
               icon = <Activity size={14} className="animate-pulse" />;
-            } else if (isAllSuccess) {
+            } else if (isAnalysisStageReallyDone) {
               circleColor = 'bg-emerald-500 border-emerald-500 text-white';
               textColor = 'text-emerald-600';
               icon = <CheckCircle size={14} />;
