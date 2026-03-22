@@ -57,8 +57,12 @@ const TaskKanbanComponent: React.FC<TaskKanbanProps> = ({
   // Check if we're in initialization mode (tasks empty but workflow running)
   const showInitMode = !!(isInitializing && tasks.length === 0);
 
+  // Check if we're in "Blueprint Mode" (Cold Start)
+  const isBlueprintMode = !hasConfirmedPipeline && tasks.length === 0;
+
   // Check if we're in analysis phase (only planner is active)
   const isInAnalysisPhase = useMemo(() => {
+    if (isBlueprintMode) return false;
     if (!hasConfirmedPipeline) {
       return true;
     }
@@ -80,7 +84,7 @@ const TaskKanbanComponent: React.FC<TaskKanbanProps> = ({
     }
 
     return false;
-  }, [hasConfirmedPipeline, showInitMode, tasks]);
+  }, [hasConfirmedPipeline, showInitMode, tasks, isBlueprintMode]);
 
   // Determine active agents: prefer tasks, fallback to selectedPipeline
   const activeAgentTypes = useMemo(() => {
@@ -101,6 +105,9 @@ const TaskKanbanComponent: React.FC<TaskKanbanProps> = ({
 
   // Derive stages dynamically based on active tasks and their phases
   const activeStages = useMemo(() => {
+    if (isBlueprintMode) {
+      return ALL_STAGES;
+    }
     if (isInAnalysisPhase) {
       return ALL_STAGES.filter((stage) => stage.id === 'ANALYSIS');
     }
@@ -123,13 +130,13 @@ const TaskKanbanComponent: React.FC<TaskKanbanProps> = ({
     
     // Fallback: Filter ALL_STAGES to only include stages with active agents
     return ALL_STAGES.filter((stage) => stage.agents.some((agentId) => activeAgentTypes.has(agentId)));
-  }, [isInAnalysisPhase, tasks, activeAgentTypes]);
+  }, [isInAnalysisPhase, tasks, activeAgentTypes, isBlueprintMode]);
 
   // Get pending stages (from selectedPipeline but not yet in tasks)
   // Only show pending stages when NOT in analysis phase
   const pendingStages = useMemo(() => {
-    // Never show pending stages during analysis phase
-    if (isInAnalysisPhase) return [];
+    // Never show pending stages during analysis or blueprint phase
+    if (isInAnalysisPhase || isBlueprintMode) return [];
     if (!showPlannedStages || !selectedPipeline || tasks.length === 0) return [];
     
     const activeStageIds = new Set(activeStages.map(s => s.id));
@@ -138,7 +145,7 @@ const TaskKanbanComponent: React.FC<TaskKanbanProps> = ({
       (stage) => !activeStageIds.has(stage.id) &&
         stage.agents.some((agentId) => selectedPipeline.includes(agentId))
     );
-  }, [isInAnalysisPhase, showPlannedStages, selectedPipeline, tasks, activeStages]);
+  }, [isInAnalysisPhase, showPlannedStages, selectedPipeline, tasks, activeStages, isBlueprintMode]);
 
   const gridTemplateColumns = isInAnalysisPhase
     ? '1fr 3fr'
@@ -273,6 +280,10 @@ const TaskKanbanComponent: React.FC<TaskKanbanProps> = ({
               circleColor = 'bg-indigo-500 border-indigo-500 text-white shadow-lg shadow-indigo-200';
               textColor = 'text-indigo-600';
               icon = <Activity size={14} className="animate-pulse" />;
+            } else if (isBlueprintMode) {
+              circleColor = 'bg-gray-50 border-dashed border-gray-300 text-gray-300';
+              textColor = 'text-gray-400 opacity-60';
+              icon = <Circle size={10} className="opacity-40" />;
             } else if (isAnalysisStageReallyDone) {
               circleColor = 'bg-emerald-500 border-emerald-500 text-white';
               textColor = 'text-emerald-600';
@@ -318,6 +329,27 @@ const TaskKanbanComponent: React.FC<TaskKanbanProps> = ({
         style={{ gridTemplateColumns }}
       >
         {activeStages.map((stage) => {
+          if (isBlueprintMode) {
+            return (
+              <div
+                key={stage.id}
+                className="flex min-w-0 flex-col gap-2 p-2.5 rounded-2xl border border-dashed border-gray-100 bg-gray-50/10 min-h-[110px] opacity-40 transition-all duration-700"
+              >
+                <div className="flex flex-col gap-1.5">
+                  {stage.agents.map((agentId) => (
+                    <div
+                      key={agentId}
+                      className="flex items-center gap-2 w-full p-2.5 rounded-xl border border-dashed border-gray-100 bg-white/40 text-gray-300 text-[9px] uppercase tracking-tighter font-black"
+                    >
+                      <Circle size={10} className="opacity-30" />
+                      <span className="truncate">{t(`agents.${agentId}`)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          }
+
           const isActive = currentPhase === stage.id || (showInitMode && stage.id === 'ANALYSIS');
           const stageAgentsInQueue = stage.agents.filter((agentId) => tasks.some((task) => task.agent_type === agentId));
 
@@ -339,7 +371,7 @@ const TaskKanbanComponent: React.FC<TaskKanbanProps> = ({
           );
         })}
 
-        {isInAnalysisPhase && (
+        {isInAnalysisPhase && !isBlueprintMode && (
           <div className="flex min-w-0 flex-col gap-2 p-2.5 rounded-2xl border border-dashed border-gray-200 bg-gray-50/30 min-h-[110px]">
             <div className="flex flex-1 items-center justify-center">
               <div className="flex flex-col items-center gap-3">
@@ -356,7 +388,11 @@ const TaskKanbanComponent: React.FC<TaskKanbanProps> = ({
           </div>
         )}
 
-        {!isInAnalysisPhase && showInitMode && (
+        {isBlueprintMode && (
+          <div className="hidden" /> // Already covered by skeleton cards
+        )}
+
+        {!isInAnalysisPhase && !isBlueprintMode && showInitMode && (
           <div className="flex min-w-0 flex-col gap-2 p-2.5 rounded-2xl border border-dashed border-indigo-200 bg-indigo-50/30 min-h-[110px]">
             <div className="flex flex-1 items-center justify-center">
               <div className="flex flex-col items-center gap-2">

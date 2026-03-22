@@ -342,19 +342,20 @@
     }
   },
   "stages": {
-    "ANALYSIS": "需求分析",
-    "ARCHITECTURE": "架构设计",
-    "MODELING": "领域与数据建模",
-    "INTERFACE": "流程与集成",
-    "QUALITY": "测试与运维",
-    "DELIVERY": "聚合与审核",
-    "initializing": "初始化中...",
-    "waiting": "等待中..."
+  "ANALYSIS": "需求分析",
+  "ARCHITECTURE": "架构设计",
+  "MODELING": "领域建模",
+  "INTERFACE": "流程与集成",
+  "QUALITY": "测试与运维",
+  "DELIVERY": "聚合与审核",
+  "initializing": "正在激活...",
+  "waiting": "准备就绪"
   },
   "pipeline": {
-    "preparing": "正在准备流水线...",
-    "expertsWaiting": "设计专家正在等待加载..."
+  "preparing": "编排引擎启动中...",
+  "expertsWaiting": "流水线就绪，待输入需求激活专家..."
   },
+
   "agents": {
     "planner": "任务分解",
     "architecture-mapping": "模块架构分析",
