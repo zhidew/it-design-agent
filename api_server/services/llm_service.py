@@ -14,6 +14,14 @@ def _resolve_llm_setting(llm_settings: dict | None, key: str, env_key: str, defa
         return str(llm_settings.get(key))
     return os.getenv(env_key, default)
 
+def _resolve_llm_dict_setting(llm_settings: dict | None, key: str) -> dict[str, str] | None:
+    if not llm_settings:
+        return None
+    value = llm_settings.get(key)
+    if isinstance(value, dict):
+        return {str(k): str(v) for k, v in value.items()}
+    return None
+
 class SubagentOutput(BaseModel):
     reasoning: str = Field(description="LLM reasoning process and decision logic (Markdown format)")
     artifacts: dict[str, str] = Field(description="Generated files dictionary, key is filename, value is content.")
@@ -48,6 +56,7 @@ def resolve_runtime_llm_settings(design_context: dict | None) -> dict | None:
         "openai_api_key": api_key,
         "openai_base_url": base_url,
         "openai_model_name": model_name,
+        "openai_headers": model_config.get("headers"),
     }
 
 def generate_with_llm(
@@ -234,10 +243,11 @@ def test_llm_connectivity(llm_settings: dict) -> dict:
             api_key = llm_settings.get("api_key")
             base_url = llm_settings.get("base_url", "https://api.openai.com/v1")
             model_name = llm_settings.get("model_name", "gpt-4o")
+            headers = llm_settings.get("headers")
             if not api_key:
                 return {"success": False, "message": "Missing API Key"}
             
-            client = OpenAI(api_key=api_key, base_url=base_url)
+            client = OpenAI(api_key=api_key, base_url=base_url, default_headers=headers or None)
             completion = client.chat.completions.create(
                 model=model_name,
                 messages=[{"role": "user", "content": "Ping"}],
@@ -254,8 +264,9 @@ def _call_openai_raw(system_prompt: str, user_prompt: str, llm_settings: dict | 
     api_key = _resolve_llm_setting(llm_settings, "openai_api_key", "OPENAI_API_KEY")
     base_url = _resolve_llm_setting(llm_settings, "openai_base_url", "OPENAI_BASE_URL", "https://api.openai.com/v1")
     model_name = _resolve_llm_setting(llm_settings, "openai_model_name", "OPENAI_MODEL_NAME", "gpt-4o")
+    headers = _resolve_llm_dict_setting(llm_settings, "openai_headers")
     
-    client = OpenAI(api_key=api_key, base_url=base_url)
+    client = OpenAI(api_key=api_key, base_url=base_url, default_headers=headers or None)
     completion = client.chat.completions.create(
         model=model_name,
         messages=[

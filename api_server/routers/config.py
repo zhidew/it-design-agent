@@ -142,10 +142,13 @@ async def test_llm_config(project_id: str, req: ModelConfig):
     _require_project(project_id)
     # If API key is empty but we have an existing one in DB, fetch it
     payload = req.model_dump() if hasattr(req, "model_dump") else req.dict()
-    if not payload.get("api_key") and payload.get("id"):
+    if (not payload.get("api_key") or not payload.get("headers")) and payload.get("id"):
         existing = metadata_db.get_project_model(project_id, payload["id"], include_secrets=True)
         if existing:
-            payload["api_key"] = existing.get("api_key")
+            if not payload.get("api_key"):
+                payload["api_key"] = existing.get("api_key")
+            if not payload.get("headers"):
+                payload["headers"] = existing.get("headers")
     
     return test_llm_connectivity(payload)
 

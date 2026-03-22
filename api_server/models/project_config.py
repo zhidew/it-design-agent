@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -95,6 +95,7 @@ class ModelConfig(BaseModel):
     model_name: str
     api_key: Optional[str] = None
     base_url: Optional[str] = None
+    headers: Optional[Dict[str, str]] = None
     is_default: bool = False
     description: Optional[str] = None
 

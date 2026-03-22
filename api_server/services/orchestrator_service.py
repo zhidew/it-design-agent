@@ -401,22 +401,25 @@ def _coerce_event_output(output) -> dict:
     return output if isinstance(output, dict) else {}
 
 
-def _append_job_log(job_id: str, message: str):
+def _append_job_log(job_id: str, message: str, project_id: str | None = None, version: str | None = None):
     job = _ensure_job(job_id)
     job["logs"].append(message)
     
     # Try to persist log incrementally if we have project context
     try:
-        # job_id is usually {project_id}:{version}
-        if ":" in job_id:
-            parts = job_id.split(":")
-            if len(parts) >= 2:
-                pid, ver = parts[0], parts[1]
-                log_dir = BASE_DIR / "projects" / pid / ver / "logs"
-                log_dir.mkdir(parents=True, exist_ok=True)
-                log_file = log_dir / "orchestrator_run.log"
-                with open(log_file, "a", encoding="utf-8") as f:
-                    f.write(message + "\n")
+        pid = project_id
+        ver = version
+        if not pid or not ver:
+            if ":" in job_id:
+                parts = job_id.split(":")
+                if len(parts) >= 2:
+                    pid, ver = parts[0], parts[1]
+        if pid and ver:
+            log_dir = BASE_DIR / "projects" / pid / ver / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_file = log_dir / "orchestrator_run.log"
+            with open(log_file, "a", encoding="utf-8") as f:
+                f.write(message + "\n")
     except Exception as e:
         # Ignore errors during incremental logging to avoid crashing the worker
         print(f"[Orchestrator] Failed to append log to disk: {e}")
@@ -646,7 +649,7 @@ def _handle_structured_graph_event(
             completed_status = "skipped"
 
     for history_entry in payload.get("history", []):
-        _append_job_log(job_id, history_entry)
+        _append_job_log(job_id, history_entry, project_id=project_id, version=version)
         _emit_text_delta(job_id, run_id, node_id, node_type, history_entry, "history")
 
     _emit_tool_events(job_id, run_id, node_id, node_type, payload.get("tool_results"))
@@ -801,6 +804,7 @@ def _build_graph_input_state(
                     "provider": model_config["provider"],
                     "api_key": model_config["api_key"],
                     "base_url": model_config["base_url"],
+                    "headers": model_config.get("headers"),
                     "model_name": model_config["model_name"]
                 }
                 # Also set the model_name for easy access
@@ -966,7 +970,7 @@ async def run_orchestrator_task(
         error_msg = f"[ERROR] LangGraph execution error: {exc}\n{traceback.format_exc()}"
         print(error_msg)
         _ensure_job(job_id)["status"] = RUN_STATUS_FAILED
-        _append_job_log(job_id, error_msg)
+        _append_job_log(job_id, error_msg, project_id=project_id, version=version)
         _emit_text_delta(job_id, job_id, runtime_registry.get(thread_id, {}).get("current_node") or "run", runtime_registry.get(thread_id, {}).get("current_node") or "run", error_msg, "stderr")
         _set_runtime_state(
             project_id,
@@ -1369,7 +1373,18 @@ def get_artifacts_tree(project_id: str, version: str):
 
 
 def get_version_logs(project_id: str, version: str) -> list:
-    return get_run_log(project_id, version, BASE_DIR)
+    persisted_logs = get_run_log(project_id, version, BASE_DIR)
+    current_state = get_workflow_state(project_id, version)
+    run_id = (current_state or {}).get("run_id")
+    live_logs = jobs.get(run_id, {}).get("logs", []) if run_id else []
+
+    combined_logs = list(persisted_logs)
+    seen = set(combined_logs)
+    for log in live_logs:
+        if log not in seen:
+            seen.add(log)
+            combined_logs.append(log)
+    return combined_logs
 
 
 def _resolve_experts_dir() -> Path:

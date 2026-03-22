@@ -234,6 +234,7 @@ class MetadataDB:
                     provider TEXT NOT NULL,
                     api_key TEXT,
                     base_url TEXT,
+                    headers TEXT,
                     model_name TEXT NOT NULL,
                     is_default INTEGER DEFAULT 0,
                     created_at TEXT NOT NULL,
@@ -243,7 +244,17 @@ class MetadataDB:
                 )
                 """
             )
+            self._ensure_column(conn, "project_model_configs", "headers", "TEXT")
             conn.commit()
+
+    @staticmethod
+    def _ensure_column(conn: sqlite3.Connection, table_name: str, column_name: str, definition: str):
+        columns = {
+            row["name"]
+            for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+        }
+        if column_name not in columns:
+            conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}")
 
     def _load_env_lines(self) -> List[str]:
         if not self.env_path.exists():
@@ -285,10 +296,16 @@ class MetadataDB:
         existing = self.get_project_model(project_id, model_id, include_secrets=True) if model_id else None
 
         api_key = payload.get("api_key")
+        headers = payload.get("headers")
         encrypted_api_key = (
             self.codec.encrypt(api_key)
             if api_key not in (None, "", "******")
             else (existing.get("_api_key_encrypted") if existing else None)
+        )
+        encrypted_headers = (
+            self.codec.encrypt(self._dumps_json(headers))
+            if headers not in (None, "", {})
+            else (existing.get("_headers_encrypted") if existing else None)
         )
 
         with self._get_connection() as conn:
@@ -302,13 +319,14 @@ class MetadataDB:
             conn.execute(
                 """
                 INSERT INTO project_model_configs (
-                    id, project_id, name, provider, api_key, base_url, model_name, is_default, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    id, project_id, name, provider, api_key, base_url, headers, model_name, is_default, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(project_id, id) DO UPDATE SET
                     name=excluded.name,
                     provider=excluded.provider,
                     api_key=excluded.api_key,
                     base_url=excluded.base_url,
+                    headers=excluded.headers,
                     model_name=excluded.model_name,
                     is_default=excluded.is_default,
                     updated_at=excluded.updated_at
@@ -320,6 +338,7 @@ class MetadataDB:
                     payload.get("provider"),
                     encrypted_api_key,
                     payload.get("base_url"),
+                    encrypted_headers,
                     payload.get("model_name"),
                     1 if payload.get("is_default") else 0,
                     (existing.get("created_at") if existing else now),
@@ -356,7 +375,10 @@ class MetadataDB:
 
     def _row_to_model_config(self, row: Dict[str, Any], include_secrets: bool) -> Dict[str, Any]:
         encrypted_api_key = row.pop("api_key", None)
+        encrypted_headers = row.pop("headers", None)
         api_key = self.codec.decrypt(encrypted_api_key) if encrypted_api_key else None
+        headers_raw = self.codec.decrypt(encrypted_headers) if encrypted_headers else None
+        headers = self._loads_json(headers_raw, None)
 
         result: Dict[str, Any] = {
             "id": row["id"],
@@ -367,14 +389,18 @@ class MetadataDB:
             "model_name": row["model_name"],
             "is_default": bool(row["is_default"]),
             "has_api_key": bool(encrypted_api_key),
+            "has_headers": bool(encrypted_headers),
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
         if include_secrets:
             result["api_key"] = api_key
+            result["headers"] = headers
             result["_api_key_encrypted"] = encrypted_api_key
+            result["_headers_encrypted"] = encrypted_headers
         else:
             result["api_key"] = self.codec.mask(api_key)
+            result["headers"] = None
         return result
 
     def upsert_project(self, project_id: str, name: str, description: Optional[str] = None):

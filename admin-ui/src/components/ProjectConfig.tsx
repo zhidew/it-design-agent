@@ -58,8 +58,10 @@ interface ModelConfig {
   model_name: string;
   api_key?: string;
   base_url?: string;
+  headers?: string;
   is_default: boolean;
   has_api_key?: boolean;
+  has_headers?: boolean;
   description?: string;
 }
 
@@ -70,6 +72,7 @@ const createModel = (): ModelConfig => ({
   model_name: '',
   api_key: '',
   base_url: '',
+  headers: '',
   is_default: false,
   description: '',
 });
@@ -116,6 +119,21 @@ function splitMultiline(value: string): string[] {
     .filter(Boolean);
 }
 
+function parseHeadersJson(value?: string): Record<string, string> | undefined {
+  if (!value?.trim()) {
+    return undefined;
+  }
+
+  const candidate = JSON.parse(value);
+  if (!candidate || Array.isArray(candidate) || typeof candidate !== 'object') {
+    throw new Error('Headers must be a JSON object.');
+  }
+
+  return Object.fromEntries(
+    Object.entries(candidate).map(([key, item]) => [String(key), String(item)]),
+  );
+}
+
 export function ProjectConfig() {
   const { t, i18n } = useTranslation();
   const { id } = useParams<{ id: string }>();
@@ -143,7 +161,8 @@ export function ProjectConfig() {
     try {
       const res = await api.testProjectModel(projectId, {
         ...editingModel,
-        api_key: editingModel.api_key?.trim() || undefined
+        api_key: editingModel.api_key?.trim() || undefined,
+        headers: parseHeadersJson(editingModel.headers),
       });
       setTestResult(res);
     } catch (err: any) {
@@ -349,6 +368,7 @@ export function ProjectConfig() {
       await api.saveProjectModel(projectId, {
         ...model,
         api_key: model.api_key?.trim() ? model.api_key.trim() : undefined,
+        headers: parseHeadersJson(model.headers),
       });
       setSaving(false);
       setIsSaved(true);
@@ -360,9 +380,10 @@ export function ProjectConfig() {
         setEditingModel(null);
         setIsSaved(false);
       }, 1500);
-    } catch {
+    } catch (error: any) {
       setSaving(false);
       setIsSaved(false);
+      setTestResult({ success: false, message: error?.message || 'Failed to save model.' });
     }
   };
 
@@ -838,6 +859,18 @@ export function ProjectConfig() {
                           onChange={(e) => setEditingModel({ ...editingModel, api_key: e.target.value })}
                           placeholder={editingModel.has_api_key ? llmCopy.keepCurrent : llmCopy.enterKey}
                           className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                        />
+                      </div>
+
+                      <div className="md:col-span-2">
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block">
+                          Request Headers JSON {editingModel.has_headers ? `(${llmCopy.saved})` : ''}
+                        </label>
+                        <textarea
+                          value={editingModel.headers || ''}
+                          onChange={(e) => setEditingModel({ ...editingModel, headers: e.target.value })}
+                          placeholder={editingModel.has_headers ? 'Leave blank to keep current headers' : '{"Authorization":"Bearer custom-token"}'}
+                          className="w-full min-h-28 p-3 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all resize-none font-mono text-xs"
                         />
                       </div>
 

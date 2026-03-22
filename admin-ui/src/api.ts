@@ -13,8 +13,10 @@ export interface ModelConfig {
   model_name: string;
   api_key?: string;
   base_url?: string;
+  headers?: Record<string, string> | null;
   is_default: boolean;
   has_api_key?: boolean;
+  has_headers?: boolean;
   description?: string;
 }
 
@@ -142,6 +144,7 @@ export const api = {
     model_name: string;
     api_key?: string;
     base_url?: string;
+    headers?: Record<string, string>;
     is_default: boolean;
     description?: string;
   }) => apiClient.post(`/projects/${projectId}/config/models`, payload).then(res => res.data),
@@ -154,6 +157,7 @@ export const api = {
     model_name: string;
     api_key?: string;
     base_url?: string;
+    headers?: Record<string, string>;
     is_default: boolean;
     description?: string;
   }) => apiClient.post(`/projects/${projectId}/config/llm/test`, payload).then(res => res.data),

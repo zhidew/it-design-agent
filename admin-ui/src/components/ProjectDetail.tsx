@@ -552,10 +552,6 @@ export function ProjectDetail() {
 
     const handleEvent = (message: MessageEvent<string>) => {
       const event = JSON.parse(message.data) as OrchestratorEvent;
-      const eventTimestamp = Date.parse(event.timestamp || '') || 0;
-      if (latestFetchedStateAtRef.current > 0 && eventTimestamp > 0 && eventTimestamp <= latestFetchedStateAtRef.current) {
-        return;
-      }
       appendEvent(event);
       applyEventToState(event);
     };
@@ -617,6 +613,7 @@ export function ProjectDetail() {
       if (state.run_status !== 'queued') {
         void loadArtifacts(versionToFetch);
       }
+      void fetchLogs();
 
     } catch (err: any) {
       if (err.response?.status === 404) {
@@ -885,50 +882,54 @@ export function ProjectDetail() {
   }, [selectedNode, artifacts]);
 
   const executionEntries = useMemo<ExecutionLogEntry[]>(() => {
-    // 1. Live session events take priority
-    if (runEvents.length > 0) {
-      return runEvents.map((event) => {
-        switch (event.event_type) {
-          case 'node_started':
-            return { kind: 'text', id: event.event_id, text: `[EVENT] ${event.node_type} started`, tone: 'default' as const };
-          case 'node_completed':
-            return { kind: 'text', id: event.event_id, text: `[EVENT] ${event.node_type} completed with status ${event.status}`, tone: event.status === 'failed' ? 'error' as const : 'default' as const };
-          case 'text_delta':
-            return { kind: 'text', id: event.event_id, text: event.delta, tone: event.delta.includes('[ERROR]') ? 'error' as const : 'default' as const };
-          case 'artifact_updated':
-            return { kind: 'text', id: event.event_id, text: `[EVENT] ${event.node_type} ${event.artifact_status} artifact ${event.artifact_name}`, tone: 'default' as const };
-          case 'tool_event':
-            return { kind: 'tool', id: event.event_id, event };
-          case 'waiting_human':
-            return { kind: 'text', id: event.event_id, text: `[EVENT] Waiting for human input at ${event.node_type}: ${event.question}`, tone: 'default' as const };
-          case 'run_completed':
-            return { kind: 'text', id: event.event_id, text: '[EVENT] Run completed successfully', tone: 'default' as const };
-          case 'run_failed':
-            return { kind: 'text', id: event.event_id, text: `[EVENT] Run failed: ${event.error_message}`, tone: 'error' as const };
-          default:
-            return null;
-        }
-      }).filter((entry): entry is ExecutionLogEntry => entry !== null);
-    }
+    const eventEntries = runEvents.map((event) => {
+      switch (event.event_type) {
+        case 'node_started':
+          return { kind: 'text', id: event.event_id, text: `[EVENT] ${event.node_type} started`, tone: 'default' as const };
+        case 'node_completed':
+          return { kind: 'text', id: event.event_id, text: `[EVENT] ${event.node_type} completed with status ${event.status}`, tone: event.status === 'failed' ? 'error' as const : 'default' as const };
+        case 'text_delta':
+          return { kind: 'text', id: event.event_id, text: event.delta, tone: event.delta.includes('[ERROR]') ? 'error' as const : 'default' as const };
+        case 'artifact_updated':
+          return { kind: 'text', id: event.event_id, text: `[EVENT] ${event.node_type} ${event.artifact_status} artifact ${event.artifact_name}`, tone: 'default' as const };
+        case 'tool_event':
+          return { kind: 'tool', id: event.event_id, event };
+        case 'waiting_human':
+          return { kind: 'text', id: event.event_id, text: `[EVENT] Waiting for human input at ${event.node_type}: ${event.question}`, tone: 'default' as const };
+        case 'run_completed':
+          return { kind: 'text', id: event.event_id, text: '[EVENT] Run completed successfully', tone: 'default' as const };
+        case 'run_failed':
+          return { kind: 'text', id: event.event_id, text: `[EVENT] Run failed: ${event.error_message}`, tone: 'error' as const };
+        default:
+          return null;
+      }
+    }).filter((entry): entry is ExecutionLogEntry => entry !== null);
 
-    // 2. Persistent logs from disk (orchestrator_run.log)
-    if (versionLogs.length > 0) {
-      return versionLogs.map((log, idx) => ({
-        kind: 'text' as const,
-        id: `log-${idx}`,
-        text: log,
-        tone: log.includes('[ERROR]') ? 'error' as const : 'default' as const,
-      }));
-    }
+    const diskLogEntries = versionLogs.map((log, idx) => ({
+      kind: 'text' as const,
+      id: `log-${idx}`,
+      text: log,
+      tone: log.includes('[ERROR]') ? 'error' as const : 'default' as const,
+    }));
 
-    // 3. Fallback to state history
-    if (!workflowState?.history) return [];
-    return workflowState.history.map((log, idx) => ({
+    const historyEntries = (workflowState?.history || []).map((log, idx) => ({
       kind: 'text' as const,
       id: `history-${idx}`,
       text: log,
       tone: log.includes('[ERROR]') ? 'error' as const : 'default' as const,
     }));
+
+    const mergedEntries: ExecutionLogEntry[] = [];
+    const seen = new Set<string>();
+    [...eventEntries, ...diskLogEntries, ...historyEntries].forEach((entry) => {
+      const key = entry.kind === 'tool' ? `tool:${entry.id}` : `text:${entry.text}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        mergedEntries.push(entry);
+      }
+    });
+
+    return mergedEntries;
   }, [runEvents, versionLogs, workflowState?.history]);
 
   const reasoningLogs = useMemo(() => {
