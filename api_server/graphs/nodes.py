@@ -7,7 +7,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List
 
-from services.llm_service import SubagentOutput, generate_with_llm
+from services.llm_service import SubagentOutput, generate_with_llm, resolve_runtime_llm_settings
 
 from .state import DesignState, Task
 from .tools import execute_tool
@@ -770,6 +770,7 @@ Output JSON format:
     needs_human = False
     ask_human_question = ""
     ask_human_context: Dict[str, Any] = {}
+    runtime_llm_settings = resolve_runtime_llm_settings(state.get("design_context"))
 
     try:
         print("[DEBUG] Planner: Calling LLM for intent analysis...")
@@ -778,6 +779,7 @@ Output JSON format:
             system_prompt, 
             user_prompt, 
             ["active_agents"],
+            llm_settings=runtime_llm_settings,
             project_id=project_id,
             version=version,
             node_id="planner"

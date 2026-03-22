@@ -125,7 +125,7 @@ export function ProjectConfig() {
   const [activeTab, setActiveTab] = useState<TabKey>('repositories');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [isSaved, setIsSaved] = useState(false);
   const [repositories, setRepositories] = useState<RepositoryConfig[]>([]);
   const [databases, setDatabases] = useState<DatabaseConfig[]>([]);
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseConfig[]>([]);
@@ -193,7 +193,7 @@ export function ProjectConfig() {
       geminiModel: isZh ? 'Gemini 模型名' : 'Gemini Model',
       openaiKey: isZh ? 'OpenAI API Key' : 'OpenAI API Key',
       geminiKey: isZh ? 'Gemini API Key' : 'Gemini API Key',
-      saved: isZh ? '已保存' : 'saved',
+      saved: isZh ? '保存' : 'Save',
       keepCurrent: isZh ? '留空则保持当前密钥' : 'Leave blank to keep current key',
       enterKey: isZh ? '请输入 API Key' : 'Enter API key',
       saveSuccess: isZh ? '大模型配置已保存。' : 'LLM config saved.',
@@ -216,7 +216,6 @@ export function ProjectConfig() {
   const loadAll = async () => {
     if (!projectId) return;
     setLoading(true);
-    setMessage(null);
     try {
       const [repoRes, dbRes, kbRes, expertRes, _llmRes, modelRes] = await Promise.all([
         api.getRepositoryConfigs(projectId),
@@ -231,8 +230,8 @@ export function ProjectConfig() {
       setKnowledgeBases(kbRes.knowledge_bases || []);
       setExperts(expertRes.experts || []);
       setModels(modelRes.models || []);
-    } catch {
-      setMessage({ type: 'error', text: t('projectConfig.messages.loadError') });
+    } catch (error) {
+      console.error('Failed to load project configurations:', error);
     } finally {
       setLoading(false);
     }
@@ -245,6 +244,7 @@ export function ProjectConfig() {
   const saveRepositories = async () => {
     if (!projectId) return;
     setSaving(true);
+    setIsSaved(false);
     try {
       await Promise.all(
         repositories
@@ -258,10 +258,10 @@ export function ProjectConfig() {
             }),
           ),
       );
-      setMessage({ type: 'success', text: t('projectConfig.messages.saveRepositoriesSuccess') });
+      setIsSaved(true);
       await loadAll();
+      setTimeout(() => setIsSaved(false), 2000);
     } catch {
-      setMessage({ type: 'error', text: t('projectConfig.messages.saveRepositoriesError') });
     } finally {
       setSaving(false);
     }
@@ -270,6 +270,7 @@ export function ProjectConfig() {
   const saveDatabases = async () => {
     if (!projectId) return;
     setSaving(true);
+    setIsSaved(false);
     try {
       await Promise.all(
         databases
@@ -283,10 +284,10 @@ export function ProjectConfig() {
             }),
           ),
       );
-      setMessage({ type: 'success', text: t('projectConfig.messages.saveDatabasesSuccess') });
+      setIsSaved(true);
       await loadAll();
+      setTimeout(() => setIsSaved(false), 2000);
     } catch {
-      setMessage({ type: 'error', text: t('projectConfig.messages.saveDatabasesError') });
     } finally {
       setSaving(false);
     }
@@ -295,6 +296,7 @@ export function ProjectConfig() {
   const saveKnowledgeBases = async () => {
     if (!projectId) return;
     setSaving(true);
+    setIsSaved(false);
     try {
       await Promise.all(
         knowledgeBases
@@ -306,10 +308,10 @@ export function ProjectConfig() {
             }),
           ),
       );
-      setMessage({ type: 'success', text: t('projectConfig.messages.saveKnowledgeBasesSuccess') });
+      setIsSaved(true);
       await loadAll();
+      setTimeout(() => setIsSaved(false), 2000);
     } catch {
-      setMessage({ type: 'error', text: t('projectConfig.messages.saveKnowledgeBasesError') });
     } finally {
       setSaving(false);
     }
@@ -318,6 +320,7 @@ export function ProjectConfig() {
   const saveExperts = async () => {
     if (!projectId) return;
     setSaving(true);
+    setIsSaved(false);
     try {
       await Promise.all(
         experts.map((item) =>
@@ -329,10 +332,10 @@ export function ProjectConfig() {
           }),
         ),
       );
-      setMessage({ type: 'success', text: t('projectConfig.messages.saveExpertsSuccess') });
+      setIsSaved(true);
       await loadAll();
+      setTimeout(() => setIsSaved(false), 2000);
     } catch {
-      setMessage({ type: 'error', text: t('projectConfig.messages.saveExpertsError') });
     } finally {
       setSaving(false);
     }
@@ -341,19 +344,25 @@ export function ProjectConfig() {
   const saveModel = async (model: ModelConfig) => {
     if (!projectId) return;
     setSaving(true);
+    setIsSaved(false);
     try {
       await api.saveProjectModel(projectId, {
         ...model,
         api_key: model.api_key?.trim() ? model.api_key.trim() : undefined,
       });
-      setMessage({ type: 'success', text: t('common.saveSuccess') });
-      setIsModelModalOpen(false);
-      setEditingModel(null);
-      await loadAll();
-    } catch {
-      setMessage({ type: 'error', text: t('common.saveError') });
-    } finally {
       setSaving(false);
+      setIsSaved(true);
+      await loadAll();
+      
+      // Close modal after showing success state for a while
+      setTimeout(() => {
+        setIsModelModalOpen(false);
+        setEditingModel(null);
+        setIsSaved(false);
+      }, 1500);
+    } catch {
+      setSaving(false);
+      setIsSaved(false);
     }
   };
 
@@ -362,10 +371,8 @@ export function ProjectConfig() {
     if (!window.confirm(t('common.confirmDelete'))) return;
     try {
       await api.deleteProjectModel(projectId, modelId);
-      setMessage({ type: 'success', text: t('common.deleteSuccess') });
       await loadAll();
     } catch {
-      setMessage({ type: 'error', text: t('common.deleteError') });
     }
   };
 
@@ -373,10 +380,8 @@ export function ProjectConfig() {
     if (!projectId || !repoId) return;
     try {
       await api.deleteRepositoryConfig(projectId, repoId);
-      setMessage({ type: 'success', text: t('projectConfig.messages.deleteRepositoriesSuccess') });
       await loadAll();
     } catch {
-      setMessage({ type: 'error', text: t('projectConfig.messages.deleteRepositoriesError') });
     }
   };
 
@@ -384,10 +389,8 @@ export function ProjectConfig() {
     if (!projectId || !dbId) return;
     try {
       await api.deleteDatabaseConfig(projectId, dbId);
-      setMessage({ type: 'success', text: t('projectConfig.messages.deleteDatabasesSuccess') });
       await loadAll();
     } catch {
-      setMessage({ type: 'error', text: t('projectConfig.messages.deleteDatabasesError') });
     }
   };
 
@@ -395,10 +398,8 @@ export function ProjectConfig() {
     if (!projectId || !kbId) return;
     try {
       await api.deleteKnowledgeBaseConfig(projectId, kbId);
-      setMessage({ type: 'success', text: t('projectConfig.messages.deleteKnowledgeBasesSuccess') });
       await loadAll();
     } catch {
-      setMessage({ type: 'error', text: t('projectConfig.messages.deleteKnowledgeBasesError') });
     }
   };
 
@@ -432,15 +433,6 @@ export function ProjectConfig() {
             <LanguageSwitcher />
           </div>
         </div>
-
-        {message && (
-          <div className={`mb-6 p-4 rounded-xl border flex items-center justify-between ${message.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-rose-50 border-rose-200 text-rose-700'}`}>
-            <span className="font-medium text-sm">{message.text}</span>
-            <button onClick={() => setMessage(null)} className="text-xs font-bold uppercase opacity-50 hover:opacity-100">
-              {t('common.dismiss')}
-            </button>
-          </div>
-        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
           <div className="lg:col-span-3">
@@ -496,9 +488,13 @@ export function ProjectConfig() {
                       <Plus size={14} />
                       {t('projectConfig.actions.addRepo')}
                     </button>
-                    <button onClick={() => void saveRepositories()} disabled={saving} className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-black uppercase hover:bg-indigo-700 transition-all disabled:opacity-50">
-                      <Save size={14} />
-                      {t('common.save')}
+                    <button
+                      onClick={() => void saveRepositories()}
+                      disabled={saving || isSaved}
+                      className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase transition-all shadow-lg disabled:opacity-50 min-w-[100px] justify-center ${isSaved ? 'bg-emerald-500 text-white shadow-emerald-100' : 'bg-indigo-600 text-white shadow-indigo-100 hover:bg-indigo-700'}`}
+                    >
+                      {saving ? <RefreshCw size={14} className="animate-spin" /> : (isSaved ? <CheckCircle size={14} /> : <Save size={14} />)}
+                      {saving ? t('common.saving') : (isSaved ? t('common.saveSuccess') : t('common.save'))}
                     </button>
                   </div>
                 </div>
@@ -544,9 +540,13 @@ export function ProjectConfig() {
                       <Plus size={14} />
                       {t('projectConfig.actions.addDatabase')}
                     </button>
-                    <button onClick={() => void saveDatabases()} disabled={saving} className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-black uppercase hover:bg-indigo-700 transition-all disabled:opacity-50">
-                      <Save size={14} />
-                      {t('common.save')}
+                    <button
+                      onClick={() => void saveDatabases()}
+                      disabled={saving || isSaved}
+                      className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase transition-all shadow-lg disabled:opacity-50 min-w-[100px] justify-center ${isSaved ? 'bg-emerald-500 text-white shadow-emerald-100' : 'bg-indigo-600 text-white shadow-indigo-100 hover:bg-indigo-700'}`}
+                    >
+                      {saving ? <RefreshCw size={14} className="animate-spin" /> : (isSaved ? <CheckCircle size={14} /> : <Save size={14} />)}
+                      {saving ? t('common.saving') : (isSaved ? t('common.saveSuccess') : t('common.save'))}
                     </button>
                   </div>
                 </div>
@@ -601,9 +601,13 @@ export function ProjectConfig() {
                       <Plus size={14} />
                       {t('projectConfig.actions.addKnowledgeBase')}
                     </button>
-                    <button onClick={() => void saveKnowledgeBases()} disabled={saving} className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-black uppercase hover:bg-indigo-700 transition-all disabled:opacity-50">
-                      <Save size={14} />
-                      {t('common.save')}
+                    <button
+                      onClick={() => void saveKnowledgeBases()}
+                      disabled={saving || isSaved}
+                      className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase transition-all shadow-lg disabled:opacity-50 min-w-[100px] justify-center ${isSaved ? 'bg-emerald-500 text-white shadow-emerald-100' : 'bg-indigo-600 text-white shadow-indigo-100 hover:bg-indigo-700'}`}
+                    >
+                      {saving ? <RefreshCw size={14} className="animate-spin" /> : (isSaved ? <CheckCircle size={14} /> : <Save size={14} />)}
+                      {saving ? t('common.saving') : (isSaved ? t('common.saveSuccess') : t('common.save'))}
                     </button>
                   </div>
                 </div>
@@ -650,10 +654,15 @@ export function ProjectConfig() {
                     <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">{expertCopy.eyebrow}</div>
                     <h2 className="text-xl font-black text-gray-900">{expertCopy.title}</h2>
                   </div>
-                  <button onClick={() => void saveExperts()} disabled={saving} className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-black uppercase hover:bg-indigo-700 transition-all disabled:opacity-50">
-                    <Save size={14} />
-                    {t('common.save')}
+                  <button
+                    onClick={() => void saveExperts()}
+                    disabled={saving || isSaved}
+                    className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase transition-all shadow-lg disabled:opacity-50 min-w-[100px] justify-center ${isSaved ? 'bg-emerald-500 text-white shadow-emerald-100' : 'bg-indigo-600 text-white shadow-indigo-100 hover:bg-indigo-700'}`}
+                  >
+                    {saving ? <RefreshCw size={14} className="animate-spin" /> : (isSaved ? <CheckCircle size={14} /> : <Save size={14} />)}
+                    {saving ? t('common.saving') : (isSaved ? t('common.saveSuccess') : t('common.save'))}
                   </button>
+
                 </div>
 
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -872,10 +881,11 @@ export function ProjectConfig() {
                         </button>
                         <button
                           onClick={() => void saveModel(editingModel)}
-                          disabled={saving || !editingModel.name || !editingModel.model_name}
-                          className="flex-[1.5] py-4 bg-indigo-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 disabled:opacity-50"
+                          disabled={saving || isSaved || !editingModel.name || !editingModel.model_name}
+                          className={`flex-[1.5] flex items-center justify-center gap-2 py-4 rounded-2xl font-black text-xs uppercase tracking-widest transition-all shadow-lg disabled:opacity-50 ${isSaved ? 'bg-emerald-500 text-white shadow-emerald-100' : 'bg-indigo-600 text-white shadow-indigo-100 hover:bg-indigo-700'}`}
                         >
-                          {saving ? <RefreshCw size={16} className="animate-spin mx-auto" /> : llmCopy.saved}
+                          {saving ? <RefreshCw size={16} className="animate-spin" /> : (isSaved ? <CheckCircle size={16} /> : null)}
+                          {saving ? t('common.saving') : (isSaved ? t('common.saveSuccess') : llmCopy.saved)}
                         </button>
                       </div>
                       <button

@@ -24,7 +24,14 @@
     "newProject": "新建项目",
     "loadingProjects": "加载项目中...",
     "configuration": "配置",
-    "loadError": "加载失败"
+    "loadError": "加载失败",
+    "saveSuccess": "保存成功",
+    "saveError": "保存失败",
+    "saving": "保存中...",
+    "saved": "已保存",
+    "deleteSuccess": "删除成功",
+    "deleteError": "删除失败",
+    "confirmDelete": "确认删除吗？"
   },
   "projectList": {
     "title": "智能设计工作空间",

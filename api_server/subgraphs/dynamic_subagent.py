@@ -22,7 +22,7 @@ import os
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
-from services.llm_service import SubagentOutput
+from services.llm_service import SubagentOutput, resolve_runtime_llm_settings
 
 if TYPE_CHECKING:
     from registry.agent_registry import AgentFullConfig
@@ -471,6 +471,12 @@ async def run_dynamic_subagent(
 
     payload = json.loads(baseline_path.read_text(encoding="utf-8-sig"))
     history_updates = []
+    runtime_llm_settings = resolve_runtime_llm_settings(state.get("design_context"))
+
+    def _generate_with_selected_llm(*args: Any, **kwargs: Any) -> SubagentOutput:
+        if runtime_llm_settings and "llm_settings" not in kwargs:
+            kwargs["llm_settings"] = runtime_llm_settings
+        return generate_with_llm_fn(*args, **kwargs)
     
     # Determine candidate files
     if candidate_files_fn:
@@ -534,7 +540,7 @@ async def run_dynamic_subagent(
             else:
                 decision = await asyncio.to_thread(
                     default_next_react_decision,
-                    generate_with_llm_fn,
+                    _generate_with_selected_llm,
                     capability,
                     project_id,
                     version,
@@ -605,7 +611,7 @@ async def run_dynamic_subagent(
         else:
             llm_output = await asyncio.to_thread(
                 default_generate_final_artifacts,
-                generate_with_llm_fn,
+                _generate_with_selected_llm,
                 capability,
                 project_id,
                 version,

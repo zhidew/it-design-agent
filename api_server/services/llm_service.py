@@ -22,6 +22,34 @@ from services.log_service import save_llm_interaction
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
+def resolve_runtime_llm_settings(design_context: dict | None) -> dict | None:
+    """
+    Normalize a runtime-selected model config into llm_settings expected by
+    generate_with_llm().
+    """
+    model_config = (design_context or {}).get("model_config") or {}
+    provider = str(model_config.get("provider") or "").strip().lower()
+    api_key = model_config.get("api_key")
+    model_name = model_config.get("model_name")
+    base_url = model_config.get("base_url")
+
+    if not provider or not api_key or not model_name:
+        return None
+
+    if provider == "gemini":
+        return {
+            "llm_provider": "gemini",
+            "gemini_api_key": api_key,
+            "gemini_model_name": model_name,
+        }
+
+    return {
+        "llm_provider": "openai",
+        "openai_api_key": api_key,
+        "openai_base_url": base_url,
+        "openai_model_name": model_name,
+    }
+
 def generate_with_llm(
     system_prompt: str,
     user_prompt: str,
