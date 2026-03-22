@@ -397,10 +397,13 @@ def _build_task_queue(active_agents: set[str]) -> List[Task]:
                 "priority": priority
             })
 
-    # Add design-assembler (depends on all other active agents)
-    # Only auto-include if there are other experts to assemble
+    # Add design-assembler only when it is explicitly enabled, or when validator
+    # is enabled and requires it as a prerequisite.
     has_other_experts = len([t for t in tasks if t["id"] != "0"]) > 0
-    if ("design-assembler" in active_agents or has_other_experts) and has_other_experts:
+    should_include_assembler = (
+        "design-assembler" in active_agents or "validator" in active_agents
+    )
+    if should_include_assembler and has_other_experts:
         current_ids = [task["id"] for task in tasks if task["id"] != "0"]
         assembler_id = str(task_counter)
         task_counter += 1
@@ -412,7 +415,7 @@ def _build_task_queue(active_agents: set[str]) -> List[Task]:
             "priority": 20
         })
         task_id_map["design-assembler"] = assembler_id
-        print(f"[DEBUG] _build_task_queue: Added design-assembler (auto-included), dependencies: {current_ids}")
+        print(f"[DEBUG] _build_task_queue: Added design-assembler, dependencies: {current_ids}")
 
     # Add validator (depends on design-assembler)
     if "validator" in active_agents and has_other_experts:

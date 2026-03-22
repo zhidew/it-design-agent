@@ -402,7 +402,24 @@ def _coerce_event_output(output) -> dict:
 
 
 def _append_job_log(job_id: str, message: str):
-    _ensure_job(job_id)["logs"].append(message)
+    job = _ensure_job(job_id)
+    job["logs"].append(message)
+    
+    # Try to persist log incrementally if we have project context
+    try:
+        # job_id is usually {project_id}:{version}
+        if ":" in job_id:
+            parts = job_id.split(":")
+            if len(parts) >= 2:
+                pid, ver = parts[0], parts[1]
+                log_dir = BASE_DIR / "projects" / pid / ver / "logs"
+                log_dir.mkdir(parents=True, exist_ok=True)
+                log_file = log_dir / "orchestrator_run.log"
+                with open(log_file, "a", encoding="utf-8") as f:
+                    f.write(message + "\n")
+    except Exception as e:
+        # Ignore errors during incremental logging to avoid crashing the worker
+        print(f"[Orchestrator] Failed to append log to disk: {e}")
 
 
 def _publish_event(job_id: str, payload: dict) -> dict:
@@ -962,9 +979,23 @@ async def run_orchestrator_task(
         )
         _emit_run_failed(job_id, job_id, str(exc))
     finally:
+        # Final log flush: combine memory logs with state history for maximum durability
+        job = jobs.get(job_id)
         latest_state = get_workflow_state(project_id, version)
-        if latest_state and "history" in latest_state:
-            save_run_log(project_id, version, BASE_DIR, latest_state["history"])
+        
+        history = latest_state.get("history", []) if latest_state else []
+        mem_logs = job.get("logs", []) if job else []
+        
+        # Merge memory logs and history, maintaining order but avoiding duplicates
+        # Priority: Memory logs are more detailed (real-time), History are milestone-based
+        combined_logs = list(mem_logs)
+        seen = set(combined_logs)
+        for h in history:
+            if h not in seen:
+                combined_logs.append(h)
+        
+        if combined_logs:
+            save_run_log(project_id, version, BASE_DIR, combined_logs)
 
 
 def get_workflow_state(project_id: str, version: str, include_runtime: bool = True):
