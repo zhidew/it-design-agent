@@ -143,6 +143,75 @@ def _set_runtime_state(
         "updated_at": _now_iso(),
     }
 
+    existing_projection = metadata_db.get_workflow_run(project_id, version) or {}
+    current_phase = existing_projection.get("current_phase")
+    started_at = existing_projection.get("started_at") or runtime_registry[thread_id]["updated_at"]
+    finished_at = runtime_registry[thread_id]["updated_at"] if run_status in {RUN_STATUS_SUCCESS, RUN_STATUS_FAILED} else None
+    metadata_db.upsert_workflow_run(
+        project_id,
+        version,
+        run_id=job_id or previous.get("job_id"),
+        status=run_status,
+        current_phase=current_phase,
+        current_node=current_node,
+        waiting_reason=waiting_reason,
+        started_at=started_at,
+        finished_at=finished_at,
+    )
+
+
+def _sync_workflow_projection_from_payload(
+    project_id: str,
+    version: str,
+    payload: dict,
+    *,
+    run_id: str | None,
+    authoritative_tasks: bool = False,
+):
+    task_queue = payload.get("task_queue") or []
+    workflow_phase = payload.get("workflow_phase")
+    current_node = payload.get("current_node")
+    run_status = payload.get("run_status")
+    waiting_reason = payload.get("waiting_reason")
+
+    if workflow_phase or current_node or run_status or waiting_reason:
+        existing = metadata_db.get_workflow_run(project_id, version) or {}
+        metadata_db.upsert_workflow_run(
+            project_id,
+            version,
+            run_id=run_id,
+            status=run_status or existing.get("status") or RUN_STATUS_QUEUED,
+            current_phase=workflow_phase or existing.get("current_phase"),
+            current_node=current_node if current_node is not None else existing.get("current_node"),
+            waiting_reason=waiting_reason if waiting_reason is not None else existing.get("waiting_reason"),
+            started_at=existing.get("started_at"),
+            finished_at=existing.get("finished_at"),
+        )
+
+    if not task_queue:
+        return
+
+    if authoritative_tasks:
+        metadata_db.replace_workflow_tasks(project_id, version, run_id=run_id, tasks=task_queue)
+        return
+
+    for task in task_queue:
+        metadata = dict(task.get("metadata") or {})
+        phase = task.get("phase") or metadata.get("workflow_phase")
+        metadata_db.upsert_workflow_task(
+            project_id,
+            version,
+            node_type=task.get("agent_type"),
+            task_id=task.get("id"),
+            run_id=run_id,
+            status=task.get("status", "todo"),
+            phase=phase,
+            priority=task.get("priority"),
+            dependencies=task.get("dependencies") or [],
+            metadata=metadata,
+            authoritative=False,
+        )
+
 
 def _has_active_runtime_task(thread_id: str) -> bool:
     task = runtime_tasks.get(thread_id)
@@ -319,7 +388,9 @@ def _normalize_state(project_id: str, version: str, raw_state: dict | None, runt
         return None
 
     state = dict(raw_state or {})
-    task_queue = state.get("task_queue") or []
+    workflow_run = metadata_db.get_workflow_run(project_id, version) or {}
+    workflow_tasks = metadata_db.list_workflow_tasks(project_id, version)
+    task_queue = workflow_tasks or state.get("task_queue") or []
     if not task_queue:
         task_queue = _build_legacy_task_queue(project_id, version)
     history = state.get("history") or []
@@ -328,18 +399,18 @@ def _normalize_state(project_id: str, version: str, raw_state: dict | None, runt
     human_intervention_required = bool(state.get("human_intervention_required", False))
 
     derived_run_status = _derive_run_status(task_queue, human_intervention_required)
-    run_status = runtime.get("run_status") or derived_run_status
-    current_node = runtime.get("current_node")
+    run_status = runtime.get("run_status") or workflow_run.get("status") or derived_run_status
+    current_node = runtime.get("current_node") or workflow_run.get("current_node")
     if current_node is None:
         current_node = _derive_current_node(task_queue, state)
 
-    waiting_reason = runtime.get("waiting_reason")
+    waiting_reason = runtime.get("waiting_reason") or workflow_run.get("waiting_reason")
     if waiting_reason is None:
         waiting_reason = state.get("waiting_reason")
     if waiting_reason is None and run_status == RUN_STATUS_WAITING_HUMAN:
         waiting_reason = "human_intervention_required"
 
-    normalized_updated_at = runtime.get("updated_at") or state.get("updated_at") or _latest_project_timestamp(project_id, version)
+    normalized_updated_at = runtime.get("updated_at") or workflow_run.get("updated_at") or state.get("updated_at") or _latest_project_timestamp(project_id, version)
     stale_running_detected = False
     runtime_thread_id = _thread_id(project_id, version)
     runtime_missing_or_inactive = not runtime or not _has_active_runtime_task(runtime_thread_id)
@@ -381,13 +452,14 @@ def _normalize_state(project_id: str, version: str, raw_state: dict | None, runt
         **state,
         "project_id": project_id,
         "version": version,
-        "run_id": runtime.get("job_id") or state.get("run_id"),
+        "run_id": runtime.get("job_id") or workflow_run.get("run_id") or state.get("run_id"),
         "task_queue": normalized_task_queue,
         "history": history,
         "messages": messages,
         "artifacts": artifacts,
         "run_status": run_status,
         "current_node": current_node,
+        "workflow_phase": workflow_run.get("current_phase") or state.get("workflow_phase"),
         "can_resume": can_resume,
         "waiting_reason": waiting_reason,
         "pending_interrupt": state.get("pending_interrupt"),
@@ -444,35 +516,102 @@ def _publish_event(job_id: str, payload: dict) -> dict:
     return serialized
 
 
-def _emit_node_started(job_id: str, run_id: str, node_id: str, node_type: str):
-    _publish_event(
-        job_id,
-        {
-            "event_id": _new_event_id(),
-            "event_type": "node_started",
-            "run_id": run_id,
-            "node_id": node_id,
-            "node_type": node_type,
-            "timestamp": _now_iso(),
-        },
-    )
+def _emit_node_started(
+    job_id: str,
+    run_id: str,
+    node_id: str,
+    node_type: str,
+    *,
+    project_id: str | None = None,
+    version_id: str | None = None,
+):
+    payload = {
+        "event_id": _new_event_id(),
+        "event_type": "node_started",
+        "run_id": run_id,
+        "node_id": node_id,
+        "node_type": node_type,
+        "timestamp": _now_iso(),
+    }
+    if project_id and version_id and node_type not in {"bootstrap", "supervisor"}:
+        existing_task = metadata_db.get_workflow_task(project_id, version_id, node_type) or {}
+        metadata_db.upsert_workflow_task(
+            project_id,
+            version_id,
+            node_type=node_type,
+            task_id=node_id,
+            run_id=run_id,
+            status="running",
+            phase=existing_task.get("phase"),
+            priority=existing_task.get("priority"),
+            dependencies=existing_task.get("dependencies") or [],
+            metadata=existing_task.get("metadata") or {},
+            authoritative=False,
+        )
+        metadata_db.append_workflow_task_event(
+            event_id=payload["event_id"],
+            project_id=project_id,
+            version_id=version_id,
+            run_id=run_id,
+            task_id=node_id,
+            node_type=node_type,
+            event_type="node_started",
+            status="running",
+            payload=payload,
+            created_at=payload["timestamp"],
+        )
+    _publish_event(job_id, payload)
 
 
-def _emit_node_completed(job_id: str, run_id: str, node_id: str, node_type: str, status: str):
+def _emit_node_completed(
+    job_id: str,
+    run_id: str,
+    node_id: str,
+    node_type: str,
+    status: str,
+    *,
+    project_id: str | None = None,
+    version_id: str | None = None,
+):
     if status not in {"success", "failed", "skipped"}:
         return
-    _publish_event(
-        job_id,
-        {
-            "event_id": _new_event_id(),
-            "event_type": "node_completed",
-            "run_id": run_id,
-            "node_id": node_id,
-            "node_type": node_type,
-            "status": status,
-            "timestamp": _now_iso(),
-        },
-    )
+    payload = {
+        "event_id": _new_event_id(),
+        "event_type": "node_completed",
+        "run_id": run_id,
+        "node_id": node_id,
+        "node_type": node_type,
+        "status": status,
+        "timestamp": _now_iso(),
+    }
+    if project_id and version_id and node_type not in {"bootstrap", "supervisor"}:
+        existing_task = metadata_db.get_workflow_task(project_id, version_id, node_type) or {}
+        metadata_db.upsert_workflow_task(
+            project_id,
+            version_id,
+            node_type=node_type,
+            task_id=node_id,
+            run_id=run_id,
+            status=status,
+            phase=existing_task.get("phase"),
+            priority=existing_task.get("priority"),
+            dependencies=existing_task.get("dependencies") or [],
+            metadata=existing_task.get("metadata") or {},
+            authoritative=False,
+        )
+        metadata_db.append_workflow_task_event(
+            event_id=payload["event_id"],
+            project_id=project_id,
+            version_id=version_id,
+            run_id=run_id,
+            task_id=node_id,
+            node_type=node_type,
+            event_type="node_completed",
+            status=status,
+            payload=payload,
+            created_at=payload["timestamp"],
+        )
+    _publish_event(job_id, payload)
 
 
 def _emit_text_delta(job_id: str, run_id: str, node_id: str, node_type: str, delta: str, stream_name: str = "history"):
@@ -625,6 +764,13 @@ def _record_graph_event(
         waiting_reason=payload.get("waiting_reason"),
         job_id=job_id,
     )
+    _sync_workflow_projection_from_payload(
+        project_id,
+        version,
+        payload,
+        run_id=job_id,
+        authoritative_tasks=node_name in {"planner", "bootstrap"},
+    )
     return payload
 
 
@@ -671,7 +817,15 @@ def _handle_structured_graph_event(
             context=pending_interrupt.get("context") or {},
         )
 
-    _emit_node_completed(job_id, run_id, node_id, node_type, completed_status)
+    _emit_node_completed(
+        job_id,
+        run_id,
+        node_id,
+        node_type,
+        completed_status,
+        project_id=project_id,
+        version_id=version,
+    )
 
     if node_name == "bootstrap":
         resume_target_node = payload.get("resume_target_node")
@@ -685,9 +839,11 @@ def _handle_structured_graph_event(
                 run_id,
                 (resume_task or {}).get("id", "0" if resume_target_node == "planner" else resume_target_node),
                 resume_target_node,
+                project_id=project_id,
+                version_id=version,
             )
         elif payload.get("resume_action") != "approve":
-            _emit_node_started(job_id, run_id, "0", "planner")
+            _emit_node_started(job_id, run_id, "0", "planner", project_id=project_id, version_id=version)
     elif node_name == "supervisor":
         next_node = payload.get("next")
         if isinstance(next_node, list):
@@ -704,10 +860,10 @@ def _handle_structured_graph_event(
                 next_node_id = task_id_by_agent.get(node_type) or (
                     current_task_ids[index] if index < len(current_task_ids) else node_type
                 )
-                _emit_node_started(job_id, run_id, next_node_id, node_type)
+                _emit_node_started(job_id, run_id, next_node_id, node_type, project_id=project_id, version_id=version)
         elif next_node and next_node not in {"END", "human_review", "supervisor_advance"}:
             next_node_id = payload.get("current_task_id") or next_node
-            _emit_node_started(job_id, run_id, next_node_id, next_node)
+            _emit_node_started(job_id, run_id, next_node_id, next_node, project_id=project_id, version_id=version)
 
     return current_artifacts
 
@@ -862,7 +1018,7 @@ async def run_orchestrator_task(
         can_resume=False,
         job_id=job_id,
     )
-    _emit_node_started(job_id, job_id, "bootstrap", "bootstrap")
+    _emit_node_started(job_id, job_id, "bootstrap", "bootstrap", project_id=project_id, version_id=version)
 
     try:
         project_path = PROJECTS_DIR / project_id / version
@@ -911,7 +1067,15 @@ async def run_orchestrator_task(
                     print(f"[ERROR] Graph execution ended but {len(stalled_tasks)} tasks are still 'running'. Marking as failed.")
                     # Force failed status to avoid frontend spinning
                     for task in stalled_tasks:
-                        _emit_node_completed(job_id, job_id, task["id"], task["agent_type"], "failed")
+                        _emit_node_completed(
+                            job_id,
+                            job_id,
+                            task["id"],
+                            task["agent_type"],
+                            "failed",
+                            project_id=project_id,
+                            version_id=version,
+                        )
                     
                     # Update persisted state to reflect failure
                     _set_runtime_state(

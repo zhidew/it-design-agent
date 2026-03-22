@@ -99,6 +99,7 @@ interface ExpertResourceSummary {
   id: string;
   name: string;
   enabled: boolean;
+  dependencies?: string[];
 }
 
 interface EventBase {
@@ -1037,23 +1038,59 @@ export function ProjectDetail() {
         });
       });
     } else if (canPreviewPlannedPipeline && selectedPipeline.length > 0) {
-      lines.push('delivery["Design Package"]');
-      lines.push('validatorHub["Quality Gate"]');
-
+      // Preview mode: use configured dependencies instead of linear order
       selectedPipeline.forEach((agentId) => {
         const nodeId = toNodeId(agentId);
         const label = t(`agents.${agentId}`);
         lines.push(`${nodeId}["${label}"]`);
       });
 
-      let previous = 'planner';
+      const expertDepsMap = new Map(resourceSummary.experts.map(e => [e.id, e.dependencies || []]));
+      const pipelineSet = new Set(selectedPipeline);
+
       selectedPipeline.forEach((agentId) => {
         const nodeId = toNodeId(agentId);
-        lines.push(`${previous} --> ${nodeId}`);
-        previous = nodeId;
+        const deps = expertDepsMap.get(agentId) || [];
+        const activeDeps = deps.filter(d => pipelineSet.has(d));
+
+        if (activeDeps.length === 0) {
+          // If no active dependencies in the pipeline, start from planner
+          lines.push(`planner --> ${nodeId}`);
+        } else {
+          activeDeps.forEach(depId => {
+            lines.push(`${toNodeId(depId)} --> ${nodeId}`);
+          });
+        }
       });
-      lines.push(`${previous} --> delivery`);
-      lines.push('delivery --> validatorHub');
+
+      // Connect leaf nodes to assembly/validation if present
+      const nodesWithIncoming = new Set<string>();
+      lines.forEach(line => {
+        const match = line.match(/(\w+) --> (\w+)/);
+        if (match) nodesWithIncoming.add(match[2]);
+      });
+
+      // Nodes that aren't dependencies for anyone else in the current pipeline
+      const leafNodes = selectedPipeline.filter(id => 
+        !selectedPipeline.some(otherId => (expertDepsMap.get(otherId) || []).includes(id))
+      );
+
+      if (pipelineSet.has('design-assembler')) {
+        leafNodes.forEach(leaf => {
+          if (leaf !== 'design-assembler' && leaf !== 'validator') {
+            lines.push(`${toNodeId(leaf)} --> design_assembler`);
+          }
+        });
+        if (pipelineSet.has('validator')) {
+          lines.push(`design_assembler --> validator`);
+        }
+      } else if (pipelineSet.has('validator')) {
+        leafNodes.forEach(leaf => {
+          if (leaf !== 'validator') {
+            lines.push(`${toNodeId(leaf)} --> validator`);
+          }
+        });
+      }
     } else {
       return null;
     }
@@ -1109,7 +1146,16 @@ export function ProjectDetail() {
     });
 
     for (const [nodeType, status] of Object.entries(nodeStatuses)) {
+      const serverStatus = serverStatuses[nodeType];
       if (!(nodeType in serverStatuses)) {
+        serverStatuses[nodeType] = status;
+        continue;
+      }
+      if (serverStatus === 'todo' && status !== 'idle') {
+        serverStatuses[nodeType] = status;
+        continue;
+      }
+      if (serverStatus === 'running' && (status === 'success' || status === 'failed' || status === 'waiting_human')) {
         serverStatuses[nodeType] = status;
       }
     }

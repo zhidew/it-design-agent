@@ -256,6 +256,73 @@ class MetadataDB:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS workflow_runs (
+                    project_id TEXT NOT NULL,
+                    version_id TEXT NOT NULL,
+                    run_id TEXT,
+                    status TEXT NOT NULL,
+                    current_phase TEXT,
+                    current_node TEXT,
+                    waiting_reason TEXT,
+                    started_at TEXT,
+                    finished_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (project_id, version_id),
+                    FOREIGN KEY (version_id, project_id) REFERENCES versions(version_id, project_id) ON DELETE CASCADE
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS workflow_tasks (
+                    project_id TEXT NOT NULL,
+                    version_id TEXT NOT NULL,
+                    node_type TEXT NOT NULL,
+                    task_id TEXT,
+                    run_id TEXT,
+                    phase TEXT,
+                    status TEXT NOT NULL,
+                    attempt INTEGER NOT NULL DEFAULT 0,
+                    priority INTEGER,
+                    dependencies_json TEXT,
+                    metadata_json TEXT,
+                    started_at TEXT,
+                    finished_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (project_id, version_id, node_type),
+                    FOREIGN KEY (project_id, version_id) REFERENCES workflow_runs(project_id, version_id) ON DELETE CASCADE
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS workflow_task_events (
+                    event_id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    version_id TEXT NOT NULL,
+                    run_id TEXT,
+                    task_id TEXT,
+                    node_type TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    status TEXT,
+                    payload_json TEXT,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_workflow_runs_status_updated ON workflow_runs(status, updated_at)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_workflow_tasks_run_status ON workflow_tasks(project_id, version_id, status)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_workflow_task_events_run_created ON workflow_task_events(project_id, version_id, created_at)"
+            )
             self._ensure_column(conn, "project_model_configs", "headers", "TEXT")
             conn.commit()
 
@@ -519,6 +586,282 @@ class MetadataDB:
                 (version_id, project_id, requirement, run_status, now, now),
             )
             conn.commit()
+
+    def upsert_workflow_run(
+        self,
+        project_id: str,
+        version_id: str,
+        *,
+        run_id: Optional[str],
+        status: str,
+        current_phase: Optional[str] = None,
+        current_node: Optional[str] = None,
+        waiting_reason: Optional[str] = None,
+        started_at: Optional[str] = None,
+        finished_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        now = self._utcnow()
+        existing = self.get_workflow_run(project_id, version_id)
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO workflow_runs (
+                    project_id, version_id, run_id, status, current_phase, current_node, waiting_reason,
+                    started_at, finished_at, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(project_id, version_id) DO UPDATE SET
+                    run_id=excluded.run_id,
+                    status=excluded.status,
+                    current_phase=COALESCE(excluded.current_phase, workflow_runs.current_phase),
+                    current_node=excluded.current_node,
+                    waiting_reason=excluded.waiting_reason,
+                    started_at=COALESCE(workflow_runs.started_at, excluded.started_at),
+                    finished_at=excluded.finished_at,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    project_id,
+                    version_id,
+                    run_id,
+                    status,
+                    current_phase,
+                    current_node,
+                    waiting_reason,
+                    started_at or (existing.get("started_at") if existing else now),
+                    finished_at,
+                    (existing.get("created_at") if existing else now),
+                    now,
+                ),
+            )
+            conn.commit()
+        return self.get_workflow_run(project_id, version_id) or {}
+
+    def get_workflow_run(self, project_id: str, version_id: str) -> Optional[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM workflow_runs WHERE project_id = ? AND version_id = ?",
+                (project_id, version_id),
+            ).fetchone()
+        return dict(row) if row else None
+
+    @staticmethod
+    def _status_rank(status: Optional[str]) -> int:
+        order = {
+            "todo": 0,
+            "queued": 1,
+            "dispatched": 2,
+            "running": 3,
+            "waiting_human": 4,
+            "success": 5,
+            "skipped": 5,
+            "failed": 6,
+            "cancelled": 6,
+        }
+        return order.get(str(status or "").lower(), -1)
+
+    def _merge_task_status(self, current_status: Optional[str], incoming_status: Optional[str], *, authoritative: bool) -> str:
+        if authoritative:
+            return incoming_status or current_status or "todo"
+        if current_status in {"success", "failed", "skipped", "cancelled"} and self._status_rank(incoming_status) < self._status_rank(current_status):
+            return current_status
+        if self._status_rank(incoming_status) >= self._status_rank(current_status):
+            return incoming_status or current_status or "todo"
+        return current_status or incoming_status or "todo"
+
+    def upsert_workflow_task(
+        self,
+        project_id: str,
+        version_id: str,
+        *,
+        node_type: str,
+        task_id: Optional[str],
+        run_id: Optional[str],
+        status: str,
+        phase: Optional[str] = None,
+        priority: Optional[int] = None,
+        dependencies: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        started_at: Optional[str] = None,
+        finished_at: Optional[str] = None,
+        authoritative: bool = False,
+    ) -> Dict[str, Any]:
+        now = self._utcnow()
+        existing = self.get_workflow_task(project_id, version_id, node_type)
+        resolved_status = self._merge_task_status(existing.get("status") if existing else None, status, authoritative=authoritative)
+        resolved_started_at = (
+            started_at
+            or (existing.get("started_at") if existing else None)
+            or (now if resolved_status in {"dispatched", "running", "waiting_human", "success", "failed", "skipped", "cancelled"} else None)
+        )
+        resolved_finished_at = (
+            finished_at
+            or (existing.get("finished_at") if existing and resolved_status in {"success", "failed", "skipped", "cancelled"} else None)
+            or (now if resolved_status in {"success", "failed", "skipped", "cancelled"} else None)
+        )
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO workflow_tasks (
+                    project_id, version_id, node_type, task_id, run_id, phase, status, attempt, priority,
+                    dependencies_json, metadata_json, started_at, finished_at, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(project_id, version_id, node_type) DO UPDATE SET
+                    task_id=COALESCE(excluded.task_id, workflow_tasks.task_id),
+                    run_id=COALESCE(excluded.run_id, workflow_tasks.run_id),
+                    phase=COALESCE(excluded.phase, workflow_tasks.phase),
+                    status=excluded.status,
+                    attempt=workflow_tasks.attempt,
+                    priority=COALESCE(excluded.priority, workflow_tasks.priority),
+                    dependencies_json=COALESCE(excluded.dependencies_json, workflow_tasks.dependencies_json),
+                    metadata_json=COALESCE(excluded.metadata_json, workflow_tasks.metadata_json),
+                    started_at=COALESCE(workflow_tasks.started_at, excluded.started_at),
+                    finished_at=COALESCE(excluded.finished_at, workflow_tasks.finished_at),
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    project_id,
+                    version_id,
+                    node_type,
+                    task_id,
+                    run_id,
+                    phase,
+                    resolved_status,
+                    existing.get("attempt", 0) if existing else 0,
+                    priority,
+                    self._dumps_json(dependencies),
+                    self._dumps_json(metadata),
+                    resolved_started_at,
+                    resolved_finished_at,
+                    (existing.get("created_at") if existing else now),
+                    now,
+                ),
+            )
+            conn.commit()
+        return self.get_workflow_task(project_id, version_id, node_type) or {}
+
+    def get_workflow_task(self, project_id: str, version_id: str, node_type: str) -> Optional[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM workflow_tasks
+                WHERE project_id = ? AND version_id = ? AND node_type = ?
+                """,
+                (project_id, version_id, node_type),
+            ).fetchone()
+        return self._row_to_workflow_task(dict(row)) if row else None
+
+    def list_workflow_tasks(self, project_id: str, version_id: str) -> List[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM workflow_tasks
+                WHERE project_id = ? AND version_id = ?
+                ORDER BY CASE WHEN node_type = 'planner' THEN 0 ELSE 1 END, COALESCE(priority, 0) DESC, node_type ASC
+                """,
+                (project_id, version_id),
+            ).fetchall()
+        return [self._row_to_workflow_task(dict(row)) for row in rows]
+
+    def replace_workflow_tasks(
+        self,
+        project_id: str,
+        version_id: str,
+        *,
+        run_id: Optional[str],
+        tasks: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        now = self._utcnow()
+        with self._get_connection() as conn:
+            conn.execute(
+                "DELETE FROM workflow_tasks WHERE project_id = ? AND version_id = ?",
+                (project_id, version_id),
+            )
+            for task in tasks:
+                status = task.get("status", "todo")
+                started_at = now if status in {"running", "waiting_human", "success", "failed", "skipped", "cancelled"} else None
+                finished_at = now if status in {"success", "failed", "skipped", "cancelled"} else None
+                conn.execute(
+                    """
+                    INSERT INTO workflow_tasks (
+                        project_id, version_id, node_type, task_id, run_id, phase, status, attempt, priority,
+                        dependencies_json, metadata_json, started_at, finished_at, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        project_id,
+                        version_id,
+                        task.get("agent_type"),
+                        task.get("id"),
+                        run_id,
+                        task.get("phase") or (task.get("metadata") or {}).get("workflow_phase"),
+                        status,
+                        int(task.get("attempt", 0) or 0),
+                        task.get("priority"),
+                        self._dumps_json(task.get("dependencies") or []),
+                        self._dumps_json(task.get("metadata") or {}),
+                        started_at,
+                        finished_at,
+                        now,
+                        now,
+                    ),
+                )
+            conn.commit()
+        return self.list_workflow_tasks(project_id, version_id)
+
+    def append_workflow_task_event(
+        self,
+        *,
+        event_id: str,
+        project_id: str,
+        version_id: str,
+        run_id: Optional[str],
+        task_id: Optional[str],
+        node_type: str,
+        event_type: str,
+        status: Optional[str] = None,
+        payload: Optional[Dict[str, Any]] = None,
+        created_at: Optional[str] = None,
+    ) -> None:
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO workflow_task_events (
+                    event_id, project_id, version_id, run_id, task_id, node_type, event_type, status, payload_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event_id,
+                    project_id,
+                    version_id,
+                    run_id,
+                    task_id,
+                    node_type,
+                    event_type,
+                    status,
+                    self._dumps_json(payload or {}),
+                    created_at or self._utcnow(),
+                ),
+            )
+            conn.commit()
+
+    def _row_to_workflow_task(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "project_id": row["project_id"],
+            "version_id": row["version_id"],
+            "agent_type": row["node_type"],
+            "id": row.get("task_id") or row["node_type"],
+            "run_id": row.get("run_id"),
+            "phase": row.get("phase"),
+            "status": row["status"],
+            "attempt": int(row.get("attempt") or 0),
+            "priority": row.get("priority"),
+            "dependencies": self._loads_json(row.get("dependencies_json"), []),
+            "metadata": self._loads_json(row.get("metadata_json"), {}),
+            "started_at": row.get("started_at"),
+            "finished_at": row.get("finished_at"),
+            "created_at": row.get("created_at"),
+            "updated_at": row.get("updated_at"),
+        }
 
     def list_versions(self, project_id: str, page: int = 1, page_size: int = 10) -> Dict[str, Any]:
         offset = (page - 1) * page_size
