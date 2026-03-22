@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
-import { ArrowLeft, BookOpen, Bot, Cpu, Database, FolderGit2, Plus, RefreshCw, Save, Settings2, Trash2 } from 'lucide-react';
+import { ArrowLeft, BookOpen, Bot, Cpu, Database, FolderGit2, Plus, RefreshCw, Save, Settings2, Trash2, Activity, CheckCircle, XCircle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { api } from '../api';
 import { LanguageSwitcher } from './LanguageSwitcher';
@@ -133,6 +133,25 @@ export function ProjectConfig() {
   const [models, setModels] = useState<ModelConfig[]>([]);
   const [isModelModalOpen, setIsModelModalOpen] = useState(false);
   const [editingModel, setEditingModel] = useState<ModelConfig | null>(null);
+  const [testingModel, setTestingModel] = useState(false);
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  const testModelConfig = async () => {
+    if (!projectId || !editingModel) return;
+    setTestingModel(true);
+    setTestResult(null);
+    try {
+      const res = await api.testProjectModel(projectId, {
+        ...editingModel,
+        api_key: editingModel.api_key?.trim() || undefined
+      });
+      setTestResult(res);
+    } catch (err: any) {
+      setTestResult({ success: false, message: err.response?.data?.detail || err.message });
+    } finally {
+      setTestingModel(false);
+    }
+  };
 
   const expertCopy = useMemo(() => {
     const isZh = i18n.language.toLowerCase().startsWith('zh');
@@ -187,6 +206,10 @@ export function ProjectConfig() {
       modelId: isZh ? '模型 ID' : 'Model ID',
       isDefault: isZh ? '设为默认' : 'Set as Default',
       defaultLabel: isZh ? '默认' : 'Default',
+      testModel: isZh ? '测试连接' : 'Test Connection',
+      testing: isZh ? '正在测试...' : 'Testing...',
+      testSuccess: isZh ? '连接成功！' : 'Connection successful!',
+      testFailed: isZh ? '连接失败：' : 'Connection failed: ',
     };
   }, [i18n.language]);
 
@@ -676,6 +699,7 @@ export function ProjectConfig() {
                       <button
                         onClick={() => {
                           setEditingModel(createModel());
+                          setTestResult(null);
                           setIsModelModalOpen(true);
                         }}
                         className="inline-flex items-center gap-2 px-4 py-2 bg-gray-100 rounded-xl text-xs font-black uppercase text-gray-700 hover:bg-gray-200 transition-all"
@@ -688,11 +712,22 @@ export function ProjectConfig() {
 
                   <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                     {models.map((model) => (
-                      <div key={model.id} className={`rounded-2xl border p-5 transition-all flex flex-col justify-between gap-4 ${model.is_default ? 'border-indigo-200 bg-indigo-50/30' : 'border-gray-200 bg-white hover:border-indigo-100'}`}>
+                      <div
+                        key={model.id}
+                        onClick={() => {
+                          setEditingModel({ ...model, api_key: '' });
+                          setTestResult(null);
+                          setIsModelModalOpen(true);
+                        }}
+                        className={`group relative rounded-2xl border p-5 transition-all flex flex-col justify-between gap-4 cursor-pointer ${model.is_default
+                          ? 'border-indigo-200 bg-indigo-50/30 hover:shadow-md hover:border-indigo-300'
+                          : 'border-gray-200 bg-white hover:border-indigo-200 hover:shadow-md'
+                          }`}
+                      >
                         <div className="flex items-start justify-between">
                           <div className="min-w-0">
                             <div className="flex items-center gap-2">
-                              <span className="text-sm font-black text-gray-900 truncate">{model.name}</span>
+                              <span className="text-sm font-black text-gray-900 truncate group-hover:text-indigo-600 transition-colors">{model.name}</span>
                               {model.is_default && (
                                 <span className="px-1.5 py-0.5 rounded-md bg-indigo-600 text-white text-[8px] font-black uppercase tracking-wider">
                                   {llmCopy.defaultLabel}
@@ -707,17 +742,10 @@ export function ProjectConfig() {
                           </div>
                           <div className="flex items-center gap-1">
                             <button
-                              onClick={() => {
-                                setEditingModel({ ...model, api_key: '' });
-                                setIsModelModalOpen(true);
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void handleDeleteModel(model.id);
                               }}
-                              className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
-                              title={llmCopy.editModel}
-                            >
-                              <Settings2 size={14} />
-                            </button>
-                            <button
-                              onClick={() => void handleDeleteModel(model.id)}
                               className="p-2 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"
                               title={llmCopy.deleteModel}
                             >
@@ -816,17 +844,46 @@ export function ProjectConfig() {
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-3 pt-4 border-t border-gray-50">
+                    <div className="flex flex-col gap-4 pt-6 border-t border-gray-50">
+                      {testResult && (
+                        <div className={`flex items-start gap-3 p-3 rounded-xl border ${testResult.success ? 'bg-emerald-50 border-emerald-100 text-emerald-800' : 'bg-rose-50 border-rose-100 text-rose-800'} animate-in fade-in slide-in-from-top-2 duration-300`}>
+                          <div className="mt-0.5">
+                            {testResult.success ? <CheckCircle size={16} className="text-emerald-500" /> : <XCircle size={16} className="text-rose-500" />}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-black uppercase tracking-tight leading-none mb-1">
+                              {testResult.success ? 'Success' : 'Error'}
+                            </p>
+                            <p className="text-[11px] font-medium leading-normal break-words opacity-90">
+                              {testResult.success ? llmCopy.testSuccess : `${llmCopy.testFailed} ${testResult.message}`}
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                      
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={() => void testModelConfig()}
+                          disabled={testingModel || !editingModel.model_name}
+                          className="flex-1 flex items-center justify-center gap-2 py-4 bg-white border-2 border-gray-100 text-gray-700 rounded-2xl font-black text-xs uppercase tracking-widest hover:border-indigo-100 hover:text-indigo-600 transition-all disabled:opacity-50"
+                        >
+                          {testingModel ? <RefreshCw size={16} className="animate-spin" /> : <Activity size={16} />}
+                          {testingModel ? llmCopy.testing : llmCopy.testModel}
+                        </button>
+                        <button
+                          onClick={() => void saveModel(editingModel)}
+                          disabled={saving || !editingModel.name || !editingModel.model_name}
+                          className="flex-[1.5] py-4 bg-indigo-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 disabled:opacity-50"
+                        >
+                          {saving ? <RefreshCw size={16} className="animate-spin mx-auto" /> : llmCopy.saved}
+                        </button>
+                      </div>
                       <button
-                        onClick={() => void saveModel(editingModel)}
-                        disabled={saving || !editingModel.name || !editingModel.model_name}
-                        className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 disabled:opacity-50"
-                      >
-                        {saving ? <RefreshCw size={16} className="animate-spin mx-auto" /> : llmCopy.saved}
-                      </button>
-                      <button
-                        onClick={() => setIsModelModalOpen(false)}
-                        className="px-8 py-4 bg-gray-100 text-gray-500 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-gray-200 transition-all"
+                        onClick={() => {
+                          setIsModelModalOpen(false);
+                          setTestResult(null);
+                        }}
+                        className="w-full py-3 text-gray-400 font-bold text-[10px] uppercase tracking-widest hover:text-gray-600 transition-all"
                       >
                         {t('common.cancel')}
                       </button>

@@ -181,6 +181,46 @@ def _call_gemini_raw(system_prompt: str, user_prompt: str, llm_settings: dict | 
     raw_text = _clean_json_response(response.text)
     return json.loads(raw_text)
 
+def test_llm_connectivity(llm_settings: dict) -> dict:
+    """
+    Test the connectivity and availability of an LLM configuration.
+    Returns a dict with success status and message.
+    """
+    provider = llm_settings.get("provider", "openai").lower()
+    try:
+        if provider == "gemini":
+            import google.generativeai as genai
+            api_key = llm_settings.get("api_key")
+            model_name = llm_settings.get("model_name", "gemini-2.0-flash")
+            if not api_key:
+                return {"success": False, "message": "Missing API Key"}
+            
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content("Ping")
+            if response and response.text:
+                return {"success": True, "message": "Connected successfully to Gemini."}
+            return {"success": False, "message": "Received empty response from Gemini."}
+        else:
+            from openai import OpenAI
+            api_key = llm_settings.get("api_key")
+            base_url = llm_settings.get("base_url", "https://api.openai.com/v1")
+            model_name = llm_settings.get("model_name", "gpt-4o")
+            if not api_key:
+                return {"success": False, "message": "Missing API Key"}
+            
+            client = OpenAI(api_key=api_key, base_url=base_url)
+            completion = client.chat.completions.create(
+                model=model_name,
+                messages=[{"role": "user", "content": "Ping"}],
+                max_tokens=5
+            )
+            if completion.choices and completion.choices[0].message.content:
+                return {"success": True, "message": f"Connected successfully to {provider.upper()} compatible API."}
+            return {"success": False, "message": "Received empty response from API."}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
 def _call_openai_raw(system_prompt: str, user_prompt: str, llm_settings: dict | None = None) -> dict:
     from openai import OpenAI
     api_key = _resolve_llm_setting(llm_settings, "openai_api_key", "OPENAI_API_KEY")

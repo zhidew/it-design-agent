@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 
 from models.project_config import DatabaseConfig, ExpertConfig, KnowledgeBaseConfig, LlmConfig, RepositoryConfig, ModelConfig, ModelConfigs
 from services.db_service import metadata_db
+from services.llm_service import test_llm_connectivity
 
 
 router = APIRouter(
@@ -134,6 +135,19 @@ async def delete_project_model_config(project_id: str, model_id: str):
     if not deleted:
         raise HTTPException(status_code=404, detail=f"Model config '{model_id}' not found.")
     return {"success": True, "project_id": project_id, "model_id": model_id}
+
+
+@router.post("/llm/test")
+async def test_llm_config(project_id: str, req: ModelConfig):
+    _require_project(project_id)
+    # If API key is empty but we have an existing one in DB, fetch it
+    payload = req.model_dump() if hasattr(req, "model_dump") else req.dict()
+    if not payload.get("api_key") and payload.get("id"):
+        existing = metadata_db.get_project_model(project_id, payload["id"], include_secrets=True)
+        if existing:
+            payload["api_key"] = existing.get("api_key")
+    
+    return test_llm_connectivity(payload)
 
 
 @system_router.get("/llm-config")

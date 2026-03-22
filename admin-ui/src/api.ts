@@ -147,6 +147,16 @@ export const api = {
   }) => apiClient.post(`/projects/${projectId}/config/models`, payload).then(res => res.data),
   deleteProjectModel: (projectId: string, modelId: string) =>
     apiClient.delete(`/projects/${projectId}/config/models/${modelId}`).then(res => res.data),
+  testProjectModel: (projectId: string, payload: {
+    id: string;
+    name: string;
+    provider: string;
+    model_name: string;
+    api_key?: string;
+    base_url?: string;
+    is_default: boolean;
+    description?: string;
+  }) => apiClient.post(`/projects/${projectId}/config/llm/test`, payload).then(res => res.data),
   getSystemLlmDefaults: () =>
     apiClient.get('/system/llm-config').then(res => res.data),
 };
