@@ -705,37 +705,33 @@ async def planner_node(state: DesignState) -> Dict[str, Any]:
     human_feedback = state.get("human_feedback", "")
     human_inputs = _summarize_human_inputs(planner_answers, human_feedback)
 
-    # Get dynamic agent descriptions from AgentRegistry
-    try:
-        from registry.agent_registry import AgentRegistry
-        registry = AgentRegistry.get_instance()
-        agent_descriptions = registry.get_planner_agent_descriptions()
-    except RuntimeError:
-        # Fallback if registry not initialized
-        agent_descriptions = """- architecture-mapping: Core system structure.
-- integration-design: External service calls, MQ, Kafka.
-- data-design: DB schemas, SQL tables.
-- ddd-structure: Domain entities, aggregates.
-- flow-design: Sequence diagrams, flows.
-- api-design: REST/RPC interface contracts.
-- config-design: App parameters, lookup lists.
-- test-design: Test cases, coverage.
-- ops-design: Monitoring, deployment specs.
-- design-assembler: Assemble all design artifacts.
-- validator: Validate design outputs."""
+    # Get dynamic agent descriptions from AgentRegistry, filtered by project configuration
+    from registry.agent_registry import AgentRegistry
+    from services.db_service import metadata_db
+    
+    registry = AgentRegistry.get_instance()
+    # Filter experts enabled for this project
+    enabled_ids = metadata_db.list_enabled_expert_ids(project_id)
+    # Always exclude internal system agents from design planning
+    design_expert_ids = [eid for eid in enabled_ids if eid != "expert-creator"]
+    
+    agent_descriptions = registry.get_planner_agent_descriptions(filter_ids=design_expert_ids)
+    if not agent_descriptions.strip():
+        agent_descriptions = "(No design experts are currently enabled for this project. Please select only core system agents if applicable.)"
 
     system_prompt = f"""You are an Expert IT Design Orchestrator.
 Your task is to analyze the user's requirements and provide a tailored design pipeline.
 
-We have the following Subagents available:
+Available Experts for this Project:
 {agent_descriptions}
 
-Select experts based on the requirement. User can enable/disable any expert via project configuration.
-ONLY INCLUDE experts if the requirement clearly involves those domains.
-You must first evaluate the current input materials, uploaded file structure, and any prior human clarifications.
+You MUST ONLY select from the 'Available Experts' listed above. These are the ONLY experts enabled for this project.
+If a required design domain is NOT available in the list, explain this gap in your reasoning and proceed with available ones.
+Select experts strictly based on the requirement and their documented capabilities.
+Evaluate the current input materials, uploaded file structure, and any prior human clarifications.
 Treat this as a material sufficiency assessment:
 - If the existing materials are already sufficient to choose a grounded pipeline, do NOT ask the human anything.
-- Only set needs_human=true when a real information gap would block accurate subagent selection or materially weaken downstream design quality.
+- Only set needs_human=true when a real information gap would block accurate expert selection or materially weaken downstream design quality.
 - Do not ask for optional nice-to-have details.
 - When you do ask, ask only one focused clarification question at a time.
 - Prefer multiple-choice style options grounded in the current materials, but still allow free-text fallback when none fit.
@@ -743,9 +739,9 @@ Treat this as a material sufficiency assessment:
 
 Output JSON format:
 {{
-  "reasoning": "Your step-by-step thinking about which agents to select based on text and files.",
+  "reasoning": "Your step-by-step thinking about which experts to select based on text and files.",
   "artifacts": {{
-    "active_agents": ["agent-id-1", "agent-id-2"],
+    "active_agents": ["expert-id-1", "expert-id-2"],
     "needs_human": false,
     "question": "",
     "context": {{
@@ -763,7 +759,7 @@ Output JSON format:
         f"Requirement Text: {requirement_text}\n"
         f"Uploaded Files: {', '.join(uploaded_files)}\n"
         f"Uploaded File Structures: {json.dumps(structure_summary, ensure_ascii=False)}\n"
-        "Evaluate whether the existing materials already provide enough information to select the design subagents."
+        "Evaluate whether the existing materials already provide enough information to select the design experts."
     )
     if human_feedback:
         user_prompt += f"\nHuman Revision Feedback: {human_feedback}"
@@ -804,16 +800,18 @@ Output JSON format:
     active_agents = _normalize_active_agents(active_agents)
     print(f"[DEBUG] Planner: active_agents after normalization: {sorted(active_agents)}")
     
-    # Filter by enabled experts from project configuration
-    enabled_experts = set(metadata_db.list_enabled_expert_ids(project_id))
-    print(f"[DEBUG] Planner: enabled_experts from project config: {sorted(enabled_experts)}")
+    # Strictly filter by enabled experts from project configuration
+    enabled_experts = set(design_expert_ids)
+    print(f"[DEBUG] Planner: allowed design_experts for this project: {sorted(enabled_experts)}")
     
     if enabled_experts:
         # Only use experts that are explicitly enabled
         active_agents = {agent for agent in active_agents if agent in enabled_experts}
-        print(f"[DEBUG] Planner: active_agents after filtering by enabled_experts: {sorted(active_agents)}")
+        print(f"[DEBUG] Planner: final filtered active_agents: {sorted(active_agents)}")
     else:
-        print(f"[DEBUG] Planner: No enabled_experts configured, using all LLM-selected agents")
+        # If no experts are enabled, we MUST NOT fallback to "all"
+        print(f"[DEBUG] Planner: No design experts are enabled for this project. Clearing selection.")
+        active_agents = set()
     
     # Early return if human intervention is needed - don't build full task queue yet
     if needs_human:

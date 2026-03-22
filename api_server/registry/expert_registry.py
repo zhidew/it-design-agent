@@ -257,10 +257,15 @@ class ExpertRegistry:
     def get_manifests_by_keywords(self, keywords: List[str]) -> List[ExpertProfile]:
         return [m for m in self._manifests.values() if m.matches_keywords(keywords)]
 
-    def get_planner_agent_descriptions(self) -> str:
+    def get_planner_agent_descriptions(self, filter_ids: Optional[List[str]] = None) -> str:
+        """Get description of all experts, optionally filtered by IDs."""
+        manifests = self._manifests.values()
+        if filter_ids is not None:
+            manifests = [m for m in manifests if m.capability in filter_ids]
+
         descriptions = [
             manifest.to_planner_description()
-            for manifest in sorted(self._manifests.values(), key=lambda item: item.capability)
+            for manifest in sorted(manifests, key=lambda item: item.capability)
         ]
         return "\n".join(descriptions)
 
