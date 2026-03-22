@@ -111,3 +111,8 @@ class LlmConfig(BaseModel):
     openai_model_name: Optional[str] = None
     gemini_api_key: Optional[str] = None
     gemini_model_name: Optional[str] = None
+
+
+class DebugConfig(BaseModel):
+    llm_interaction_logging_enabled: bool = False
+    llm_full_payload_logging_enabled: bool = False

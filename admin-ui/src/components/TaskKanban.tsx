@@ -52,7 +52,8 @@ const TaskKanbanComponent: React.FC<TaskKanbanProps> = ({
   isInitializing,
   showPlannedStages = false,
 }) => {
-  const hasConfirmedPipeline = (selectedPipeline?.length || 0) > 0;
+  const hasTaskBackedPipeline = tasks.some((task) => task.agent_type !== 'planner');
+  const hasConfirmedPipeline = (selectedPipeline?.length || 0) > 0 || hasTaskBackedPipeline;
 
   // Check if we're in initialization mode (tasks empty but workflow running)
   const showInitMode = !!(isInitializing && tasks.length === 0);
@@ -63,7 +64,7 @@ const TaskKanbanComponent: React.FC<TaskKanbanProps> = ({
   // Check if we're in analysis phase (only planner is active)
   const isInAnalysisPhase = useMemo(() => {
     if (isBlueprintMode) return false;
-    if (!hasConfirmedPipeline) {
+    if (!hasConfirmedPipeline && !hasTaskBackedPipeline) {
       return true;
     }
     if (showInitMode) return true;
@@ -84,14 +85,12 @@ const TaskKanbanComponent: React.FC<TaskKanbanProps> = ({
     }
 
     return false;
-  }, [hasConfirmedPipeline, showInitMode, tasks, isBlueprintMode]);
+  }, [hasConfirmedPipeline, hasTaskBackedPipeline, showInitMode, tasks, isBlueprintMode]);
 
   // Determine active agents: prefer tasks, fallback to selectedPipeline
   const activeAgentTypes = useMemo(() => {
     const fromTasks = new Set(
-      tasks
-        .filter((task) => hasConfirmedPipeline || task.agent_type === 'planner')
-        .map((task) => task.agent_type)
+      tasks.map((task) => task.agent_type)
     );
     if (fromTasks.size > 0) {
       return fromTasks;
@@ -101,7 +100,7 @@ const TaskKanbanComponent: React.FC<TaskKanbanProps> = ({
       return new Set(['planner']);
     }
     return new Set<string>();
-  }, [hasConfirmedPipeline, tasks, selectedPipeline, showInitMode]);
+  }, [tasks, selectedPipeline, showInitMode]);
 
   // Derive stages dynamically based on active tasks and their phases
   const activeStages = useMemo(() => {

@@ -44,7 +44,8 @@ def save_llm_interaction(
     model: str,
     status: str = "success",
     error: str | None = None,
-    include_full_artifacts: bool = False
+    include_full_artifacts: bool = False,
+    persist_payload_files: bool = True,
 ):
     """
     ULTIMATE OPTIMIZATION WITH CHRONOLOGICAL FILENAMES:
@@ -57,36 +58,32 @@ def save_llm_interaction(
         log_dir = base_dir / "projects" / project_id / version / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
         
-        # 1. Setup Storage Folders
-        prompt_dir = log_dir / "prompts"
-        response_dir = log_dir / "responses"
-        prompt_dir.mkdir(exist_ok=True)
-        response_dir.mkdir(exist_ok=True)
-
-        # 2. Generate Base ID for this interaction
+        # 1. Generate Base ID for this interaction
         ts_id = _get_timestamp_id()
         file_prefix = f"{ts_id}_{node_id}"
 
-        # 3. Save System Prompt (Chronological)
-        sys_ref = f"prompts/{file_prefix}_sys.txt"
-        sys_file = log_dir / sys_ref
-        sys_file.write_text(system_prompt, encoding="utf-8")
-
-        # 4. Save User Prompt (Chronological)
-        user_ref = f"prompts/{file_prefix}_user.txt"
-        user_file = log_dir / user_ref
-        user_file.write_text(user_prompt, encoding="utf-8")
-        
-        # 5. Save FULL Response (Chronological)
+        sys_ref = "none"
+        user_ref = "none"
         res_ref = "none"
         res_summary = "no_response"
+
+        if persist_payload_files:
+            prompt_dir = log_dir / "prompts"
+            response_dir = log_dir / "responses"
+            prompt_dir.mkdir(exist_ok=True)
+            response_dir.mkdir(exist_ok=True)
+
+            sys_ref = f"prompts/{file_prefix}_sys.txt"
+            (log_dir / sys_ref).write_text(system_prompt, encoding="utf-8")
+
+            user_ref = f"prompts/{file_prefix}_user.txt"
+            (log_dir / user_ref).write_text(user_prompt, encoding="utf-8")
+
+            if response:
+                res_ref = f"responses/{file_prefix}_res.json"
+                (log_dir / res_ref).write_text(json.dumps(response, ensure_ascii=False), encoding="utf-8")
+
         if response:
-            res_str = json.dumps(response, ensure_ascii=False)
-            res_ref = f"responses/{file_prefix}_res.json"
-            res_file = log_dir / res_ref
-            res_file.write_text(res_str, encoding="utf-8")
-            
-            # Create lightweight summary for JSONL
             if isinstance(response, dict):
                 res_summary = {
                     "reasoning_preview": (response.get("reasoning") or "")[:200] + "...",
@@ -95,7 +92,7 @@ def save_llm_interaction(
             else:
                 res_summary = str(response)[:200] + "..."
 
-        # 6. Write to JSONL (Chronological reference)
+        # 2. Write to JSONL (Chronological reference)
         log_file = log_dir / "llm_interactions.jsonl"
         log_entry = {
             "timestamp": datetime.datetime.now().isoformat(),
@@ -112,7 +109,8 @@ def save_llm_interaction(
                 "user": user_prompt[:200] + "...",
                 "response": res_summary
             },
-            "error": error
+            "error": error,
+            "payload_files_persisted": persist_payload_files,
         }
         
         with open(log_file, "a", encoding="utf-8") as f:

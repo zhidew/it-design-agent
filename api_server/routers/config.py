@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 
-from models.project_config import DatabaseConfig, ExpertConfig, KnowledgeBaseConfig, LlmConfig, RepositoryConfig, ModelConfig, ModelConfigs
+from models.project_config import DatabaseConfig, DebugConfig, ExpertConfig, KnowledgeBaseConfig, LlmConfig, RepositoryConfig, ModelConfig, ModelConfigs
 from services.db_service import metadata_db
 from services.llm_service import test_llm_connectivity
 
@@ -113,6 +113,19 @@ async def save_project_llm_config(project_id: str, req: LlmConfig):
     _require_project(project_id)
     payload = req.model_dump() if hasattr(req, "model_dump") else req.dict()
     return metadata_db.upsert_project_llm_config(project_id, payload)
+
+
+@router.get("/debug")
+async def get_project_debug_config(project_id: str):
+    _require_project(project_id)
+    return metadata_db.get_project_debug_config(project_id)
+
+
+@router.post("/debug")
+async def save_project_debug_config(project_id: str, req: DebugConfig):
+    _require_project(project_id)
+    payload = req.model_dump() if hasattr(req, "model_dump") else req.dict()
+    return metadata_db.upsert_project_debug_config(project_id, payload)
 
 
 @router.get("/models")

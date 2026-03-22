@@ -962,14 +962,17 @@ export function ProjectDetail() {
   const selectedPipeline = useMemo(() => {
     const match = plannerReasoningLog.match(/Selected Experts:\s*(.+)/i)
       || plannerReasoningLog.match(/Selected Pipeline:\s*(.+)/i);
-    if (!match) {
-      return [];
+    if (match) {
+      return match[1]
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean);
     }
-    return match[1]
-      .split(',')
-      .map((item) => item.trim())
-      .filter(Boolean);
-  }, [plannerReasoningLog]);
+
+    return (workflowState?.task_queue || [])
+      .map((task) => task.agent_type)
+      .filter((agentType) => agentType !== 'planner');
+  }, [plannerReasoningLog, workflowState?.task_queue]);
 
   const canPreviewPlannedPipeline = useMemo(() => {
     if (workflowState?.run_status === 'waiting_human') {

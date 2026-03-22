@@ -227,6 +227,18 @@ class MetadataDB:
             )
             conn.execute(
                 """
+                CREATE TABLE IF NOT EXISTS project_debug_configs (
+                    project_id TEXT PRIMARY KEY,
+                    llm_interaction_logging_enabled INTEGER NOT NULL DEFAULT 0,
+                    llm_full_payload_logging_enabled INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+                )
+                """
+            )
+            conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS project_model_configs (
                     id TEXT NOT NULL,
                     project_id TEXT NOT NULL,
@@ -1032,6 +1044,59 @@ class MetadataDB:
             result["openai_api_key"] = self.codec.mask(openai_api_key)
             result["gemini_api_key"] = self.codec.mask(gemini_api_key)
         return result
+
+    def upsert_project_debug_config(self, project_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        now = self._utcnow()
+        existing = self.get_project_debug_config(project_id)
+        llm_interaction_logging_enabled = bool(payload.get("llm_interaction_logging_enabled", False))
+        llm_full_payload_logging_enabled = bool(payload.get("llm_full_payload_logging_enabled", False))
+        if not llm_interaction_logging_enabled:
+            llm_full_payload_logging_enabled = False
+
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO project_debug_configs (
+                    project_id, llm_interaction_logging_enabled, llm_full_payload_logging_enabled, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(project_id) DO UPDATE SET
+                    llm_interaction_logging_enabled=excluded.llm_interaction_logging_enabled,
+                    llm_full_payload_logging_enabled=excluded.llm_full_payload_logging_enabled,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    project_id,
+                    1 if llm_interaction_logging_enabled else 0,
+                    1 if llm_full_payload_logging_enabled else 0,
+                    (existing.get("created_at") if existing and existing.get("created_at") else now),
+                    now,
+                ),
+            )
+            conn.commit()
+        return self.get_project_debug_config(project_id)
+
+    def get_project_debug_config(self, project_id: str) -> Dict[str, Any]:
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM project_debug_configs WHERE project_id = ?",
+                (project_id,),
+            ).fetchone()
+        if not row:
+            return {
+                "project_id": project_id,
+                "llm_interaction_logging_enabled": False,
+                "llm_full_payload_logging_enabled": False,
+                "created_at": None,
+                "updated_at": None,
+            }
+        raw = dict(row)
+        return {
+            "project_id": raw["project_id"],
+            "llm_interaction_logging_enabled": bool(raw["llm_interaction_logging_enabled"]),
+            "llm_full_payload_logging_enabled": bool(raw["llm_full_payload_logging_enabled"]),
+            "created_at": raw["created_at"],
+            "updated_at": raw["updated_at"],
+        }
 
 
 metadata_db = MetadataDB()

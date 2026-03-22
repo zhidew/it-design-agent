@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
 import { ArrowLeft, BookOpen, Bot, Cpu, Database, FolderGit2, Plus, RefreshCw, Save, Settings2, Trash2, Activity, CheckCircle, XCircle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { api } from '../api';
+import { api, type DebugConfig } from '../api';
 import { LanguageSwitcher } from './LanguageSwitcher';
 
 type TabKey = 'repositories' | 'databases' | 'knowledge' | 'experts' | 'llm';
@@ -149,6 +149,10 @@ export function ProjectConfig() {
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseConfig[]>([]);
   const [experts, setExperts] = useState<ExpertConfig[]>([]);
   const [models, setModels] = useState<ModelConfig[]>([]);
+  const [debugConfig, setDebugConfig] = useState<DebugConfig>({
+    llm_interaction_logging_enabled: false,
+    llm_full_payload_logging_enabled: false,
+  });
   const [isModelModalOpen, setIsModelModalOpen] = useState(false);
   const [editingModel, setEditingModel] = useState<ModelConfig | null>(null);
   const [testingModel, setTestingModel] = useState(false);
@@ -229,6 +233,23 @@ export function ProjectConfig() {
       testing: isZh ? '正在测试...' : 'Testing...',
       testSuccess: isZh ? '连接成功！' : 'Connection successful!',
       testFailed: isZh ? '连接失败：' : 'Connection failed: ',
+      debugEyebrow: isZh ? '调试日志' : 'Debug Logging',
+      debugTitle: isZh ? 'LLM 调试日志开关' : 'LLM Debug Logging',
+      debugDescription: isZh
+        ? '默认关闭。排查问题时再开启，避免产生额外磁盘占用和敏感上下文落盘。'
+        : 'Disabled by default. Turn it on only when you need deeper troubleshooting logs.',
+      debugIndexTitle: isZh ? '记录交互索引' : 'Record Interaction Index',
+      debugIndexDesc: isZh
+        ? '写入 llm_interactions.jsonl，保留每次调用的摘要、状态与文件引用。'
+        : 'Write llm_interactions.jsonl with per-call summaries, statuses, and file references.',
+      debugPayloadTitle: isZh ? '记录完整 Prompts / Responses' : 'Record Full Prompts / Responses',
+      debugPayloadDesc: isZh
+        ? '额外写入 logs/prompts 与 logs/responses 下的完整文件。仅在开启交互索引后生效。'
+        : 'Also persist full prompt/response files under logs/prompts and logs/responses. Only works when interaction index logging is enabled.',
+      debugSave: isZh ? '保存调试设置' : 'Save Debug Settings',
+      debugWarning: isZh
+        ? '注意：完整日志会增加磁盘占用，并可能记录敏感业务上下文。'
+        : 'Warning: full payload logging increases disk usage and may capture sensitive business context.',
     };
   }, [i18n.language]);
 
@@ -236,19 +257,24 @@ export function ProjectConfig() {
     if (!projectId) return;
     setLoading(true);
     try {
-      const [repoRes, dbRes, kbRes, expertRes, _llmRes, modelRes] = await Promise.all([
+      const [repoRes, dbRes, kbRes, expertRes, _llmRes, modelRes, debugRes] = await Promise.all([
         api.getRepositoryConfigs(projectId),
         api.getDatabaseConfigs(projectId),
         api.getKnowledgeBaseConfigs(projectId),
         api.getExpertConfigs(projectId),
         api.getProjectLlmConfig(projectId),
         api.getProjectModels(projectId),
+        api.getProjectDebugConfig(projectId),
       ]);
       setRepositories(repoRes.repositories || []);
       setDatabases(dbRes.databases || []);
       setKnowledgeBases(kbRes.knowledge_bases || []);
       setExperts(expertRes.experts || []);
       setModels(modelRes.models || []);
+      setDebugConfig({
+        llm_interaction_logging_enabled: Boolean(debugRes.llm_interaction_logging_enabled),
+        llm_full_payload_logging_enabled: Boolean(debugRes.llm_full_payload_logging_enabled),
+      });
     } catch (error) {
       console.error('Failed to load project configurations:', error);
     } finally {
@@ -384,6 +410,26 @@ export function ProjectConfig() {
       setSaving(false);
       setIsSaved(false);
       setTestResult({ success: false, message: error?.message || 'Failed to save model.' });
+    }
+  };
+
+  const saveDebugSettings = async () => {
+    if (!projectId) return;
+    setSaving(true);
+    setIsSaved(false);
+    try {
+      await api.saveProjectDebugConfig(projectId, {
+        llm_interaction_logging_enabled: Boolean(debugConfig.llm_interaction_logging_enabled),
+        llm_full_payload_logging_enabled: Boolean(
+          debugConfig.llm_interaction_logging_enabled && debugConfig.llm_full_payload_logging_enabled,
+        ),
+      });
+      setIsSaved(true);
+      await loadAll();
+      setTimeout(() => setIsSaved(false), 2000);
+    } catch {
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -791,6 +837,69 @@ export function ProjectConfig() {
                         {t('projectConfig.llm.empty') || 'No models configured yet.'}
                       </div>
                     )}
+                  </div>
+                </div>
+
+                <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-8 space-y-6">
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">{llmCopy.debugEyebrow}</div>
+                      <h3 className="text-lg font-black text-gray-900">{llmCopy.debugTitle}</h3>
+                      <p className="text-sm text-gray-500 mt-2">{llmCopy.debugDescription}</p>
+                    </div>
+                    <button
+                      onClick={() => void saveDebugSettings()}
+                      disabled={saving || isSaved}
+                      className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase transition-all shadow-lg disabled:opacity-50 min-w-[132px] justify-center ${isSaved ? 'bg-emerald-500 text-white shadow-emerald-100' : 'bg-indigo-600 text-white shadow-indigo-100 hover:bg-indigo-700'}`}
+                    >
+                      {saving ? <RefreshCw size={14} className="animate-spin" /> : (isSaved ? <CheckCircle size={14} /> : <Save size={14} />)}
+                      {saving ? t('common.saving') : (isSaved ? t('common.saveSuccess') : llmCopy.debugSave)}
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-4">
+                    <div className="rounded-2xl border border-gray-200 bg-gray-50/60 p-5 flex items-start justify-between gap-4">
+                      <div className="min-w-0">
+                        <div className="text-sm font-black text-gray-900">{llmCopy.debugIndexTitle}</div>
+                        <p className="text-xs text-gray-500 mt-2">{llmCopy.debugIndexDesc}</p>
+                      </div>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={debugConfig.llm_interaction_logging_enabled}
+                        onClick={() => setDebugConfig((prev) => ({
+                          llm_interaction_logging_enabled: !prev.llm_interaction_logging_enabled,
+                          llm_full_payload_logging_enabled: prev.llm_interaction_logging_enabled ? false : prev.llm_full_payload_logging_enabled,
+                        }))}
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 ${debugConfig.llm_interaction_logging_enabled ? 'bg-emerald-500' : 'bg-gray-300'}`}
+                      >
+                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${debugConfig.llm_interaction_logging_enabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                      </button>
+                    </div>
+
+                    <div className={`rounded-2xl border p-5 flex items-start justify-between gap-4 ${debugConfig.llm_interaction_logging_enabled ? 'border-gray-200 bg-gray-50/60' : 'border-gray-100 bg-gray-50/30 opacity-60'}`}>
+                      <div className="min-w-0">
+                        <div className="text-sm font-black text-gray-900">{llmCopy.debugPayloadTitle}</div>
+                        <p className="text-xs text-gray-500 mt-2">{llmCopy.debugPayloadDesc}</p>
+                      </div>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={debugConfig.llm_full_payload_logging_enabled}
+                        disabled={!debugConfig.llm_interaction_logging_enabled}
+                        onClick={() => setDebugConfig((prev) => ({
+                          ...prev,
+                          llm_full_payload_logging_enabled: !prev.llm_full_payload_logging_enabled,
+                        }))}
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 disabled:cursor-not-allowed ${debugConfig.llm_interaction_logging_enabled && debugConfig.llm_full_payload_logging_enabled ? 'bg-emerald-500' : 'bg-gray-300'}`}
+                      >
+                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${debugConfig.llm_interaction_logging_enabled && debugConfig.llm_full_payload_logging_enabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
+                    {llmCopy.debugWarning}
                   </div>
                 </div>
 

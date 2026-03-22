@@ -27,6 +27,7 @@ class SubagentOutput(BaseModel):
     artifacts: dict[str, str] = Field(description="Generated files dictionary, key is filename, value is content.")
 
 from services.log_service import save_llm_interaction
+from services.db_service import metadata_db
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
@@ -94,6 +95,9 @@ def generate_with_llm(
 
     last_error = None
     model_name = ""
+    debug_config = metadata_db.get_project_debug_config(project_id) if project_id else None
+    llm_interaction_logging_enabled = bool((debug_config or {}).get("llm_interaction_logging_enabled"))
+    llm_full_payload_logging_enabled = bool((debug_config or {}).get("llm_full_payload_logging_enabled"))
     if provider == "gemini":
         model_name = _resolve_llm_setting(llm_settings, "gemini_model_name", "GEMINI_MODEL_NAME", "gemini-2.0-flash")
     else:
@@ -108,7 +112,7 @@ def generate_with_llm(
                 raw_data = _call_openai_raw(enhanced_system_prompt, user_prompt, llm_settings=llm_settings)
             
             # Log interaction if project info is provided
-            if project_id and version:
+            if project_id and version and llm_interaction_logging_enabled:
                 save_llm_interaction(
                     project_id=project_id,
                     version=version,
@@ -120,7 +124,8 @@ def generate_with_llm(
                     provider=provider,
                     model=model_name,
                     status="success",
-                    include_full_artifacts=include_full_artifacts_in_log
+                    include_full_artifacts=include_full_artifacts_in_log,
+                    persist_payload_files=llm_full_payload_logging_enabled,
                 )
 
             # --- Robust data repair logic ---
@@ -154,7 +159,7 @@ def generate_with_llm(
         except json.JSONDecodeError as e:
             last_error = e
             print(f"  [LLM Service] JSON parse failed (attempt {attempt + 1}/{max_retries + 1}): {e}")
-            if project_id and version:
+            if project_id and version and llm_interaction_logging_enabled:
                 save_llm_interaction(
                     project_id=project_id,
                     version=version,
@@ -166,13 +171,14 @@ def generate_with_llm(
                     provider=provider,
                     model=model_name,
                     status="error",
-                    error=f"JSONDecodeError: {str(e)}"
+                    error=f"JSONDecodeError: {str(e)}",
+                    persist_payload_files=llm_full_payload_logging_enabled,
                 )
             time.sleep(2)
         except Exception as e:
             last_error = e
             print(f"  [LLM Service] Data validation/call failed (attempt {attempt + 1}/{max_retries + 1}): {e}")
-            if project_id and version:
+            if project_id and version and llm_interaction_logging_enabled:
                 save_llm_interaction(
                     project_id=project_id,
                     version=version,
@@ -184,7 +190,8 @@ def generate_with_llm(
                     provider=provider,
                     model=model_name,
                     status="error",
-                    error=f"Exception: {str(e)}"
+                    error=f"Exception: {str(e)}",
+                    persist_payload_files=llm_full_payload_logging_enabled,
                 )
             time.sleep(2)
             

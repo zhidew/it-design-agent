@@ -31,6 +31,12 @@ export interface LlmConfig {
   has_gemini_api_key?: boolean;
 }
 
+export interface DebugConfig {
+  project_id?: string;
+  llm_interaction_logging_enabled: boolean;
+  llm_full_payload_logging_enabled: boolean;
+}
+
 export const api = {
   getProjects: () => apiClient.get('/projects').then(res => res.data),
   createProject: (name: string, description?: string) => 
@@ -127,6 +133,8 @@ export const api = {
   }) => apiClient.post(`/projects/${projectId}/config/experts`, payload).then(res => res.data),
   getProjectLlmConfig: (projectId: string) =>
     apiClient.get(`/projects/${projectId}/config/llm`).then(res => res.data),
+  getProjectDebugConfig: (projectId: string) =>
+    apiClient.get(`/projects/${projectId}/config/debug`).then(res => res.data),
   saveProjectLlmConfig: (projectId: string, payload: {
     llm_provider: string;
     openai_api_key?: string;
@@ -135,6 +143,8 @@ export const api = {
     gemini_api_key?: string;
     gemini_model_name?: string;
   }) => apiClient.post(`/projects/${projectId}/config/llm`, payload).then(res => res.data),
+  saveProjectDebugConfig: (projectId: string, payload: DebugConfig) =>
+    apiClient.post(`/projects/${projectId}/config/debug`, payload).then(res => res.data),
   getProjectModels: (projectId: string) =>
     apiClient.get(`/projects/${projectId}/config/models`).then(res => res.data),
   saveProjectModel: (projectId: string, payload: {
