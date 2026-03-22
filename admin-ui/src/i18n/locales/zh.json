@@ -216,6 +216,9 @@
       "placeholders": {
         "description": "该专家的项目特定说明（可选）"
       }
+    },
+    "llm": {
+      "empty": "暂未配置模型，点击「添加模型配置」开始。"
     }
   },
   "management": {

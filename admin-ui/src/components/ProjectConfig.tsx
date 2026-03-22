@@ -195,7 +195,7 @@ export function ProjectConfig() {
     setLoading(true);
     setMessage(null);
     try {
-      const [repoRes, dbRes, kbRes, expertRes, modelRes] = await Promise.all([
+      const [repoRes, dbRes, kbRes, expertRes, _llmRes, modelRes] = await Promise.all([
         api.getRepositoryConfigs(projectId),
         api.getDatabaseConfigs(projectId),
         api.getKnowledgeBaseConfigs(projectId),
