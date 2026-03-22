@@ -401,6 +401,12 @@ def _normalize_state(project_id: str, version: str, raw_state: dict | None, runt
     derived_run_status = _derive_run_status(task_queue, human_intervention_required)
     run_status = runtime.get("run_status") or workflow_run.get("status") or derived_run_status
     current_node = runtime.get("current_node") or workflow_run.get("current_node")
+
+    # When runtime is absent, prefer terminal state derived from task projection over a stale workflow_run row.
+    if not runtime and derived_run_status in {RUN_STATUS_SUCCESS, RUN_STATUS_FAILED, RUN_STATUS_WAITING_HUMAN}:
+        if run_status in {RUN_STATUS_QUEUED, RUN_STATUS_RUNNING} or workflow_run.get("status") in {RUN_STATUS_QUEUED, RUN_STATUS_RUNNING}:
+            run_status = derived_run_status
+
     if current_node is None:
         current_node = _derive_current_node(task_queue, state)
 
@@ -409,6 +415,10 @@ def _normalize_state(project_id: str, version: str, raw_state: dict | None, runt
         waiting_reason = state.get("waiting_reason")
     if waiting_reason is None and run_status == RUN_STATUS_WAITING_HUMAN:
         waiting_reason = "human_intervention_required"
+
+    if run_status == RUN_STATUS_SUCCESS:
+        current_node = None
+        waiting_reason = None
 
     normalized_updated_at = runtime.get("updated_at") or workflow_run.get("updated_at") or state.get("updated_at") or _latest_project_timestamp(project_id, version)
     stale_running_detected = False

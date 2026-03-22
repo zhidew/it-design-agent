@@ -43,6 +43,11 @@ interface WorkflowTask {
   priority?: number;
 }
 
+interface EvidenceSummary {
+  expected_files?: string[];
+  artifacts_generated?: string[];
+}
+
 interface WorkflowState {
   run_id?: string | null;
   task_queue: WorkflowTask[];
@@ -872,7 +877,22 @@ export function ProjectDetail() {
     if (!selectedNode || !AGENT_MAPPING[selectedNode]) {
       return [];
     }
-    const patterns = AGENT_MAPPING[selectedNode];
+    const evidenceFilename = `${selectedNode}.json`;
+    let evidencePatterns: string[] = [];
+
+    if (artifacts[evidenceFilename]) {
+      try {
+        const evidence = JSON.parse(artifacts[evidenceFilename]) as EvidenceSummary;
+        evidencePatterns = [
+          ...(evidence.artifacts_generated || []),
+          ...(evidence.expected_files || []),
+        ].filter((value, index, array) => Boolean(value) && array.indexOf(value) === index);
+      } catch {
+        evidencePatterns = [];
+      }
+    }
+
+    const patterns = evidencePatterns.length > 0 ? evidencePatterns : AGENT_MAPPING[selectedNode];
     return Object.keys(artifacts).filter((filename) =>
       !filename.endsWith('-reasoning.md') && patterns.some(
         (pattern) => filename.startsWith(pattern) || filename === pattern ||
