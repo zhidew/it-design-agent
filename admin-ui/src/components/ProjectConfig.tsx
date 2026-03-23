@@ -214,11 +214,11 @@ export function ProjectConfig() {
       openaiBaseUrl: isZh ? 'OpenAI 网关地址' : 'OpenAI Base URL',
       openaiModel: isZh ? 'OpenAI 模型名' : 'OpenAI Model',
       geminiModel: isZh ? 'Gemini 模型名' : 'Gemini Model',
-      openaiKey: isZh ? 'OpenAI API Key' : 'OpenAI API Key',
-      geminiKey: isZh ? 'Gemini API Key' : 'Gemini API Key',
+      openaiKey: isZh ? 'OpenAI API Key (选填)' : 'OpenAI API Key (Optional)',
+      geminiKey: isZh ? 'Gemini API Key (选填)' : 'Gemini API Key (Optional)',
       saved: isZh ? '保存' : 'Save',
       keepCurrent: isZh ? '留空则保持当前密钥' : 'Leave blank to keep current key',
-      enterKey: isZh ? '请输入 API Key' : 'Enter API key',
+      enterKey: isZh ? 'API Key (选填)' : 'API Key (Optional)',
       saveSuccess: isZh ? '大模型配置已保存。' : 'LLM config saved.',
       saveError: isZh ? '保存大模型配置失败。' : 'Failed to save LLM config.',
       loadError: isZh ? '加载大模型配置失败。' : 'Failed to load LLM config.',
@@ -960,7 +960,7 @@ export function ProjectConfig() {
 
                       <div className="md:col-span-2">
                         <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block">
-                          API Key {editingModel.has_api_key ? `(${llmCopy.saved})` : ''}
+                          {llmCopy.enterKey} {editingModel.has_api_key ? `(${llmCopy.saved})` : ''}
                         </label>
                         <input
                           type="password"

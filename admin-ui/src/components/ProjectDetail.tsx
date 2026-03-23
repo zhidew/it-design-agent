@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { useParams, Link, useLocation } from 'react-router-dom';
-import { api } from '../api';
-import { ArrowLeft, Play, RefreshCw, Activity, Check, X, Upload, FileText, Database, Layers, Book, List, Trash2, ChevronLeft, ChevronRight, Settings2, FolderGit2, BookOpen, Bot, Cpu } from 'lucide-react';
+import { api, type EffortLevel } from '../api';
+import { ArrowLeft, Play, RefreshCw, Activity, Check, X, Upload, FileText, Database, Layers, Book, List, Trash2, ChevronLeft, ChevronRight, Settings2, FolderGit2, BookOpen, Bot, Cpu, Info } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { TaskKanban } from './TaskKanban';
@@ -105,6 +105,11 @@ interface ExpertResourceSummary {
   name: string;
   enabled: boolean;
   dependencies?: string[];
+}
+
+interface EffortOption {
+  value: EffortLevel;
+  title: string;
 }
 
 interface EventBase {
@@ -213,6 +218,7 @@ export function ProjectDetail() {
   const [versions, setVersions] = useState<string[]>([]);
   const [requirement, setRequirement] = useState('');
   const [selectedModel, setSelectedModel] = useState<string>('');
+  const [selectedEffortLevel, setSelectedEffortLevel] = useState<EffortLevel>('medium');
   const [projectModels, setProjectModels] = useState<any[]>([]);
 
   const [inputFiles, setInputFiles] = useState<InputFile[]>([]);
@@ -259,6 +265,43 @@ export function ProjectDetail() {
   const eventSourceRef = useRef<EventSource | null>(null);
   const seenEventIdsRef = useRef<Set<string>>(new Set());
   const latestFetchedStateAtRef = useRef<number>(0);
+
+  const effortOptions = useMemo<EffortOption[]>(() => {
+    const isZh = i18n.language.toLowerCase().startsWith('zh');
+    const fallback = {
+      label: isZh ? '执行预算' : 'Execution Budget',
+      low: isZh ? '低' : 'Low',
+      lowHint: isZh ? '最快返回，减少专家探索轮次。' : 'Fastest run with limited expert exploration.',
+      medium: isZh ? '中' : 'Medium',
+      mediumHint: isZh ? '速度与分析深度的平衡默认档。' : 'Balanced speed and coverage for most tasks.',
+      high: isZh ? '高' : 'High',
+      highHint: isZh ? '适合复杂需求，允许更多取证与推理。' : 'More evidence gathering for complex requirements.',
+      ultra: isZh ? '超高' : 'Ultra',
+      ultraHint: isZh ? '最深入的探索档位，但耗时也最长。' : 'Deepest exploration with the longest runtime.',
+    };
+    const pick = (key: string, fallbackValue: string) => {
+      const value = t(key);
+      return value === key || /\?{2,}/.test(value) ? fallbackValue : value;
+    };
+    return [
+      {
+        value: 'low',
+        title: pick('projectDetail.effort.low', fallback.low),
+      },
+      {
+        value: 'medium',
+        title: pick('projectDetail.effort.medium', fallback.medium),
+      },
+      {
+        value: 'high',
+        title: pick('projectDetail.effort.high', fallback.high),
+      },
+      {
+        value: 'ultra',
+        title: pick('projectDetail.effort.ultra', fallback.ultra),
+      },
+    ];
+  }, [i18n.language, t]);
   const selectedVersionRef = useRef<string | null>(null);
 
   const resourceCopy = useMemo(() => {
@@ -745,7 +788,7 @@ export function ProjectDetail() {
         await api.uploadBaselineFiles(id, timestampVersion, inputFiles.map(f => f.file));
       }
 
-      const run = await api.runOrchestrator(id, timestampVersion, requirement, selectedModel);
+      const run = await api.runOrchestrator(id, timestampVersion, requirement, selectedModel, selectedEffortLevel);
       setCurrentRunId(run.job_id);
       void fetchState(timestampVersion);
 
@@ -1454,15 +1497,37 @@ export function ProjectDetail() {
               />
             </div>
 
-            <button
-              onClick={handleRun}
-              disabled={loading || !isIRProvided}
-              className={`w-full py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 transition-all ${loading || !isIRProvided ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg shadow-indigo-200'
-                }`}
-            >
-              {loading ? <RefreshCw size={16} className="animate-spin" /> : <Play size={16} fill="currentColor" />}
-              {loading ? t('projectDetail.running') : t('projectDetail.startDesign')}
-            </button>
+            <div className="flex items-center gap-3">
+              <div
+                className={`w-1/5 min-w-[88px] max-w-[112px] flex items-center gap-1.5 rounded-2xl border px-2.5 py-3 bg-white transition-all ${loading || !isIRProvided ? 'border-gray-100 text-gray-400' : 'border-gray-200 text-gray-700 hover:border-indigo-200'}`}
+                title={i18n.language.toLowerCase().startsWith('zh') ? '推理强度，等级越高成本越高' : 'Reasoning intensity. Higher levels cost more.'}
+              >
+                <Cpu size={14} className="text-indigo-500" />
+                <select
+                  value={selectedEffortLevel}
+                  onChange={(e) => setSelectedEffortLevel(e.target.value as EffortLevel)}
+                  disabled={loading}
+                  className="w-full min-w-0 bg-transparent border-none text-[10px] font-black text-inherit outline-none focus:ring-0 focus:ring-offset-0 cursor-pointer uppercase tracking-wide disabled:cursor-not-allowed"
+                >
+                  {effortOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.title}
+                    </option>
+                  ))}
+                </select>
+                <Info size={11} className="shrink-0 text-gray-400" />
+              </div>
+
+              <button
+                onClick={handleRun}
+                disabled={loading || !isIRProvided}
+                className={`w-4/5 py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 transition-all ${loading || !isIRProvided ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg shadow-indigo-200'
+                  }`}
+              >
+                {loading ? <RefreshCw size={16} className="animate-spin" /> : <Play size={16} fill="currentColor" />}
+                {loading ? t('projectDetail.running') : t('projectDetail.startDesign')}
+              </button>
+            </div>
           </section>
 
           <section className="space-y-4">

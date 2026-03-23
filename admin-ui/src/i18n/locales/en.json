@@ -101,6 +101,17 @@
     "clearFiles": "Clear Files",
     "inputMaterials": "Input Materials",
     "orInputText": "Or input text requirements",
+    "effort": {
+      "label": "Execution Budget",
+      "low": "Low",
+      "lowHint": "Fastest run with limited expert exploration.",
+      "medium": "Medium",
+      "mediumHint": "Balanced speed and coverage for most tasks.",
+      "high": "High",
+      "highHint": "More evidence gathering for complex requirements.",
+      "ultra": "Ultra",
+      "ultraHint": "Deepest exploration with the longest runtime."
+    },
     "resumeExecution": "Resume Execution",
     "subagentReasoning": "Subagent Reasoning",
     "orchestrationLogs": "Orchestration Logs",

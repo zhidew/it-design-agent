@@ -27,6 +27,7 @@ class ProjectResponse(BaseModel):
 class VersionRunRequest(BaseModel):
     requirement_text: str
     model: Optional[str] = None
+    effort_level: Optional[str] = None
 
 class JobResponse(BaseModel):
     job_id: str

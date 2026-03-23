@@ -214,7 +214,9 @@ def _call_gemini_raw(system_prompt: str, user_prompt: str, llm_settings: dict | 
     import google.generativeai as genai
     api_key = _resolve_llm_setting(llm_settings, "gemini_api_key", "GEMINI_API_KEY")
     model_name = _resolve_llm_setting(llm_settings, "gemini_model_name", "GEMINI_MODEL_NAME", "gemini-2.0-flash")
-    genai.configure(api_key=api_key)
+    
+    # Use placeholder if key is missing to support local/no-auth gateways
+    genai.configure(api_key=api_key or "not-required")
     
     model = genai.GenerativeModel(
         model_name,
@@ -236,10 +238,9 @@ def test_llm_connectivity(llm_settings: dict) -> dict:
             import google.generativeai as genai
             api_key = llm_settings.get("api_key")
             model_name = llm_settings.get("model_name", "gemini-2.0-flash")
-            if not api_key:
-                return {"success": False, "message": "Missing API Key"}
             
-            genai.configure(api_key=api_key)
+            # Allow empty API key if using a custom gateway or local provider
+            genai.configure(api_key=api_key or "not-required")
             model = genai.GenerativeModel(model_name)
             response = model.generate_content("Ping")
             if response and response.text:
@@ -251,10 +252,9 @@ def test_llm_connectivity(llm_settings: dict) -> dict:
             base_url = llm_settings.get("base_url", "https://api.openai.com/v1")
             model_name = llm_settings.get("model_name", "gpt-4o")
             headers = llm_settings.get("headers")
-            if not api_key:
-                return {"success": False, "message": "Missing API Key"}
             
-            client = OpenAI(api_key=api_key, base_url=base_url, default_headers=headers or None)
+            # Allow empty API key for local/proxy gateways
+            client = OpenAI(api_key=api_key or "not-required", base_url=base_url, default_headers=headers or None)
             completion = client.chat.completions.create(
                 model=model_name,
                 messages=[{"role": "user", "content": "Ping"}],
@@ -273,7 +273,8 @@ def _call_openai_raw(system_prompt: str, user_prompt: str, llm_settings: dict | 
     model_name = _resolve_llm_setting(llm_settings, "openai_model_name", "OPENAI_MODEL_NAME", "gpt-4o")
     headers = _resolve_llm_dict_setting(llm_settings, "openai_headers")
     
-    client = OpenAI(api_key=api_key, base_url=base_url, default_headers=headers or None)
+    # Use placeholder if key is missing to support local/no-auth gateways
+    client = OpenAI(api_key=api_key or "not-required", base_url=base_url, default_headers=headers or None)
     completion = client.chat.completions.create(
         model=model_name,
         messages=[

@@ -30,6 +30,12 @@ RUN_STATUS_WAITING_HUMAN = "waiting_human"
 RUN_STATUS_SUCCESS = "success"
 RUN_STATUS_FAILED = "failed"
 STALE_RUNNING_TIMEOUT_SECONDS = int(os.getenv("ORCHESTRATOR_STALE_TIMEOUT_SECONDS", "180"))
+EFFORT_LEVEL_TO_REACT_STEPS = {
+    "low": 6,
+    "medium": 12,
+    "high": 20,
+    "ultra": 32,
+}
 
 jobs = {}
 runtime_registry = {}
@@ -940,6 +946,7 @@ def _build_graph_input_state(
     resume_action: str | None = None,
     feedback: str = "",
     model: str | None = None,
+    effort_level: str | None = None,
 ) -> dict:
     messages = list((persisted_state or {}).get("messages", []))
     history = list((persisted_state or {}).get("history", []))
@@ -957,6 +964,14 @@ def _build_graph_input_state(
         )
 
     design_context = (persisted_state or {}).get("design_context", {})
+    orchestrator_context = dict((design_context or {}).get("orchestrator", {}))
+    normalized_effort_level = (effort_level or orchestrator_context.get("effort_level") or "").strip().lower()
+    if normalized_effort_level in EFFORT_LEVEL_TO_REACT_STEPS:
+        orchestrator_context["effort_level"] = normalized_effort_level
+        orchestrator_context["max_react_steps"] = EFFORT_LEVEL_TO_REACT_STEPS[normalized_effort_level]
+    if orchestrator_context:
+        design_context["orchestrator"] = orchestrator_context
+
     if model:
         design_context["model"] = model
         # Try to lookup specific config for this model ID in the project
@@ -1016,6 +1031,7 @@ async def run_orchestrator_task(
     feedback: str = "",
     persisted_state_override: dict | None = None,
     model: str | None = None,
+    effort_level: str | None = None,
 ):
     thread_id = _thread_id(project_id, version)
     print(f"\n[DEBUG] Starting/Resuming Job: {job_id} for Thread: {thread_id}")
@@ -1049,6 +1065,7 @@ async def run_orchestrator_task(
             resume_action=resume_action,
             feedback=feedback,
             model=model,
+            effort_level=effort_level,
         )
 
         config = _graph_config(project_id, version, job_id)
@@ -1426,7 +1443,13 @@ async def continue_workflow(project_id: str, version: str):
     return True
 
 
-def trigger_orchestrator(project_id: str, version: str, requirement_text: str, model: str | None = None) -> str:
+def trigger_orchestrator(
+    project_id: str,
+    version: str,
+    requirement_text: str,
+    model: str | None = None,
+    effort_level: str | None = None,
+) -> str:
     job_id = str(uuid.uuid4())
     _ensure_job(job_id)
     jobs[job_id]["status"] = RUN_STATUS_QUEUED
@@ -1440,7 +1463,14 @@ def trigger_orchestrator(project_id: str, version: str, requirement_text: str, m
     )
     _launch_runtime_task(
         _thread_id(project_id, version),
-        run_orchestrator_task(job_id, project_id, version, requirement_text, model=model),
+        run_orchestrator_task(
+            job_id,
+            project_id,
+            version,
+            requirement_text,
+            model=model,
+            effort_level=effort_level,
+        ),
     )
     return job_id
 

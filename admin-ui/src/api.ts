@@ -37,6 +37,8 @@ export interface DebugConfig {
   llm_full_payload_logging_enabled: boolean;
 }
 
+export type EffortLevel = 'low' | 'medium' | 'high' | 'ultra';
+
 export const api = {
   getProjects: () => apiClient.get('/projects').then(res => res.data),
   createProject: (name: string, description?: string) => 
@@ -45,8 +47,8 @@ export const api = {
     apiClient.get(`/projects/${projectId}/versions`, { params: { page, page_size: pageSize } }).then(res => res.data),
   deleteProjectVersion: (projectId: string, version: string) =>
     apiClient.delete(`/projects/${projectId}/versions/${version}`).then(res => res.data),
-  runOrchestrator: (projectId: string, version: string, requirementText: string, model?: string) =>
-   apiClient.post(`/projects/${projectId}/versions/${version}/run`, { requirement_text: requirementText, model }).then(res => res.data),
+  runOrchestrator: (projectId: string, version: string, requirementText: string, model?: string, effortLevel?: EffortLevel) =>
+   apiClient.post(`/projects/${projectId}/versions/${version}/run`, { requirement_text: requirementText, model, effort_level: effortLevel }).then(res => res.data),
 
   uploadBaselineFiles: (projectId: string, version: string, files: File[]) => {
     const formData = new FormData();

@@ -614,6 +614,15 @@ def default_build_evidence(
     }
 
 
+def _resolve_max_react_steps(state: Dict[str, Any], default_value: int) -> int:
+    orchestrator_config = ((state.get("design_context") or {}).get("orchestrator") or {})
+    raw_value = orchestrator_config.get("max_react_steps", default_value)
+    try:
+        return max(1, int(raw_value))
+    except (TypeError, ValueError):
+        return default_value
+
+
 async def run_dynamic_subagent(
     *,
     capability: str,
@@ -670,6 +679,8 @@ async def run_dynamic_subagent(
             # Registry not initialized, proceed without config
             pass
     
+    max_react_steps = _resolve_max_react_steps(state, max_react_steps)
+
     project_id = state["project_id"]
     version = state["version"]
     project_path = base_dir / "projects" / project_id / version
