@@ -251,16 +251,28 @@ def test_llm_connectivity(llm_settings: dict) -> dict:
             api_key = llm_settings.get("api_key")
             base_url = llm_settings.get("base_url", "https://api.openai.com/v1")
             model_name = llm_settings.get("model_name", "gpt-4o")
-            headers = llm_settings.get("headers")
+            headers = llm_settings.get("headers") or {}
             
-            # OpenAI SDK allows None for api_key if you are using a proxy that doesn't need it
-            # But we'll pass it explicitly to be sure.
-            client = OpenAI(api_key=api_key or "not-required", base_url=base_url, default_headers=headers or None)
+            # If user already provided Authorization in headers, we avoid providing a dummy key
+            # to let the custom header take precedence.
+            has_auth_header = any(k.lower() == "authorization" for k in headers.keys())
+            effective_api_key = api_key
+            if not effective_api_key and not has_auth_header:
+                effective_api_key = "not-required"
+            
+            client = OpenAI(api_key=effective_api_key or "", base_url=base_url, default_headers=headers or None)
             completion = client.chat.completions.create(
                 model=model_name,
                 messages=[{"role": "user", "content": "Ping"}],
                 max_tokens=5
             )
+            
+            if not hasattr(completion, "choices"):
+                return {
+                    "success": False, 
+                    "message": f"Invalid response format. Expected object with 'choices', but got: {type(completion).__name__}. Content: {str(completion)[:200]}"
+                }
+
             if completion.choices and completion.choices[0].message.content:
                 return {"success": True, "message": f"Connected successfully to {provider.upper()} compatible API."}
             return {"success": False, "message": "Received empty response from API."}
