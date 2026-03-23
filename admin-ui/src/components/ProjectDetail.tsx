@@ -196,6 +196,16 @@ type ExecutionLogEntry =
   | { kind: 'text'; id: string; text: string; tone: 'default' | 'error' }
   | { kind: 'tool'; id: string; event: ToolEvent };
 
+const NODE_STATUS_PRIORITY: Record<NodeStatus, number> = {
+  idle: 0,
+  todo: 1,
+  skipped: 2,
+  running: 3,
+  waiting_human: 4,
+  success: 5,
+  failed: 6,
+};
+
 export function ProjectDetail() {
   const { t, i18n } = useTranslation();
   const { id } = useParams<{ id: string }>();
@@ -613,7 +623,17 @@ export function ProjectDetail() {
           newStatuses[t.agent_type] = t.status;
         });
       }
-      setNodeStatuses(newStatuses);
+      setNodeStatuses((prev) => {
+        const merged = { ...newStatuses };
+        for (const [nodeType, status] of Object.entries(prev)) {
+          const liveStatus = status as NodeStatus;
+          const fetchedStatus = merged[nodeType];
+          if (!fetchedStatus || NODE_STATUS_PRIORITY[liveStatus] > NODE_STATUS_PRIORITY[fetchedStatus]) {
+            merged[nodeType] = liveStatus;
+          }
+        }
+        return merged;
+      });
       setStreamStatus(state.run_status === 'running' ? 'connected' : 'idle');
 
       if (state.run_status !== 'queued') {
@@ -1175,7 +1195,7 @@ export function ProjectDetail() {
         serverStatuses[nodeType] = status;
         continue;
       }
-      if (serverStatus === 'running' && (status === 'success' || status === 'failed' || status === 'waiting_human')) {
+      if (NODE_STATUS_PRIORITY[status] > NODE_STATUS_PRIORITY[serverStatus]) {
         serverStatuses[nodeType] = status;
       }
     }
