@@ -197,18 +197,62 @@ def generate_with_llm(
             
     raise Exception(f"LLM generation failed after {max_retries} retries. Last error: {last_error}")
 
+import re
+
 def _clean_json_response(text: str) -> str:
+    if not isinstance(text, str):
+        text = str(text)
     text = text.strip()
+    
+    # Handle SSE 'data:' prefix if the whole string is prefixed
+    if text.startswith("data:"):
+        text = text[5:].strip()
+
     # Remove potential ```json ... ``` wrapper
-    if text.startswith("```"):
-        first_newline = text.find('\n')
-        if first_newline != -1:
-            text = text[first_newline:]
-        else:
-            text = text[3:]
-    if text.endswith("```"):
-        text = text[:-3]
+    # We use regex to be more robust with multi-line content
+    json_block_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
+    if json_block_match:
+        text = json_block_match.group(1)
+        
     return text.strip()
+
+def _parse_llm_response_to_dict(completion) -> dict:
+    """
+    Robustly extracts the JSON dictionary from an LLM completion object or string.
+    Handles standard OpenAI objects, SSE-prefixed strings, and raw JSON strings.
+    """
+    import json
+    
+    # 1. Try standard access (OpenAI SDK Object)
+    if hasattr(completion, "choices") and completion.choices:
+        content = completion.choices[0].message.content
+        if content:
+            return json.loads(_clean_json_response(content))
+            
+    # 2. Handle string or dict-like responses
+    raw_text = str(completion).strip()
+    if raw_text.startswith("data:"):
+        raw_text = raw_text[5:].strip()
+        
+    # Try to parse the entire string as a JSON (it might be the full response object as a string)
+    try:
+        data = json.loads(raw_text)
+        if isinstance(data, dict):
+            # If it's the full response object, try to find the content in choices
+            if "choices" in data and data["choices"]:
+                choice = data["choices"][0]
+                if isinstance(choice, dict):
+                    msg = choice.get("message", {})
+                    content = msg.get("content", "") if isinstance(msg, dict) else ""
+                    if content:
+                        return json.loads(_clean_json_response(content))
+            # Maybe the whole thing is already the JSON we want (the model's direct output)
+            return data
+    except:
+        pass
+        
+    # 3. Last resort: treat the raw text as the JSON content directly
+    return json.loads(_clean_json_response(raw_text))
 
 def _call_gemini_raw(system_prompt: str, user_prompt: str, llm_settings: dict | None = None) -> dict:
     import google.generativeai as genai
@@ -224,8 +268,8 @@ def _call_gemini_raw(system_prompt: str, user_prompt: str, llm_settings: dict | 
         generation_config={"response_mime_type": "application/json"}
     )
     response = model.generate_content(user_prompt)
-    raw_text = _clean_json_response(response.text)
-    return json.loads(raw_text)
+    # Use robust parsing
+    return _parse_llm_response_to_dict(response.text)
 
 def test_llm_connectivity(llm_settings: dict) -> dict:
     """
@@ -267,15 +311,18 @@ def test_llm_connectivity(llm_settings: dict) -> dict:
                 max_tokens=5
             )
             
-            if not hasattr(completion, "choices"):
-                return {
-                    "success": False, 
-                    "message": f"Invalid response format. Expected object with 'choices', but got: {type(completion).__name__}. Content: {str(completion)[:200]}"
-                }
+            # Use robust parsing logic for connectivity test
+            try:
+                res_dict = _parse_llm_response_to_dict(completion)
+                if res_dict or completion:
+                    return {"success": True, "message": f"Connected successfully to {provider.upper()} compatible API (Robust parsing enabled)."}
+            except:
+                pass
 
-            if completion.choices and completion.choices[0].message.content:
-                return {"success": True, "message": f"Connected successfully to {provider.upper()} compatible API."}
-            return {"success": False, "message": "Received empty response from API."}
+            return {
+                "success": False, 
+                "message": f"Invalid response format. Content: {str(completion)[:200]}"
+            }
     except Exception as e:
         return {"success": False, "message": str(e)}
 
@@ -287,7 +334,13 @@ def _call_openai_raw(system_prompt: str, user_prompt: str, llm_settings: dict | 
     headers = _resolve_llm_dict_setting(llm_settings, "openai_headers")
     
     # Use placeholder if key is missing to support local/no-auth gateways
-    client = OpenAI(api_key=api_key or "not-required", base_url=base_url, default_headers=headers or None)
+    # Check if Auth header is already present
+    has_auth_header = any(k.lower() == "authorization" for k in (headers or {}).keys())
+    effective_api_key = api_key
+    if not effective_api_key and not has_auth_header:
+        effective_api_key = "not-required"
+
+    client = OpenAI(api_key=effective_api_key or "", base_url=base_url, default_headers=headers or None)
     completion = client.chat.completions.create(
         model=model_name,
         messages=[
@@ -296,5 +349,6 @@ def _call_openai_raw(system_prompt: str, user_prompt: str, llm_settings: dict | 
         ],
         response_format={"type": "json_object"}
     )
-    raw_text = _clean_json_response(completion.choices[0].message.content)
-    return json.loads(raw_text)
+    
+    # Use robust parsing for production design calls
+    return _parse_llm_response_to_dict(completion)
