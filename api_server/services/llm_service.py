@@ -42,7 +42,9 @@ def resolve_runtime_llm_settings(design_context: dict | None) -> dict | None:
     model_name = model_config.get("model_name")
     base_url = model_config.get("base_url")
 
-    if not provider or not api_key or not model_name:
+    # Keep runtime model selection active even when the chosen config relies on
+    # gateway headers or a local proxy instead of an explicit API key.
+    if not provider or not model_name:
         return None
 
     if provider == "gemini":
