@@ -253,7 +253,8 @@ def test_llm_connectivity(llm_settings: dict) -> dict:
             model_name = llm_settings.get("model_name", "gpt-4o")
             headers = llm_settings.get("headers")
             
-            # Allow empty API key for local/proxy gateways
+            # OpenAI SDK allows None for api_key if you are using a proxy that doesn't need it
+            # But we'll pass it explicitly to be sure.
             client = OpenAI(api_key=api_key or "not-required", base_url=base_url, default_headers=headers or None)
             completion = client.chat.completions.create(
                 model=model_name,

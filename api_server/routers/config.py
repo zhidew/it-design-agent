@@ -153,14 +153,15 @@ async def delete_project_model_config(project_id: str, model_id: str):
 @router.post("/llm/test")
 async def test_llm_config(project_id: str, req: ModelConfig):
     _require_project(project_id)
-    # If API key is empty but we have an existing one in DB, fetch it
+    # If API key is None but we have an existing one in DB, fetch it. 
+    # If it is empty string "", it means the user explicitly wants to test with no key.
     payload = req.model_dump() if hasattr(req, "model_dump") else req.dict()
-    if (not payload.get("api_key") or not payload.get("headers")) and payload.get("id"):
+    if (payload.get("api_key") is None or payload.get("headers") is None) and payload.get("id"):
         existing = metadata_db.get_project_model(project_id, payload["id"], include_secrets=True)
         if existing:
-            if not payload.get("api_key"):
+            if payload.get("api_key") is None:
                 payload["api_key"] = existing.get("api_key")
-            if not payload.get("headers"):
+            if payload.get("headers") is None:
                 payload["headers"] = existing.get("headers")
     
     return test_llm_connectivity(payload)

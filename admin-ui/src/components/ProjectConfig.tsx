@@ -398,14 +398,17 @@ export function ProjectConfig() {
       });
       setSaving(false);
       setIsSaved(true);
+      
+      // Refresh the list to get updated metadata (has_api_key etc.)
       await loadAll();
       
-      // Close modal after showing success state for a while
+      // Keep modal open but clear the temporary API key so it shows the "configured" placeholder
+      setEditingModel(prev => prev ? { ...prev, api_key: '', has_api_key: true } : null);
+      
+      // Clear success state after 3 seconds but keep modal open
       setTimeout(() => {
-        setIsModelModalOpen(false);
-        setEditingModel(null);
         setIsSaved(false);
-      }, 1500);
+      }, 3000);
     } catch (error: any) {
       setSaving(false);
       setIsSaved(false);
