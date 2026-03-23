@@ -1206,10 +1206,7 @@ export function ProjectDetail() {
       workflowState.current_node !== 'bootstrap' &&
       workflowState.current_node !== 'supervisor'
     ) {
-      const currentStatus = serverStatuses[workflowState.current_node];
-      if (!currentStatus || NODE_STATUS_PRIORITY.running > NODE_STATUS_PRIORITY[currentStatus]) {
-        serverStatuses[workflowState.current_node] = 'running';
-      }
+      serverStatuses[workflowState.current_node] = 'running';
     }
 
     return serverStatuses;
@@ -1353,6 +1350,15 @@ export function ProjectDetail() {
     setRetryingNode(selectedNode);
     try {
       setStreamStatus('connecting');
+      setNodeStatuses((prev) => ({ ...prev, [selectedNode]: 'running' }));
+      setWorkflowState((prev) => prev ? {
+        ...prev,
+        run_status: 'running',
+        current_node: selectedNode,
+        task_queue: (prev.task_queue || []).map((task) => (
+          task.agent_type === selectedNode ? { ...task, status: 'running' } : task
+        )),
+      } : prev);
       await api.retryWorkflowNode(id, selectedVersion, selectedNode);
       void fetchState();
     } catch (err: any) {
