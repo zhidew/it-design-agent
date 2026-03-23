@@ -1696,7 +1696,7 @@ export function ProjectDetail() {
                     Continue Workflow
                   </button>
                 )}
-                {selectedTask?.status === 'failed' && (
+                {selectedTask?.status === 'failed' && workflowState?.run_status === 'failed' && retryingNode === null && (
                   <button
                     onClick={handleRetryNode}
                     disabled={retryingNode !== null || continuingWorkflow}
@@ -1750,7 +1750,7 @@ export function ProjectDetail() {
               </div>
 
               <div className="flex flex-col sm:flex-row gap-3">
-                {selectedTask?.status === 'failed' && (
+                {selectedTask?.status === 'failed' && workflowState?.run_status === 'failed' && retryingNode === null && (
                   <button
                     onClick={handleRetryNode}
                     disabled={retryingNode !== null || continuingWorkflow}
