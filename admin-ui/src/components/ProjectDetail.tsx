@@ -1200,8 +1200,20 @@ export function ProjectDetail() {
       }
     }
 
+    if (
+      workflowState?.run_status === 'running' &&
+      workflowState.current_node &&
+      workflowState.current_node !== 'bootstrap' &&
+      workflowState.current_node !== 'supervisor'
+    ) {
+      const currentStatus = serverStatuses[workflowState.current_node];
+      if (!currentStatus || NODE_STATUS_PRIORITY.running > NODE_STATUS_PRIORITY[currentStatus]) {
+        serverStatuses[workflowState.current_node] = 'running';
+      }
+    }
+
     return serverStatuses;
-  }, [workflowState?.task_queue, nodeStatuses]);
+  }, [workflowState?.task_queue, workflowState?.run_status, workflowState?.current_node, nodeStatuses]);
 
   const selectedTask = useMemo(
     () => workflowState?.task_queue?.find((task) => task.agent_type === selectedNode) ?? null,
