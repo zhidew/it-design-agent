@@ -16,7 +16,6 @@ openai==1.63.0
 google-generativeai==0.8.4
 
 # Database
-sqlite3-worker==0.0.12
 psycopg2-binary==2.9.10
 
 # Security & Crypto

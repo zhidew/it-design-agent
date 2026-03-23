@@ -46,3 +46,10 @@ class ResumeRequest(BaseModel):
 
 class NodeRetryRequest(BaseModel):
     node_type: str
+    model: Optional[str] = None
+    effort_level: Optional[str] = None
+
+
+class ContinueRequest(BaseModel):
+    model: Optional[str] = None
+    effort_level: Optional[str] = None

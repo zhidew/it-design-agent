@@ -1310,7 +1310,13 @@ async def resume_workflow(project_id: str, version: str, human_input: dict):
     return True
 
 
-async def retry_workflow_node(project_id: str, version: str, node_type: str):
+async def retry_workflow_node(
+    project_id: str,
+    version: str,
+    node_type: str,
+    model: str | None = None,
+    effort_level: str | None = None,
+):
     current_state = get_workflow_state(project_id, version)
     if not current_state:
         return False
@@ -1371,12 +1377,19 @@ async def retry_workflow_node(project_id: str, version: str, node_type: str):
             resume_action="approve",
             feedback="",
             persisted_state_override=retry_state,
+            model=model,
+            effort_level=effort_level,
         )
     )
     return True
 
 
-async def continue_workflow(project_id: str, version: str):
+async def continue_workflow(
+    project_id: str,
+    version: str,
+    model: str | None = None,
+    effort_level: str | None = None,
+):
     current_state = get_workflow_state(project_id, version)
     if not current_state:
         print(f"[DEBUG] continue_workflow: No state found for {project_id}/{version}")
@@ -1438,6 +1451,8 @@ async def continue_workflow(project_id: str, version: str):
             resume_action="approve",
             feedback="",
             persisted_state_override=continue_state,
+            model=model,
+            effort_level=effort_level,
         )
     )
     return True
@@ -2066,6 +2081,93 @@ def list_system_tools() -> list:
     except Exception as e:
         print(f"Error loading tools: {e}")
         return []
+
+
+def get_project_assets_summary(project_id: str) -> dict:
+    """Get a high-level summary of assets for a project before deletion."""
+    project_dir = PROJECTS_DIR / project_id
+    versions_summary = []
+    total_files = 0
+    total_size = 0
+
+    if project_dir.exists():
+        for v_dir in project_dir.iterdir():
+            if v_dir.is_dir() and not v_dir.name.startswith("."):
+                v_files = 0
+                v_size = 0
+                for p in v_dir.rglob("*"):
+                    if p.is_file():
+                        v_files += 1
+                        v_size += p.stat().st_size
+                
+                versions_summary.append({
+                    "version": v_dir.name,
+                    "file_count": v_files,
+                    "size_mb": round(v_size / (1024 * 1024), 2),
+                    "has_baseline": (v_dir / "baseline").exists(),
+                    "has_artifacts": (v_dir / "artifacts").exists(),
+                    "has_logs": (v_dir / "logs").exists(),
+                })
+                total_files += v_files
+                total_size += v_size
+
+    # Also check DB configs
+    configs = {
+        "repositories": metadata_db.list_repositories(project_id),
+        "databases": metadata_db.list_databases(project_id),
+        "knowledge_bases": metadata_db.list_knowledge_bases(project_id),
+        "models": metadata_db.list_project_models(project_id),
+    }
+
+    return {
+        "exists": project_dir.exists(),
+        "project_id": project_id,
+        "versions": versions_summary,
+        "total_versions": len(versions_summary),
+        "total_files": total_files,
+        "total_size_mb": round(total_size / (1024 * 1024), 2),
+        "configs": {
+            "repositories_count": len(configs["repositories"]),
+            "databases_count": len(configs["databases"]),
+            "knowledge_bases_count": len(configs["knowledge_bases"]),
+            "models_count": len(configs["models"]),
+        }
+    }
+
+
+def delete_project(project_id: str) -> bool:
+    """Delete an entire project and all its assets."""
+    # 1. Check if any version is running
+    versions_data = list_versions(project_id)
+    versions = versions_data.get("versions", [])
+    
+    for v in versions:
+        version_id = v["version_id"]
+        state = get_workflow_state(project_id, version_id)
+        if state and state.get("run_status") in {RUN_STATUS_QUEUED, RUN_STATUS_RUNNING}:
+            # Cannot delete project if any version is active
+            return False
+            
+    # 2. Clean up runtime state for all versions
+    for v in versions:
+        version_id = v["version_id"]
+        thread_id = _thread_id(project_id, version_id)
+        state = get_workflow_state(project_id, version_id)
+        if state and state.get("run_id"):
+            jobs.pop(state["run_id"], None)
+        runtime_registry.pop(thread_id, None)
+        runtime_tasks.pop(thread_id, None)
+        _delete_checkpoint_state(project_id, version_id)
+
+    # 3. Delete from database
+    metadata_db.delete_project(project_id)
+    
+    # 4. Delete project directory
+    project_dir = PROJECTS_DIR / project_id
+    if project_dir.exists():
+        shutil.rmtree(project_dir, ignore_errors=True)
+        
+    return True
 
 
 def get_tool_code(tool_name: str) -> str | None:

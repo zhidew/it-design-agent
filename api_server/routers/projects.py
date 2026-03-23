@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File
 import shutil
 from typing import List
-from models.project import ProjectCreateRequest, ProjectResponse, VersionRunRequest, JobResponse, ResumeRequest, NodeRetryRequest
+from models.project import ProjectCreateRequest, ProjectResponse, VersionRunRequest, JobResponse, ResumeRequest, NodeRetryRequest, ContinueRequest
 from models.management import VersionListResponse
 import services.orchestrator_service as orch
 
@@ -40,6 +40,18 @@ async def create_project(req: ProjectCreateRequest):
     project_id = req.name.strip().replace(" ", "-").lower()
     orch.create_project(project_id)
     return {"id": project_id, "name": req.name, "description": req.description}
+
+@router.get("/{project_id}/assets-summary")
+async def get_project_assets_summary(project_id: str):
+    summary = orch.get_project_assets_summary(project_id)
+    return summary
+
+@router.delete("/{project_id}")
+async def delete_project(project_id: str):
+    success = orch.delete_project(project_id)
+    if not success:
+        raise HTTPException(status_code=409, detail="Project cannot be deleted while it has running versions.")
+    return {"success": True, "project_id": project_id}
 
 @router.get("/{project_id}/versions", response_model=VersionListResponse)
 async def get_project_versions(project_id: str, page: int = 1, page_size: int = 10):
@@ -95,14 +107,26 @@ async def resume_workflow(project_id: str, version: str, req: ResumeRequest):
 @router.post("/{project_id}/versions/{version}/retry-node")
 async def retry_workflow_node(project_id: str, version: str, req: NodeRetryRequest):
     payload = req.model_dump() if hasattr(req, "model_dump") else req.dict()
-    success = await orch.retry_workflow_node(project_id, version, payload["node_type"])
+    success = await orch.retry_workflow_node(
+        project_id,
+        version,
+        payload["node_type"],
+        payload.get("model"),
+        payload.get("effort_level"),
+    )
     if not success:
         raise HTTPException(status_code=409, detail="Node cannot be retried in the current workflow state.")
     return {"success": True, "status": "queued", "node_type": payload["node_type"]}
 
 @router.post("/{project_id}/versions/{version}/continue")
-async def continue_workflow(project_id: str, version: str):
-    success = await orch.continue_workflow(project_id, version)
+async def continue_workflow(project_id: str, version: str, req: ContinueRequest):
+    payload = req.model_dump() if hasattr(req, "model_dump") else req.dict()
+    success = await orch.continue_workflow(
+        project_id,
+        version,
+        payload.get("model"),
+        payload.get("effort_level"),
+    )
     if not success:
         raise HTTPException(status_code=409, detail="Workflow cannot be continued in the current state.")
     return {"success": True, "status": "queued"}

@@ -1,11 +1,33 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useLocation, useParams } from 'react-router-dom';
-import { ArrowLeft, BookOpen, Bot, Cpu, Database, FolderGit2, Plus, RefreshCw, Save, Settings2, Trash2, Activity, CheckCircle, XCircle } from 'lucide-react';
+import { useNavigate, Link, useLocation, useParams } from 'react-router-dom';
+import { ArrowLeft, BookOpen, Bot, Cpu, Database, FolderGit2, Plus, RefreshCw, Save, Settings2, Trash2, Activity, CheckCircle, XCircle, AlertTriangle, FileText, HardDrive } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { api, type DebugConfig } from '../api';
 import { LanguageSwitcher } from './LanguageSwitcher';
 
-type TabKey = 'repositories' | 'databases' | 'knowledge' | 'experts' | 'llm';
+type TabKey = 'repositories' | 'databases' | 'knowledge' | 'experts' | 'llm' | 'danger';
+
+interface AssetsSummary {
+  exists: boolean;
+  project_id: string;
+  versions: {
+    version: string;
+    file_count: number;
+    size_mb: number;
+    has_baseline: boolean;
+    has_artifacts: boolean;
+    has_logs: boolean;
+  }[];
+  total_versions: number;
+  total_files: number;
+  total_size_mb: number;
+  configs: {
+    repositories_count: number;
+    databases_count: number;
+    knowledge_bases_count: number;
+    models_count: number;
+  };
+}
 
 interface RepositoryConfig {
   id: string;
@@ -137,6 +159,7 @@ function parseHeadersJson(value?: string): Record<string, string> | undefined {
 export function ProjectConfig() {
   const { t, i18n } = useTranslation();
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const location = useLocation();
   const projectId = id || '';
   const backTo = (location.state as { from?: string } | null)?.from || '/';
@@ -157,6 +180,13 @@ export function ProjectConfig() {
   const [editingModel, setEditingModel] = useState<ModelConfig | null>(null);
   const [testingModel, setTestingModel] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  // Project Deletion states
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [assetsSummary, setAssetsSummary] = useState<AssetsSummary | null>(null);
+  const [loadingSummary, setLoadingSummary] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const testModelConfig = async () => {
     if (!projectId || !editingModel) return;
@@ -253,6 +283,29 @@ export function ProjectConfig() {
     };
   }, [i18n.language]);
 
+  const dangerCopy = useMemo(() => {
+    const isZh = i18n.language.toLowerCase().startsWith('zh');
+    return {
+      tab: isZh ? '危险区域' : 'DANGER ZONE',
+      title: isZh ? '删除项目' : 'Delete Project',
+      description: isZh 
+        ? '永久删除此项目及其所有关联资产（版本、产出物、配置等）。此操作无法撤销。' 
+        : 'Permanently delete this project and all its associated assets (versions, artifacts, configs, etc.). This action cannot be undone.',
+      button: isZh ? '删除项目' : 'Delete Project',
+      confirmTitle: isZh ? '确认删除项目？' : 'Confirm Delete Project?',
+      confirmDescription: isZh 
+        ? '在确认删除之前，请查看以下将要被清理的资产清单：' 
+        : 'Before confirming deletion, please review the following list of assets that will be cleared:',
+      assetsVersions: isZh ? '个版本' : ' versions',
+      assetsFiles: isZh ? '个文件' : ' files',
+      assetsSize: isZh ? '总计大小' : 'Total size',
+      assetsConfigs: isZh ? '项配置 (仓库/数据库/模型等)' : ' configs (repos/dbs/models etc.)',
+      deleteSuccess: isZh ? '项目已成功删除。' : 'Project deleted successfully.',
+      deleteError: isZh ? '无法删除项目。请确保没有正在运行的版本。' : 'Cannot delete project. Make sure no versions are running.',
+      finalConfirm: isZh ? '我确定要删除此项目' : 'I am sure I want to delete this project',
+    };
+  }, [i18n.language]);
+
   const loadAll = async () => {
     if (!projectId) return;
     setLoading(true);
@@ -285,6 +338,35 @@ export function ProjectConfig() {
   useEffect(() => {
     void loadAll();
   }, [projectId]);
+
+  const loadAssetsSummary = async () => {
+    if (!projectId) return;
+    setLoadingSummary(true);
+    setDeleteError(null);
+    try {
+      const summary = await api.getProjectAssetsSummary(projectId);
+      setAssetsSummary(summary);
+    } catch (err: any) {
+      console.error('Failed to load assets summary:', err);
+    } finally {
+      setLoadingSummary(false);
+    }
+  };
+
+  const handleDeleteProject = async () => {
+    if (!projectId) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await api.deleteProject(projectId);
+      setIsDeleteModalOpen(false);
+      navigate('/');
+    } catch (err: any) {
+      setDeleteError(err.response?.data?.detail || dangerCopy.deleteError);
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const saveRepositories = async () => {
     if (!projectId) return;
@@ -541,6 +623,16 @@ export function ProjectConfig() {
               >
                 <Cpu size={16} />
                 {llmCopy.tab}
+              </button>
+              <button
+                onClick={() => {
+                  setActiveTab('danger');
+                  void loadAssetsSummary();
+                }}
+                className={`w-full flex items-center gap-3 p-3 rounded-xl transition-all text-xs font-bold uppercase tracking-wider mt-1 ${activeTab === 'danger' ? 'bg-rose-600 text-white shadow-lg shadow-rose-100' : 'text-rose-500 hover:bg-rose-50'}`}
+              >
+                <AlertTriangle size={16} />
+                {dangerCopy.tab}
               </button>
             </div>
           </div>
@@ -1042,6 +1134,129 @@ export function ProjectConfig() {
                       >
                         {t('common.cancel')}
                       </button>
+                    </div>
+                  </div>
+                )}
+              </section>
+            )}
+
+            {activeTab === 'danger' && (
+              <section className="bg-white rounded-3xl border border-gray-100 shadow-sm p-8 space-y-6">
+                <div>
+                  <div className="text-[10px] font-black text-rose-500 uppercase tracking-widest mb-2">{dangerCopy.tab}</div>
+                  <h2 className="text-xl font-black text-gray-900">{dangerCopy.title}</h2>
+                  <p className="text-sm text-gray-500 mt-2">{dangerCopy.description}</p>
+                </div>
+
+                <div className="rounded-2xl border border-rose-100 bg-rose-50/50 p-6 flex items-center justify-between gap-4">
+                  <div className="flex items-start gap-4">
+                    <div className="p-3 bg-rose-100 rounded-xl text-rose-600">
+                      <AlertTriangle size={24} />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-black text-gray-900 uppercase tracking-tight">{dangerCopy.title}</h3>
+                      <p className="text-xs text-gray-500 mt-1 max-w-md">{dangerCopy.description}</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setIsDeleteModalOpen(true);
+                      void loadAssetsSummary();
+                    }}
+                    className="px-6 py-3 bg-rose-600 text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-rose-700 transition-all shadow-lg shadow-rose-100"
+                  >
+                    {dangerCopy.button}
+                  </button>
+                </div>
+
+                {/* Deletion Confirmation Modal */}
+                {isDeleteModalOpen && (
+                  <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6">
+                    <div className="absolute inset-0 bg-gray-900/60 backdrop-blur-sm" onClick={() => !deleting && setIsDeleteModalOpen(false)} />
+                    <div className="relative w-full max-w-2xl bg-white rounded-3xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+                      <div className="p-8 space-y-6">
+                        <div className="flex items-center gap-4 text-rose-600">
+                          <div className="p-3 bg-rose-50 rounded-2xl">
+                            <AlertTriangle size={32} />
+                          </div>
+                          <div>
+                            <h3 className="text-2xl font-black uppercase tracking-tight">{dangerCopy.confirmTitle}</h3>
+                            <p className="text-sm font-medium text-gray-500">{dangerCopy.confirmDescription}</p>
+                          </div>
+                        </div>
+
+                        {loadingSummary ? (
+                          <div className="py-12 flex flex-col items-center justify-center gap-4">
+                            <RefreshCw size={32} className="text-indigo-600 animate-spin" />
+                            <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">{t('common.loading')}</p>
+                          </div>
+                        ) : assetsSummary ? (
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="rounded-2xl bg-gray-50 p-5 flex items-center gap-4 border border-gray-100">
+                              <div className="p-3 bg-white rounded-xl text-indigo-600 shadow-sm">
+                                <Settings2 size={20} />
+                              </div>
+                              <div>
+                                <div className="text-lg font-black text-gray-900">{assetsSummary.total_versions}</div>
+                                <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{dangerCopy.assetsVersions}</div>
+                              </div>
+                            </div>
+                            <div className="rounded-2xl bg-gray-50 p-5 flex items-center gap-4 border border-gray-100">
+                              <div className="p-3 bg-white rounded-xl text-indigo-600 shadow-sm">
+                                <FileText size={20} />
+                              </div>
+                              <div>
+                                <div className="text-lg font-black text-gray-900">{assetsSummary.total_files}</div>
+                                <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{dangerCopy.assetsFiles}</div>
+                              </div>
+                            </div>
+                            <div className="rounded-2xl bg-gray-50 p-5 flex items-center gap-4 border border-gray-100">
+                              <div className="p-3 bg-white rounded-xl text-indigo-600 shadow-sm">
+                                <HardDrive size={20} />
+                              </div>
+                              <div>
+                                <div className="text-lg font-black text-gray-900">{assetsSummary.total_size_mb} MB</div>
+                                <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{dangerCopy.assetsSize}</div>
+                              </div>
+                            </div>
+                            <div className="rounded-2xl bg-gray-50 p-5 flex items-center gap-4 border border-gray-100">
+                              <div className="p-3 bg-white rounded-xl text-indigo-600 shadow-sm">
+                                <Cpu size={20} />
+                              </div>
+                              <div>
+                                <div className="text-lg font-black text-gray-900">
+                                  {Object.values(assetsSummary.configs).reduce((a, b) => a + b, 0)}
+                                </div>
+                                <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{dangerCopy.assetsConfigs}</div>
+                              </div>
+                            </div>
+                          </div>
+                        ) : null}
+
+                        {deleteError && (
+                          <div className="p-4 bg-rose-50 border border-rose-100 rounded-2xl flex items-center gap-3 text-rose-800 text-sm font-medium">
+                            <XCircle size={18} className="text-rose-500 shrink-0" />
+                            {deleteError}
+                          </div>
+                        ) }
+
+                        <div className="flex flex-col gap-3 pt-4 border-t border-gray-50">
+                          <button
+                            onClick={() => void handleDeleteProject()}
+                            disabled={deleting}
+                            className="w-full py-4 bg-rose-600 text-white rounded-2xl font-black text-sm uppercase tracking-widest hover:bg-rose-700 transition-all shadow-xl shadow-rose-100 disabled:opacity-50"
+                          >
+                            {deleting ? <RefreshCw size={20} className="animate-spin mx-auto" /> : dangerCopy.finalConfirm}
+                          </button>
+                          <button
+                            onClick={() => setIsDeleteModalOpen(false)}
+                            disabled={deleting}
+                            className="w-full py-3 text-gray-400 font-bold text-[11px] uppercase tracking-widest hover:text-gray-600 transition-all"
+                          >
+                            {t('common.cancel')}
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 )}

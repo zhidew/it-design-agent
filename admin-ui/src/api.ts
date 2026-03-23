@@ -43,6 +43,10 @@ export const api = {
   getProjects: () => apiClient.get('/projects').then(res => res.data),
   createProject: (name: string, description?: string) => 
     apiClient.post('/projects', { name, description }).then(res => res.data),
+  deleteProject: (projectId: string) =>
+    apiClient.delete(`/projects/${projectId}`).then(res => res.data),
+  getProjectAssetsSummary: (projectId: string) =>
+    apiClient.get(`/projects/${projectId}/assets-summary`).then(res => res.data),
   getProjectVersions: (projectId: string, page: number = 1, pageSize: number = 10) => 
     apiClient.get(`/projects/${projectId}/versions`, { params: { page, page_size: pageSize } }).then(res => res.data),
   deleteProjectVersion: (projectId: string, version: string) =>
@@ -74,10 +78,10 @@ export const api = {
     },
   ) => 
     apiClient.post(`/projects/${projectId}/versions/${version}/resume`, humanInput).then(res => res.data),
-  retryWorkflowNode: (projectId: string, version: string, nodeType: string) =>
-    apiClient.post(`/projects/${projectId}/versions/${version}/retry-node`, { node_type: nodeType }).then(res => res.data),
-  continueWorkflow: (projectId: string, version: string) =>
-    apiClient.post(`/projects/${projectId}/versions/${version}/continue`).then(res => res.data),
+  retryWorkflowNode: (projectId: string, version: string, nodeType: string, model?: string, effortLevel?: EffortLevel) =>
+    apiClient.post(`/projects/${projectId}/versions/${version}/retry-node`, { node_type: nodeType, model, effort_level: effortLevel }).then(res => res.data),
+  continueWorkflow: (projectId: string, version: string, model?: string, effortLevel?: EffortLevel) =>
+    apiClient.post(`/projects/${projectId}/versions/${version}/continue`, { model, effort_level: effortLevel }).then(res => res.data),
   getVersionLogs: (projectId: string, version: string) => 
     apiClient.get(`/projects/${projectId}/versions/${version}/logs`).then(res => res.data),
   getJobStatusSseUrl: (jobId: string) => `${API_BASE_URL}/jobs/${jobId}/status`,

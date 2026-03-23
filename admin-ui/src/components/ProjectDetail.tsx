@@ -1402,7 +1402,7 @@ export function ProjectDetail() {
           task.agent_type === selectedNode ? { ...task, status: 'running' } : task
         )),
       } : prev);
-      await api.retryWorkflowNode(id, selectedVersion, selectedNode);
+      await api.retryWorkflowNode(id, selectedVersion, selectedNode, selectedModel, selectedEffortLevel);
       void fetchState();
     } catch (err: any) {
       setUiError(err?.response?.data?.detail || 'Failed to retry selected node');
@@ -1421,7 +1421,7 @@ export function ProjectDetail() {
     setContinuingWorkflow(true);
     try {
       setStreamStatus('connecting');
-      await api.continueWorkflow(id, selectedVersion);
+      await api.continueWorkflow(id, selectedVersion, selectedModel, selectedEffortLevel);
       void fetchState();
     } catch (err: any) {
       setUiError(err?.response?.data?.detail || 'Failed to continue workflow');
