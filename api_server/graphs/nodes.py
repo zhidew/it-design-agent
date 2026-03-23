@@ -27,6 +27,66 @@ AGENT_ALIASES = {
 }
 
 
+def _build_project_asset_context(project_id: str) -> Dict[str, Any]:
+    asset_context: Dict[str, Any] = {}
+
+    repositories = metadata_db.list_repositories(project_id)
+    if repositories:
+        repo_items = [
+            {
+                "id": repo["id"],
+                "name": repo["name"],
+                "branch": repo.get("branch"),
+                "description": repo.get("description"),
+            }
+            for repo in repositories[:5]
+        ]
+        asset_context["repositories"] = {
+            "count": len(repositories),
+            "items": repo_items,
+            "omitted_count": max(len(repositories) - len(repo_items), 0),
+        }
+
+    databases = metadata_db.list_databases(project_id)
+    if databases:
+        db_items = [
+            {
+                "id": db["id"],
+                "name": db["name"],
+                "type": db["type"],
+                "database": db["database"],
+                "schema_filter": db.get("schema_filter") or [],
+                "description": db.get("description"),
+            }
+            for db in databases[:5]
+        ]
+        asset_context["databases"] = {
+            "count": len(databases),
+            "items": db_items,
+            "omitted_count": max(len(databases) - len(db_items), 0),
+        }
+
+    knowledge_bases = metadata_db.list_knowledge_bases(project_id)
+    if knowledge_bases:
+        kb_items = [
+            {
+                "id": kb["id"],
+                "name": kb["name"],
+                "type": kb["type"],
+                "includes": kb.get("includes") or [],
+                "description": kb.get("description"),
+            }
+            for kb in knowledge_bases[:5]
+        ]
+        asset_context["knowledge_bases"] = {
+            "count": len(knowledge_bases),
+            "items": kb_items,
+            "omitted_count": max(len(knowledge_bases) - len(kb_items), 0),
+        }
+
+    return asset_context
+
+
 def _get_supported_agent_ids() -> set:
     """Get supported agent IDs from AgentRegistry (dynamic).
     
@@ -707,6 +767,7 @@ async def planner_node(state: DesignState) -> Dict[str, Any]:
     planner_answers = ((state.get("human_answers") or {}).get("planner") or [])
     human_feedback = state.get("human_feedback", "")
     human_inputs = _summarize_human_inputs(planner_answers, human_feedback)
+    asset_context = _build_project_asset_context(project_id)
 
     # Get dynamic agent descriptions from AgentRegistry, filtered by project configuration
     from registry.agent_registry import AgentRegistry
@@ -764,6 +825,8 @@ Output JSON format:
         f"Uploaded File Structures: {json.dumps(structure_summary, ensure_ascii=False)}\n"
         "Evaluate whether the existing materials already provide enough information to select the design experts."
     )
+    if asset_context:
+        user_prompt += f"\nConfigured Assets: {json.dumps(asset_context, ensure_ascii=False)}"
     if human_feedback:
         user_prompt += f"\nHuman Revision Feedback: {human_feedback}"
     if human_inputs:
@@ -857,6 +920,8 @@ Output JSON format:
             "provider": "ExternalSystem",
             "consumer": "ConsumerSystem",
         }
+        if asset_context:
+            baseline_payload["configured_assets"] = asset_context
         if human_inputs:
             baseline_payload["human_inputs"] = human_inputs
         (baseline_dir / "requirements.json").write_text(
@@ -938,6 +1003,8 @@ Output JSON format:
         "provider": "ExternalSystem",
         "consumer": "ConsumerSystem",
     }
+    if asset_context:
+        baseline_payload["configured_assets"] = asset_context
     if human_inputs:
         baseline_payload["human_inputs"] = human_inputs
     (baseline_dir / "requirements.json").write_text(

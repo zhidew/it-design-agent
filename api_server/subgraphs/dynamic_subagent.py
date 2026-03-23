@@ -35,6 +35,213 @@ DEFAULT_READ_TOOLS = {"list_files", "extract_structure", "grep_search", "read_fi
 DEFAULT_WRITE_TOOLS = {"write_file", "patch_file", "run_command"}
 
 
+def _tool_is_available(tool_name: str, tools_allowed: List[str]) -> bool:
+    return tool_name in tools_allowed or "*" in tools_allowed
+
+
+def _build_asset_tool_section(tools_allowed: List[str], configured_assets: Dict[str, Any] | None) -> str:
+    configured_assets = configured_assets or {}
+    asset_lines: List[str] = []
+
+    if configured_assets.get("repositories") and _tool_is_available("clone_repository", tools_allowed):
+        asset_lines.append("- clone_repository (Clone or update a configured repository for grounded code inspection)")
+    if configured_assets.get("databases") and _tool_is_available("query_database", tools_allowed):
+        asset_lines.append("- query_database (Inspect configured database schemas or run read-only SQL)")
+    if configured_assets.get("knowledge_bases") and _tool_is_available("query_knowledge_base", tools_allowed):
+        asset_lines.append("- query_knowledge_base (Search configured knowledge bases for terms, feature trees, and design docs)")
+
+    if not asset_lines:
+        return ""
+
+    return f"""
+Asset-aware tools:
+{chr(10).join(asset_lines)}
+"""
+
+
+def _build_tool_name_options(tools_allowed: List[str], configured_assets: Dict[str, Any] | None) -> str:
+    tool_names = ["grep_search", "read_file_chunk", "write_file", "patch_file"]
+    configured_assets = configured_assets or {}
+
+    if configured_assets.get("repositories") and _tool_is_available("clone_repository", tools_allowed):
+        tool_names.append("clone_repository")
+    if configured_assets.get("databases") and _tool_is_available("query_database", tools_allowed):
+        tool_names.append("query_database")
+    if configured_assets.get("knowledge_bases") and _tool_is_available("query_knowledge_base", tools_allowed):
+        tool_names.append("query_knowledge_base")
+
+    tool_names.append("none")
+    return " | ".join(f'"{name}"' for name in tool_names)
+
+
+def _get_prompt_budget_profile(capability: str, stage: str) -> Dict[str, int]:
+    profile = {
+        "max_depth": 3,
+        "max_string": 500,
+        "max_list_items": 6,
+        "max_dict_items": 12,
+        "max_observations": 6,
+    }
+
+    if stage == "react":
+        profile.update(
+            {
+                "max_string": 300,
+                "max_list_items": 5,
+                "max_dict_items": 10,
+                "max_observations": 5,
+            }
+        )
+
+    if capability in {"design-assembler", "validator"} and stage == "final":
+        profile.update(
+            {
+                "max_depth": 2,
+                "max_string": 180,
+                "max_list_items": 3,
+                "max_dict_items": 8,
+                "max_observations": 4,
+            }
+        )
+
+    return profile
+
+
+def _summarize_value_for_prompt(
+    value: Any,
+    *,
+    max_depth: int = 3,
+    max_string: int = 500,
+    max_list_items: int = 6,
+    max_dict_items: int = 12,
+) -> Any:
+    if max_depth < 0:
+        return "[Truncated]"
+
+    if isinstance(value, str):
+        if len(value) <= max_string:
+            return value
+        return f"{value[:max_string]}...[truncated {len(value) - max_string} chars]"
+
+    if isinstance(value, list):
+        items = [
+            _summarize_value_for_prompt(
+                item,
+                max_depth=max_depth - 1,
+                max_string=max_string,
+                max_list_items=max_list_items,
+                max_dict_items=max_dict_items,
+            )
+            for item in value[:max_list_items]
+        ]
+        if len(value) > max_list_items:
+            items.append(f"[{len(value) - max_list_items} more items omitted]")
+        return items
+
+    if isinstance(value, dict):
+        summary: Dict[str, Any] = {}
+        keys = list(value.keys())[:max_dict_items]
+        for key in keys:
+            summary[str(key)] = _summarize_value_for_prompt(
+                value[key],
+                max_depth=max_depth - 1,
+                max_string=max_string,
+                max_list_items=max_list_items,
+                max_dict_items=max_dict_items,
+            )
+        if len(value) > max_dict_items:
+            summary["_omitted_keys"] = len(value) - max_dict_items
+        return summary
+
+    return value
+
+
+def _compact_payload_for_prompt(payload: Dict[str, Any], capability: str, stage: str) -> Dict[str, Any]:
+    profile = _get_prompt_budget_profile(capability, stage)
+    compact: Dict[str, Any] = {}
+
+    for key in ("project_name", "project_id", "version", "requirement", "active_agents"):
+        if key in payload:
+            compact[key] = payload[key]
+
+    uploaded_files = payload.get("uploaded_files") or []
+    if uploaded_files:
+        compact["uploaded_files"] = uploaded_files[:10]
+        if len(uploaded_files) > 10:
+            compact["uploaded_files_omitted"] = len(uploaded_files) - 10
+
+    if "configured_assets" in payload:
+        compact["configured_assets"] = _summarize_value_for_prompt(
+            payload["configured_assets"],
+            max_depth=min(profile["max_depth"], 3),
+            max_string=min(profile["max_string"], 200),
+            max_list_items=min(profile["max_list_items"], 5),
+            max_dict_items=min(profile["max_dict_items"], 8),
+        )
+
+    tool_context = payload.get("tool_context") or {}
+    if tool_context:
+        compact["tool_context"] = {
+            "list_files": {
+                "file_count": len(((tool_context.get("list_files") or {}).get("files") or [])),
+            },
+            "extract_structure": _summarize_value_for_prompt(
+                (tool_context.get("extract_structure") or {}).get("files") or [],
+                max_depth=min(profile["max_depth"], 3),
+                max_string=min(profile["max_string"], 200),
+                max_list_items=min(profile["max_list_items"], 6),
+                max_dict_items=min(profile["max_dict_items"], 8),
+            ),
+        }
+
+    if payload.get("human_inputs"):
+        compact["human_inputs"] = _summarize_value_for_prompt(
+            payload["human_inputs"],
+            max_depth=min(profile["max_depth"], 3),
+            max_string=min(profile["max_string"], 300),
+            max_list_items=min(profile["max_list_items"], 4),
+            max_dict_items=min(profile["max_dict_items"], 8),
+        )
+
+    return compact
+
+
+def _compact_observations_for_prompt(observations: List[Dict[str, Any]], capability: str, stage: str) -> List[Dict[str, Any]]:
+    profile = _get_prompt_budget_profile(capability, stage)
+    compact_observations: List[Dict[str, Any]] = []
+
+    selected_observations = observations[-profile["max_observations"] :]
+    for observation in selected_observations:
+        compact_observations.append(
+            {
+                "step": observation.get("step"),
+                "tool_name": observation.get("tool_name"),
+                "evidence_note": observation.get("evidence_note", ""),
+                "tool_input": _summarize_value_for_prompt(
+                    observation.get("tool_input") or {},
+                    max_depth=max(1, profile["max_depth"] - 1),
+                    max_string=min(profile["max_string"], 200),
+                    max_list_items=min(profile["max_list_items"], 4),
+                    max_dict_items=min(profile["max_dict_items"], 8),
+                ),
+                "tool_output": _summarize_value_for_prompt(
+                    observation.get("tool_output") or {},
+                    max_depth=max(1, profile["max_depth"] - 1),
+                    max_string=profile["max_string"],
+                    max_list_items=min(profile["max_list_items"], 4),
+                    max_dict_items=min(profile["max_dict_items"], 10),
+                ),
+            }
+        )
+
+    if len(observations) > len(selected_observations):
+        compact_observations.append(
+            {
+                "omitted_observations": len(observations) - len(selected_observations)
+            }
+        )
+
+    return compact_observations
 
 
 def build_react_system_prompt(
@@ -44,6 +251,7 @@ def build_react_system_prompt(
     candidate_files: List[str],
     workflow_steps: Optional[List[str]] = None,
     upstream_artifacts: Optional[Dict[str, List[str]]] = None,
+    configured_assets: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
     Build the ReAct system prompt from agent configuration.
@@ -68,6 +276,8 @@ Available tools:
 - patch_file (Make partial corrections)
 - run_command (Execute shell commands, use with caution)
 """
+    asset_tool_section = _build_asset_tool_section(tools_allowed, configured_assets)
+    tool_name_options = _build_tool_name_options(tools_allowed, configured_assets)
     
     # Build workflow section if available
     workflow_section = ""
@@ -106,6 +316,7 @@ You are the {capability} ReAct controller.
 Choose one next action at a time to ground design artifacts.
 {custom_section}
 {tools_section}
+{asset_tool_section}
 {workflow_section}{memory_section}
 Strategy:
 1. Research: Use read tools to collect evidence from baseline/ and upstream artifacts/.
@@ -119,12 +330,13 @@ Rules:
 2. Stop only when you have enough evidence and have written all expected files.
 3. Keep tool_input concise and machine-readable JSON.
 4. Candidate files in baseline/: {candidate_files}
+5. Only use asset-aware tools when the corresponding configured assets are present in the requirements payload.
 
 Return JSON in artifacts.decision:
 {{
   "done": false,
   "thought": "why this step is needed",
-  "tool_name": "grep_search" | "read_file_chunk" | "write_file" | "patch_file" | "none",
+  "tool_name": {tool_name_options},
   "tool_input": {{}},
   "evidence_note": "what this step should confirm or produce"
 }}
@@ -214,6 +426,7 @@ def default_next_react_decision(
         workflow_steps = agent_config.workflow_steps or None
         tools_allowed = agent_config.tools_allowed or []
     
+    configured_assets = payload.get("configured_assets") if isinstance(payload.get("configured_assets"), dict) else None
     system_prompt = build_react_system_prompt(
         capability=capability,
         prompt_instructions=prompt_instructions,
@@ -221,6 +434,7 @@ def default_next_react_decision(
         candidate_files=candidate_files,
         workflow_steps=workflow_steps,
         upstream_artifacts=upstream_artifacts,
+        configured_assets=configured_assets,
     )
     
     # Build template hints
@@ -234,8 +448,8 @@ def default_next_react_decision(
             "project": project_id,
             "version": version,
             "step": step,
-            "requirements_payload": payload,
-            "observations": observations,
+            "requirements_payload": _compact_payload_for_prompt(payload, capability, "react"),
+            "observations": _compact_observations_for_prompt(observations, capability, "react"),
             "template_hints": template_hints,
         },
         ensure_ascii=False,
@@ -301,8 +515,8 @@ def default_generate_final_artifacts(
         {
             "project": project_id,
             "version": version,
-            "requirements_payload": payload,
-            "grounded_observations": observations,
+            "requirements_payload": _compact_payload_for_prompt(payload, capability, "final"),
+            "grounded_observations": _compact_observations_for_prompt(observations, capability, "final"),
             "expected_files": expected_files,
         },
         ensure_ascii=False,

@@ -32,6 +32,12 @@ def _get_timestamp_id() -> str:
     now = datetime.datetime.now()
     return now.strftime("%Y%m%d_%H%M%S_%f")[:-3]  # Keep 3 digits of microsecond for milliseconds
 
+
+def _estimate_tokens(text: str) -> int:
+    if not text:
+        return 0
+    return max(1, len(text) // 4)
+
 def save_llm_interaction(
     project_id: str,
     version: str,
@@ -100,6 +106,12 @@ def save_llm_interaction(
             "status": status,
             "provider": provider,
             "model": model,
+            "sizes": {
+                "system_prompt_chars": len(system_prompt or ""),
+                "user_prompt_chars": len(user_prompt or ""),
+                "system_prompt_tokens_est": _estimate_tokens(system_prompt or ""),
+                "user_prompt_tokens_est": _estimate_tokens(user_prompt or ""),
+            },
             "refs": {
                 "system": sys_ref,
                 "user": user_ref,
