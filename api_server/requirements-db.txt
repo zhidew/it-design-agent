@@ -1,0 +1,13 @@
+# Optional database drivers.
+# Install this only if you need to inspect external databases beyond SQLite.
+
+-r requirements.txt
+
+# PostgreSQL / openGauss / DWS
+psycopg2-binary==2.9.10
+
+# MySQL
+# pymysql==1.1.1
+
+# Oracle
+# cx-Oracle==8.3.0
