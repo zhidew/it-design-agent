@@ -31,6 +31,17 @@ from services.db_service import metadata_db
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
+
+def _summarize_completion(completion, max_len: int = 300) -> str:
+    try:
+        text = str(completion)
+    except Exception as exc:
+        return f"<unprintable completion: {exc}>"
+    text = text.strip()
+    if len(text) > max_len:
+        return text[:max_len] + "..."
+    return text
+
 def resolve_runtime_llm_settings(design_context: dict | None) -> dict | None:
     """
     Normalize a runtime-selected model config into llm_settings expected by
@@ -210,11 +221,18 @@ def _clean_json_response(text: str) -> str:
     if text.startswith("data:"):
         text = text[5:].strip()
 
-    # Remove potential ```json ... ``` wrapper
-    # We use regex to be more robust with multi-line content
-    json_block_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
-    if json_block_match:
-        text = json_block_match.group(1)
+    # Only remove ``` wrapper if it wraps the ENTIRE string
+    if text.startswith("```"):
+        match = re.match(r"^```(?:json)?\s+([\s\S]*?)\s*```$", text)
+        if match:
+            text = match.group(1)
+        else:
+            # Fallback for unclosed blocks
+            match = re.match(r"^```(?:json)?\s+([\s\S]*)", text)
+            if match:
+                text = match.group(1)
+                if text.endswith("```"):
+                    text = text[:-3]
         
     return text.strip()
 
@@ -230,11 +248,19 @@ def _parse_llm_response_to_dict(completion) -> dict:
         content = completion.choices[0].message.content
         if content:
             return json.loads(_clean_json_response(content))
+        raise json.JSONDecodeError(
+            f"LLM returned empty message.content. Completion preview: {_summarize_completion(completion)}",
+            "",
+            0,
+        )
             
     # 2. Handle string or dict-like responses
     raw_text = str(completion).strip()
     if raw_text.startswith("data:"):
         raw_text = raw_text[5:].strip()
+
+    if not raw_text:
+        raise json.JSONDecodeError("LLM returned an empty response body.", "", 0)
         
     # Try to parse the entire string as a JSON (it might be the full response object as a string)
     try:
@@ -248,13 +274,25 @@ def _parse_llm_response_to_dict(completion) -> dict:
                     content = msg.get("content", "") if isinstance(msg, dict) else ""
                     if content:
                         return json.loads(_clean_json_response(content))
+                    raise json.JSONDecodeError(
+                        f"LLM response JSON had empty choices[0].message.content. Response preview: {_summarize_completion(data)}",
+                        raw_text,
+                        0,
+                    )
             # Maybe the whole thing is already the JSON we want (the model's direct output)
             return data
     except:
         pass
         
     # 3. Last resort: treat the raw text as the JSON content directly
-    return json.loads(_clean_json_response(raw_text))
+    cleaned = _clean_json_response(raw_text)
+    if not cleaned:
+        raise json.JSONDecodeError(
+            f"LLM response text was empty after cleanup. Raw preview: {_summarize_completion(raw_text)}",
+            raw_text,
+            0,
+        )
+    return json.loads(cleaned)
 
 def _call_gemini_raw(system_prompt: str, user_prompt: str, llm_settings: dict | None = None) -> dict:
     import google.generativeai as genai
@@ -273,6 +311,43 @@ def _call_gemini_raw(system_prompt: str, user_prompt: str, llm_settings: dict | 
     # Use robust parsing
     return _parse_llm_response_to_dict(response.text)
 
+
+def _build_connectivity_probe_prompts() -> tuple[str, str]:
+    system_prompt = (
+        "You are a connectivity probe. "
+        "Return only a valid JSON object with keys 'ok' and 'message'."
+    )
+    user_prompt = json.dumps(
+        {
+            "task": "connectivity_check",
+            "instruction": "Reply with JSON only.",
+            "required_schema": {
+                "ok": True,
+                "message": "pong",
+            },
+        },
+        ensure_ascii=False,
+    )
+    return system_prompt, user_prompt
+
+
+def _normalize_connectivity_llm_settings(llm_settings: dict) -> dict:
+    provider = str(llm_settings.get("provider", "openai")).lower()
+    if provider == "gemini":
+        return {
+            "llm_provider": "gemini",
+            "gemini_api_key": llm_settings.get("api_key"),
+            "gemini_model_name": llm_settings.get("model_name", "gemini-2.0-flash"),
+        }
+
+    return {
+        "llm_provider": "openai",
+        "openai_api_key": llm_settings.get("api_key"),
+        "openai_base_url": llm_settings.get("base_url", "https://api.openai.com/v1"),
+        "openai_model_name": llm_settings.get("model_name", "gpt-4o"),
+        "openai_headers": llm_settings.get("headers") or {},
+    }
+
 def test_llm_connectivity(llm_settings: dict) -> dict:
     """
     Test the connectivity and availability of an LLM configuration.
@@ -280,51 +355,20 @@ def test_llm_connectivity(llm_settings: dict) -> dict:
     """
     provider = llm_settings.get("provider", "openai").lower()
     try:
-        if provider == "gemini":
-            import google.generativeai as genai
-            api_key = llm_settings.get("api_key")
-            model_name = llm_settings.get("model_name", "gemini-2.0-flash")
-            
-            # Allow empty API key if using a custom gateway or local provider
-            genai.configure(api_key=api_key or "not-required")
-            model = genai.GenerativeModel(model_name)
-            response = model.generate_content("Ping")
-            if response and response.text:
-                return {"success": True, "message": "Connected successfully to Gemini."}
-            return {"success": False, "message": "Received empty response from Gemini."}
-        else:
-            from openai import OpenAI
-            api_key = llm_settings.get("api_key")
-            base_url = llm_settings.get("base_url", "https://api.openai.com/v1")
-            model_name = llm_settings.get("model_name", "gpt-4o")
-            headers = llm_settings.get("headers") or {}
-            
-            # If user already provided Authorization in headers, we avoid providing a dummy key
-            # to let the custom header take precedence.
-            has_auth_header = any(k.lower() == "authorization" for k in headers.keys())
-            effective_api_key = api_key
-            if not effective_api_key and not has_auth_header:
-                effective_api_key = "not-required"
-            
-            client = OpenAI(api_key=effective_api_key or "", base_url=base_url, default_headers=headers or None)
-            completion = client.chat.completions.create(
-                model=model_name,
-                messages=[{"role": "user", "content": "Ping"}],
-                max_tokens=5
-            )
-            
-            # Use robust parsing logic for connectivity test
-            try:
-                res_dict = _parse_llm_response_to_dict(completion)
-                if res_dict or completion:
-                    return {"success": True, "message": f"Connected successfully to {provider.upper()} compatible API (Robust parsing enabled)."}
-            except:
-                pass
+        system_prompt, user_prompt = _build_connectivity_probe_prompts()
+        normalized_settings = _normalize_connectivity_llm_settings(llm_settings)
 
+        if provider == "gemini":
+            res_dict = _call_gemini_raw(system_prompt, user_prompt, llm_settings=normalized_settings)
+        else:
+            res_dict = _call_openai_raw(system_prompt, user_prompt, llm_settings=normalized_settings)
+
+        if isinstance(res_dict, dict):
             return {
-                "success": False, 
-                "message": f"Invalid response format. Content: {str(completion)[:200]}"
+                "success": True,
+                "message": f"Connected successfully to {provider.upper()} compatible API.",
             }
+        return {"success": False, "message": f"Invalid response format: {type(res_dict).__name__}"}
     except Exception as e:
         return {"success": False, "message": str(e)}
 

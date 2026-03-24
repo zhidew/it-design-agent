@@ -329,9 +329,20 @@ export function ProjectDetail() {
   }, [effortOptions, selectedEffortLevel]);
 
   const currentRunLlmLabel = useMemo(() => {
+    const nodeLlmMap = workflowState?.node_llm_map || {};
+    const currentNodeLabel = workflowState?.current_node ? nodeLlmMap[workflowState.current_node]?.label : null;
+    if (currentNodeLabel) {
+      return currentNodeLabel;
+    }
+
+    const firstRecordedLabel = Object.values(nodeLlmMap).find((item: any) => item?.label)?.label;
+    if (firstRecordedLabel) {
+      return firstRecordedLabel;
+    }
+
     const modelLabel = selectedProjectModel ? formatProjectModelLabel(selectedProjectModel) : 'LLM';
     return `${modelLabel} · ${effortLabel}`;
-  }, [effortLabel, formatProjectModelLabel, selectedProjectModel]);
+  }, [effortLabel, formatProjectModelLabel, selectedProjectModel, workflowState]);
 
   const resourceCopy = useMemo(() => {
     const isZh = i18n.language.toLowerCase().startsWith('zh');
