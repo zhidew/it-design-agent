@@ -7,9 +7,9 @@ skills:
 scheduling:
   priority: 70
   dependencies:
+    - architecture-mapping
     - data-design
     - ddd-structure
-    - integration-design
 tools:
   allowed:
     - clone_repository
@@ -19,7 +19,7 @@ tools:
     - patch_file
 outputs:
   expected:
-    - api-internal.yaml
+    - api-design.md
     - errors-rfc9457.json
 policies:
   asset_baseline_required: true

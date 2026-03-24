@@ -18,4 +18,4 @@ error_handling:
 tools:
   allowed: [clone_repository, query_database, query_knowledge_base, write_file, patch_file]
 outputs:
-  expected: [architecture.md, component-diagram.md]
+  expected: [architecture.md, module-map.json]

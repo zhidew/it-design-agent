@@ -32,11 +32,108 @@ MAX_REACT_STEPS = int(os.getenv("AGENT_MAX_REACT_STEPS", "12"))
 
 # Default tools available to all subagents
 DEFAULT_READ_TOOLS = {"list_files", "extract_structure", "grep_search", "read_file_chunk", "extract_lookup_values"}
-DEFAULT_WRITE_TOOLS = {"write_file", "patch_file", "run_command"}
+DEFAULT_WRITE_TOOLS = {"write_file", "patch_file"}
 
 
 def _tool_is_available(tool_name: str, tools_allowed: List[str]) -> bool:
     return tool_name in tools_allowed or "*" in tools_allowed
+
+
+def _normalize_relative_path(raw_path: str) -> str:
+    return raw_path.strip().replace("\\", "/").lstrip("./")
+
+
+def _dedupe_preserve_order(items: List[str]) -> List[str]:
+    seen: set[str] = set()
+    ordered: List[str] = []
+    for item in items:
+        if item and item not in seen:
+            seen.add(item)
+            ordered.append(item)
+    return ordered
+
+
+def _resolve_candidate_files(payload: Dict[str, Any]) -> List[str]:
+    candidates: List[str] = []
+    project_layout = payload.get("project_layout") or {}
+    baseline_dir = str(project_layout.get("baseline_dir") or "baseline").strip("/\\") or "baseline"
+
+    explicit_candidates = payload.get("candidate_files") or []
+    for raw_path in explicit_candidates:
+        if isinstance(raw_path, str) and raw_path.strip():
+            candidates.append(_normalize_relative_path(raw_path))
+
+    tool_context = payload.get("tool_context") or {}
+    list_files_output = tool_context.get("list_files") or {}
+    list_files_root = str(list_files_output.get("root_dir") or "")
+    use_baseline_prefix = (
+        list_files_root == baseline_dir
+        or list_files_root.replace("\\", "/").endswith(f"/{baseline_dir}")
+    )
+    for file_info in list_files_output.get("files") or []:
+        raw_path = file_info.get("path")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            continue
+        normalized = _normalize_relative_path(raw_path)
+        if use_baseline_prefix and not normalized.startswith(f"{baseline_dir}/"):
+            normalized = f"{baseline_dir}/{normalized}"
+        candidates.append(normalized)
+
+    for raw_path in payload.get("uploaded_files") or []:
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            continue
+        normalized = _normalize_relative_path(raw_path)
+        if "/" not in normalized and not normalized.startswith(f"{baseline_dir}/"):
+            normalized = f"{baseline_dir}/{normalized}"
+        candidates.append(normalized)
+
+    filtered = [
+        path for path in _dedupe_preserve_order(candidates)
+        if path.endswith((".md", ".txt", ".json", ".yaml", ".yml"))
+    ]
+    if filtered:
+        return filtered
+    return [f"{baseline_dir}/original-requirements.md"]
+
+
+def _get_runtime_project_root(payload: Dict[str, Any]) -> Optional[Path]:
+    raw_value = payload.get("_runtime_project_root")
+    if not isinstance(raw_value, str) or not raw_value.strip():
+        return None
+    return Path(raw_value)
+
+
+def _relativize_path_for_prompt(raw_value: str, project_root: Optional[Path]) -> str:
+    normalized = raw_value.strip()
+    if not normalized:
+        return normalized
+    if project_root is None:
+        return normalized
+    try:
+        candidate = Path(normalized).expanduser()
+        if candidate.is_absolute():
+            try:
+                return candidate.resolve().relative_to(project_root.resolve()).as_posix() or "."
+            except ValueError:
+                return normalized
+    except (OSError, RuntimeError, ValueError):
+        return normalized
+    return normalized
+
+
+def _sanitize_prompt_payload(value: Any, project_root: Optional[Path], *, key: str | None = None) -> Any:
+    if isinstance(value, dict):
+        return {
+            str(item_key): _sanitize_prompt_payload(item_value, project_root, key=str(item_key))
+            for item_key, item_value in value.items()
+        }
+    if isinstance(value, list):
+        return [_sanitize_prompt_payload(item, project_root) for item in value]
+    if isinstance(value, str):
+        if key == "root_dir":
+            return "."
+        return _relativize_path_for_prompt(value, project_root)
+    return value
 
 
 def _build_asset_tool_section(tools_allowed: List[str], configured_assets: Dict[str, Any] | None) -> str:
@@ -60,9 +157,15 @@ Asset-aware tools:
 
 
 def _build_tool_name_options(tools_allowed: List[str], configured_assets: Dict[str, Any] | None) -> str:
-    tool_names = ["grep_search", "read_file_chunk", "write_file", "patch_file"]
+    tool_names = ["list_files", "read_file_chunk", "grep_search", "extract_structure", "extract_lookup_values"]
     configured_assets = configured_assets or {}
 
+    if _tool_is_available("write_file", tools_allowed):
+        tool_names.append("write_file")
+    if _tool_is_available("patch_file", tools_allowed):
+        tool_names.append("patch_file")
+    if _tool_is_available("run_command", tools_allowed):
+        tool_names.append("run_command")
     if configured_assets.get("repositories") and _tool_is_available("clone_repository", tools_allowed):
         tool_names.append("clone_repository")
     if configured_assets.get("databases") and _tool_is_available("query_database", tools_allowed):
@@ -72,6 +175,45 @@ def _build_tool_name_options(tools_allowed: List[str], configured_assets: Dict[s
 
     tool_names.append("none")
     return " | ".join(f'"{name}"' for name in tool_names)
+
+
+def _build_tool_contract_section(tools_allowed: List[str], candidate_files: List[str]) -> str:
+    read_example = candidate_files[0] if candidate_files else "baseline/original-requirements.md"
+    write_examples: List[str] = []
+    if _tool_is_available("write_file", tools_allowed):
+        write_examples.append(
+            '- `write_file`: `{"path":"architecture.md","content":"..."}`. `path` is relative to `artifacts/`.'
+        )
+    if _tool_is_available("patch_file", tools_allowed):
+        write_examples.append(
+            '- `patch_file`: `{"path":"architecture.md","old_content":"...","new_content":"..."}`. `path` is relative to `artifacts/`.'
+        )
+    if _tool_is_available("run_command", tools_allowed):
+        write_examples.append(
+            '- `run_command`: `{"command":"python -m unittest","timeout":30}`. Runs from project root `.`.'
+        )
+
+    write_block = "\n".join(write_examples)
+    if write_block:
+        write_block = f"\n{write_block}"
+
+    return f"""
+Current location:
+- Project root: `.`
+- Baseline directory: `baseline/`
+- Artifacts directory: `artifacts/`
+- Evidence directory: `evidence/`
+- Candidate requirement files: {candidate_files}
+
+Tool input contract:
+- Do NOT include `root_dir`. The runtime injects it automatically.
+- For read tools, all `path` values are relative to project root `.`.
+- For write tools, all `path` values are relative to `artifacts/`.
+- `list_files`: use `{{}}` to inspect project root, or `{{"repos_dir":"baseline"}}` to inspect a subdirectory.
+- `read_file_chunk`: use `{{"path":"{read_example}","start_line":1,"end_line":120}}`. Optional: `search_root`, `repos_dir`.
+- `extract_structure`: use `{{"files":["{read_example}"]}}`. Do not send `path`.
+- `grep_search`: use `{{"pattern":"Kafka|Redis|callback"}}`. Optional: `repos_dir`. Do not send `file_glob`, `include`, or ad-hoc filters.{write_block}
+""".strip()
 
 
 def _get_prompt_budget_profile(capability: str, stage: str) -> Dict[str, int]:
@@ -158,9 +300,10 @@ def _summarize_value_for_prompt(
 
 def _compact_payload_for_prompt(payload: Dict[str, Any], capability: str, stage: str) -> Dict[str, Any]:
     profile = _get_prompt_budget_profile(capability, stage)
+    project_root = _get_runtime_project_root(payload)
     compact: Dict[str, Any] = {}
 
-    for key in ("project_name", "project_id", "version", "requirement", "active_agents"):
+    for key in ("project_name", "project_id", "version", "requirement", "active_agents", "project_layout"):
         if key in payload:
             compact[key] = payload[key]
 
@@ -169,6 +312,12 @@ def _compact_payload_for_prompt(payload: Dict[str, Any], capability: str, stage:
         compact["uploaded_files"] = uploaded_files[:10]
         if len(uploaded_files) > 10:
             compact["uploaded_files_omitted"] = len(uploaded_files) - 10
+
+    candidate_files = payload.get("candidate_files") or []
+    if candidate_files:
+        compact["candidate_files"] = candidate_files[:10]
+        if len(candidate_files) > 10:
+            compact["candidate_files_omitted"] = len(candidate_files) - 10
 
     if "configured_assets" in payload:
         compact["configured_assets"] = _summarize_value_for_prompt(
@@ -181,12 +330,17 @@ def _compact_payload_for_prompt(payload: Dict[str, Any], capability: str, stage:
 
     tool_context = payload.get("tool_context") or {}
     if tool_context:
+        sanitized_tool_context = _sanitize_prompt_payload(tool_context, project_root)
         compact["tool_context"] = {
-            "list_files": {
-                "file_count": len(((tool_context.get("list_files") or {}).get("files") or [])),
-            },
+            "list_files": _summarize_value_for_prompt(
+                sanitized_tool_context.get("list_files") or {},
+                max_depth=min(profile["max_depth"], 3),
+                max_string=min(profile["max_string"], 200),
+                max_list_items=min(profile["max_list_items"], 6),
+                max_dict_items=min(profile["max_dict_items"], 8),
+            ),
             "extract_structure": _summarize_value_for_prompt(
-                (tool_context.get("extract_structure") or {}).get("files") or [],
+                (sanitized_tool_context.get("extract_structure") or {}).get("files") or [],
                 max_depth=min(profile["max_depth"], 3),
                 max_string=min(profile["max_string"], 200),
                 max_list_items=min(profile["max_list_items"], 6),
@@ -206,26 +360,34 @@ def _compact_payload_for_prompt(payload: Dict[str, Any], capability: str, stage:
     return compact
 
 
-def _compact_observations_for_prompt(observations: List[Dict[str, Any]], capability: str, stage: str) -> List[Dict[str, Any]]:
+def _compact_observations_for_prompt(
+    observations: List[Dict[str, Any]],
+    capability: str,
+    stage: str,
+    *,
+    project_root: Optional[Path] = None,
+) -> List[Dict[str, Any]]:
     profile = _get_prompt_budget_profile(capability, stage)
     compact_observations: List[Dict[str, Any]] = []
 
     selected_observations = observations[-profile["max_observations"] :]
     for observation in selected_observations:
+        sanitized_tool_input = _sanitize_prompt_payload(observation.get("tool_input") or {}, project_root)
+        sanitized_tool_output = _sanitize_prompt_payload(observation.get("tool_output") or {}, project_root)
         compact_observations.append(
             {
                 "step": observation.get("step"),
                 "tool_name": observation.get("tool_name"),
                 "evidence_note": observation.get("evidence_note", ""),
                 "tool_input": _summarize_value_for_prompt(
-                    observation.get("tool_input") or {},
+                    sanitized_tool_input,
                     max_depth=max(1, profile["max_depth"] - 1),
                     max_string=min(profile["max_string"], 200),
                     max_list_items=min(profile["max_list_items"], 4),
                     max_dict_items=min(profile["max_dict_items"], 8),
                 ),
                 "tool_output": _summarize_value_for_prompt(
-                    observation.get("tool_output") or {},
+                    sanitized_tool_output,
                     max_depth=max(1, profile["max_depth"] - 1),
                     max_string=profile["max_string"],
                     max_list_items=min(profile["max_list_items"], 4),
@@ -268,13 +430,15 @@ def build_react_system_prompt(
     Returns:
         Formatted system prompt for ReAct loop
     """
-    # Build tools section
-    tools_section = """
+    tool_contract_section = _build_tool_contract_section(tools_allowed, candidate_files)
+    tools_section = f"""
 Available tools:
 - list_files / read_file_chunk / grep_search / extract_structure / extract_lookup_values (Read operations)
-- write_file (Write design artifacts)
-- patch_file (Make partial corrections)
-- run_command (Execute shell commands, use with caution)
+- write_file (Write design artifacts when you already have enough grounded evidence)
+- patch_file (Make partial corrections to drafts under `artifacts/`)
+- run_command (Execute shell commands from project root when explicitly allowed)
+
+{tool_contract_section}
 """
     asset_tool_section = _build_asset_tool_section(tools_allowed, configured_assets)
     tool_name_options = _build_tool_name_options(tools_allowed, configured_assets)
@@ -319,18 +483,19 @@ Choose one next action at a time to ground design artifacts.
 {asset_tool_section}
 {workflow_section}{memory_section}
 Strategy:
-1. Research: Use read tools to collect evidence from baseline/ and upstream artifacts/.
-2. Write: Use write_file to produce draft artifacts.
-3. Verify: Use read_file_chunk to read back and verify content if needed.
-4. Patch: Use patch_file for minor adjustments.
-5. Finalize: Set done=true only when all expected artifacts are correctly written.
+1. Ground quickly: Anchor on the candidate baseline file immediately instead of searching for it by filename.
+2. Research: Use read tools to collect the minimum evidence needed from baseline/ and upstream artifacts/.
+3. Draft optionally: Use write_file only when an intermediate draft materially helps.
+4. Verify: Use read_file_chunk to inspect generated drafts only when needed.
+5. Finalize: Set done=true as soon as the collected evidence is sufficient for final generation to produce all expected artifacts.
 
 Rules:
 1. Only output one next action.
-2. Stop only when you have enough evidence and have written all expected files.
+2. Stop when evidence is sufficient for final generation, even if ReAct has not written any artifact files yet.
 3. Keep tool_input concise and machine-readable JSON.
 4. Candidate files in baseline/: {candidate_files}
 5. Only use asset-aware tools when the corresponding configured assets are present in the requirements payload.
+6. By step 2, you should already have grounded yourself on the correct baseline requirement content.
 
 Return JSON in artifacts.decision:
 {{
@@ -426,7 +591,13 @@ def default_next_react_decision(
         workflow_steps = agent_config.workflow_steps or None
         tools_allowed = agent_config.tools_allowed or []
     
+    bootstrap_decision = _build_bootstrap_decision(candidate_files, observations, step)
+    if bootstrap_decision:
+        bootstrap_decision["reasoning"] = "Bootstrap grounding step to anchor the agent on the canonical baseline file before free-form ReAct exploration."
+        return bootstrap_decision
+
     configured_assets = payload.get("configured_assets") if isinstance(payload.get("configured_assets"), dict) else None
+    project_root = _get_runtime_project_root(payload)
     system_prompt = build_react_system_prompt(
         capability=capability,
         prompt_instructions=prompt_instructions,
@@ -449,7 +620,12 @@ def default_next_react_decision(
             "version": version,
             "step": step,
             "requirements_payload": _compact_payload_for_prompt(payload, capability, "react"),
-            "observations": _compact_observations_for_prompt(observations, capability, "react"),
+            "observations": _compact_observations_for_prompt(
+                observations,
+                capability,
+                "react",
+                project_root=project_root,
+            ),
             "template_hints": template_hints,
         },
         ensure_ascii=False,
@@ -473,7 +649,7 @@ def default_next_react_decision(
     
     if not isinstance(decision, dict):
         decision = _fallback_decision(candidate_files)
-    
+
     decision.setdefault("done", False)
     decision.setdefault("tool_name", "none")
     decision.setdefault("tool_input", {})
@@ -511,12 +687,18 @@ def default_generate_final_artifacts(
         templates=templates,
     )
     
+    project_root = _get_runtime_project_root(payload)
     user_prompt = json.dumps(
         {
             "project": project_id,
             "version": version,
             "requirements_payload": _compact_payload_for_prompt(payload, capability, "final"),
-            "grounded_observations": _compact_observations_for_prompt(observations, capability, "final"),
+            "grounded_observations": _compact_observations_for_prompt(
+                observations,
+                capability,
+                "final",
+                project_root=project_root,
+            ),
             "expected_files": expected_files,
         },
         ensure_ascii=False,
@@ -545,11 +727,59 @@ def _fallback_decision(candidate_files: List[str]) -> Dict[str, Any]:
         }
     return {
         "done": True,
-        "thought": "No candidate files available, proceeding to final generation",
+        "thought": "No candidate files available, treating evidence as sufficient and moving to final generation",
         "tool_name": "none",
         "tool_input": {},
         "evidence_note": "",
     }
+
+
+def _build_bootstrap_decision(
+    candidate_files: List[str],
+    observations: List[Dict[str, Any]],
+    step: int,
+) -> Optional[Dict[str, Any]]:
+    if not candidate_files:
+        return None
+
+    primary_candidate = candidate_files[0]
+    candidate_read_succeeded = any(
+        observation.get("tool_name") == "read_file_chunk"
+        and (observation.get("tool_input") or {}).get("path") == primary_candidate
+        and bool((observation.get("tool_output") or {}).get("content"))
+        for observation in observations
+    )
+    candidate_structure_succeeded = any(
+        observation.get("tool_name") == "extract_structure"
+        and primary_candidate in ((observation.get("tool_input") or {}).get("files") or [])
+        for observation in observations
+    )
+
+    if step == 1 and not candidate_read_succeeded:
+        return {
+            "done": False,
+            "thought": f"Read the canonical baseline candidate `{primary_candidate}` first so the agent is grounded on the correct requirement content immediately.",
+            "tool_name": "read_file_chunk",
+            "tool_input": {
+                "path": primary_candidate,
+                "start_line": 1,
+                "end_line": 160,
+            },
+            "evidence_note": "Confirm the actual requirement content from the baseline source file before any search or synthesis.",
+        }
+
+    if step == 2 and candidate_read_succeeded and not candidate_structure_succeeded:
+        return {
+            "done": False,
+            "thought": f"Extract the structure of `{primary_candidate}` in step 2 so the agent has both the exact content and a stable outline before deeper analysis.",
+            "tool_name": "extract_structure",
+            "tool_input": {
+                "files": [primary_candidate],
+            },
+            "evidence_note": "Capture headings, sections, and document structure from the canonical baseline file.",
+        }
+
+    return None
 
 
 def default_fallback_artifacts(
@@ -695,6 +925,17 @@ async def run_dynamic_subagent(
     evidence_dir.mkdir(parents=True, exist_ok=True)
 
     payload = json.loads(baseline_path.read_text(encoding="utf-8-sig"))
+    payload["candidate_files"] = _resolve_candidate_files(payload)
+    payload.setdefault(
+        "project_layout",
+        {
+            "project_root": ".",
+            "baseline_dir": "baseline",
+            "artifacts_dir": "artifacts",
+            "evidence_dir": "evidence",
+        },
+    )
+    payload["_runtime_project_root"] = str(project_path)
     history_updates = []
     runtime_llm_settings = resolve_runtime_llm_settings(state.get("design_context"))
 
@@ -707,10 +948,7 @@ async def run_dynamic_subagent(
     if candidate_files_fn:
         candidate_files = candidate_files_fn(payload)
     else:
-        candidate_files = payload.get("uploaded_files", []) or ["original-requirements.md"]
-        candidate_files = [f for f in candidate_files if f.endswith((".md", ".txt", ".json", ".yaml", ".yml"))]
-        if not candidate_files:
-            candidate_files = ["original-requirements.md"]
+        candidate_files = payload.get("candidate_files", []) or _resolve_candidate_files(payload)
     
     # Determine expected files
     if expected_files_fn:
@@ -786,7 +1024,7 @@ async def run_dynamic_subagent(
 
 
             if decision.get("done"):
-                history_updates.append(f"[{capability}] ReAct step {step}: evidence collection complete.")
+                history_updates.append(f"[{capability}] ReAct step {step}: evidence is sufficient, moving to final generation.")
                 break
 
             tool_name = decision.get("tool_name") or "none"
@@ -815,8 +1053,8 @@ async def run_dynamic_subagent(
                 {
                     "step": step,
                     "tool_name": tool_name,
-                    "tool_input": tool_result.get("input") or {},
-                    "tool_output": tool_result.get("output") or {},
+                    "tool_input": _sanitize_prompt_payload(tool_result.get("input") or {}, project_path),
+                    "tool_output": _sanitize_prompt_payload(tool_result.get("output") or {}, project_path),
                     "evidence_note": decision.get("evidence_note", ""),
                 }
             )
@@ -829,7 +1067,7 @@ async def run_dynamic_subagent(
         if react_exhausted:
             reasoning_sections = [entry.get("reasoning", "") for entry in react_trace if entry.get("reasoning")]
             reasoning_sections.append(
-                f"ReAct loop exhausted {max_react_steps} steps without reaching done=true. Final artifact generation was skipped."
+                f"ReAct loop exhausted {max_react_steps} steps without reaching done=true (evidence sufficient). Final artifact generation was skipped."
             )
             (logs_dir / f"{capability}-reasoning.md").write_text(
                 "\n\n".join(section for section in reasoning_sections if section),

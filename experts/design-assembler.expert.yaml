@@ -15,3 +15,12 @@ policies:
 error_handling:
   on_missing_required_input: fail
   on_validation_failure: fail
+tools:
+  allowed:
+    - write_file
+    - patch_file
+outputs:
+  expected:
+    - detailed-design.md
+    - traceability.json
+    - review-checklist.md

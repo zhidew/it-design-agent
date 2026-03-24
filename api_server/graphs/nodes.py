@@ -180,38 +180,65 @@ def supervisor(state: DesignState) -> Dict[str, Any]:
         return {"next": "END", "workflow_phase": "DONE", "current_node": None}
 
     current_phase = _resolve_active_phase(workflow_phase, unfinished_tasks)
-    current_phase_tasks = [task for task in executable_tasks if _get_task_phase(task) == current_phase]
+    limit = _resolve_parallel_limit(state)
 
-    todo_tasks = [task for task in current_phase_tasks if task["status"] == "todo"]
-    if todo_tasks:
-        ready_tasks = [task for task in sorted(todo_tasks, key=lambda item: item.get("priority", 0), reverse=True) if _dependencies_met(task, queue)]
-        if ready_tasks:
-            limit = _resolve_parallel_limit(state)
-            selected_tasks = ready_tasks[:limit]
-            
-            # CRITICAL FIX: Do NOT update task_queue to 'running' here.
-            # Let the specific worker node do it when it actually starts.
-            
-            dispatched_tasks = [{"id": task["id"], "agent_type": task["agent_type"]} for task in selected_tasks]
-            if len(selected_tasks) == 1:
-                task = selected_tasks[0]
-                return {
-                    "next": task["agent_type"],
-                    "current_task_id": task["id"],
-                    "current_node": task["agent_type"],
-                    "dispatched_tasks": dispatched_tasks,
-                    "workflow_phase": current_phase,
-                }
+    def build_dispatch(tasks: List[Task], phase: str) -> Dict[str, Any]:
+        selected_tasks = tasks[:limit]
+        dispatched_tasks = [{"id": task["id"], "agent_type": task["agent_type"]} for task in selected_tasks]
+        if len(selected_tasks) == 1:
+            task = selected_tasks[0]
             return {
-                "next": [task["agent_type"] for task in selected_tasks],
-                "current_task_ids": [task["id"] for task in selected_tasks],
-                "current_node": selected_tasks[0]["agent_type"],
+                "next": task["agent_type"],
+                "current_task_id": task["id"],
+                "current_node": task["agent_type"],
                 "dispatched_tasks": dispatched_tasks,
-                "workflow_phase": current_phase,
+                "workflow_phase": phase,
             }
-        return {"next": "END", "workflow_phase": current_phase}
+        return {
+            "next": [task["agent_type"] for task in selected_tasks],
+            "current_task_ids": [task["id"] for task in selected_tasks],
+            "current_node": selected_tasks[0]["agent_type"],
+            "dispatched_tasks": dispatched_tasks,
+            "workflow_phase": phase,
+        }
 
-    return {"next": "END", "workflow_phase": current_phase}
+    def ready_tasks_for_phase(phase: str) -> List[Task]:
+        phase_tasks = [task for task in executable_tasks if _get_task_phase(task) == phase]
+        todo_tasks = [task for task in phase_tasks if task["status"] == "todo"]
+        return [
+            task
+            for task in sorted(todo_tasks, key=lambda item: item.get("priority", 0), reverse=True)
+            if _dependencies_met(task, queue)
+        ]
+
+    current_phase_ready = ready_tasks_for_phase(current_phase)
+    if current_phase_ready:
+        # Do NOT update task_queue to 'running' here.
+        # Let the specific worker node do it when it actually starts.
+        return build_dispatch(current_phase_ready, current_phase)
+
+    # If the current phase is blocked, advance to the earliest phase that still
+    # has executable work instead of ending the graph and leaving the workflow in
+    # a stale running state.
+    for phase in EXECUTION_PHASES:
+        if phase == current_phase:
+            continue
+        phase_ready = ready_tasks_for_phase(phase)
+        if phase_ready:
+            return build_dispatch(phase_ready, phase)
+
+    blocked_tasks = [task for task in unfinished_tasks if task.get("status") == "todo"]
+    blocked_agents = [task.get("agent_type") for task in blocked_tasks[:5] if task.get("agent_type")]
+    waiting_reason = "Execution deadlocked: unfinished tasks remain, but no task is ready to run."
+    if blocked_agents:
+        waiting_reason += f" Blocked agents: {', '.join(blocked_agents)}."
+
+    return {
+        "next": "END",
+        "workflow_phase": current_phase,
+        "current_node": "supervisor",
+        "waiting_reason": waiting_reason,
+    }
 
 
 def create_worker_node(agent_type: str):
@@ -434,7 +461,7 @@ def _build_task_queue(active_agents: set[str]) -> List[Task]:
             ("flow-design", 60, []),
             ("test-design", 50, ["flow-design"]),
             ("ops-design", 45, ["config-design"]),
-            ("integration-design", 85, ["api-design"]),
+            ("integration-design", 85, ["architecture-mapping"]),
         ]
         
         active_defaults = [(agent, priority, deps) for agent, priority, deps in default_order if agent in active_agents]
@@ -764,6 +791,18 @@ async def planner_node(state: DesignState) -> Dict[str, Any]:
     )
     tool_results = [list_files_result, extract_structure_result]
     structure_summary = extract_structure_result["output"].get("files", [])
+    candidate_files = [f"baseline/{file_name}" for file_name in uploaded_files if isinstance(file_name, str) and file_name.strip()]
+
+    def _sanitize_tool_context(output: Dict[str, Any], root_label: str) -> Dict[str, Any]:
+        sanitized = json.loads(json.dumps(output, ensure_ascii=False))
+        if isinstance(sanitized, dict):
+            sanitized["root_dir"] = root_label
+        return sanitized
+
+    tool_context_payload = {
+        "list_files": _sanitize_tool_context(list_files_result["output"], "baseline"),
+        "extract_structure": _sanitize_tool_context(extract_structure_result["output"], "baseline"),
+    }
     planner_answers = ((state.get("human_answers") or {}).get("planner") or [])
     human_feedback = state.get("human_feedback", "")
     human_inputs = _summarize_human_inputs(planner_answers, human_feedback)
@@ -910,10 +949,14 @@ Output JSON format:
             "version": version,
             "requirement": requirement_text,
             "uploaded_files": uploaded_files,
-            "tool_context": {
-                "list_files": list_files_result["output"],
-                "extract_structure": extract_structure_result["output"],
+            "candidate_files": candidate_files,
+            "project_layout": {
+                "project_root": ".",
+                "baseline_dir": "baseline",
+                "artifacts_dir": "artifacts",
+                "evidence_dir": "evidence",
             },
+            "tool_context": tool_context_payload,
             "active_agents": [],  # Not decided yet
             "domain_name": "Domain",
             "aggregate_root": "Entity",
@@ -993,10 +1036,14 @@ Output JSON format:
         "version": version,
         "requirement": requirement_text,
         "uploaded_files": uploaded_files,
-        "tool_context": {
-            "list_files": list_files_result["output"],
-            "extract_structure": extract_structure_result["output"],
+        "candidate_files": candidate_files,
+        "project_layout": {
+            "project_root": ".",
+            "baseline_dir": "baseline",
+            "artifacts_dir": "artifacts",
+            "evidence_dir": "evidence",
         },
+        "tool_context": tool_context_payload,
         "active_agents": list(active_agents),
         "domain_name": "Domain",
         "aggregate_root": "Entity",

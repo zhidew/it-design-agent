@@ -16,3 +16,9 @@ policies:
 error_handling:
   on_missing_required_input: fail
   on_validation_failure: warn
+tools:
+  allowed:
+    - run_command
+outputs:
+  expected:
+    - validation-report.md

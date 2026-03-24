@@ -22,4 +22,4 @@ error_handling:
 tools:
   allowed: [clone_repository, query_database, query_knowledge_base, write_file, patch_file]
 outputs:
-  expected: [test-plan.md, test-cases.yaml]
+  expected: [test-inputs.md, coverage-map.json]

@@ -479,8 +479,9 @@ def _normalize_state(project_id: str, version: str, raw_state: dict | None, runt
     run_status = runtime.get("run_status") or workflow_run.get("status") or derived_run_status
     current_node = runtime.get("current_node") or workflow_run.get("current_node")
 
-    # When runtime is absent, prefer terminal state derived from task projection over a stale workflow_run row.
-    if not runtime and derived_run_status in {RUN_STATUS_SUCCESS, RUN_STATUS_FAILED, RUN_STATUS_WAITING_HUMAN}:
+    # When runtime is absent, prefer the task projection over a stale workflow_run row
+    # so a missing runtime task does not continue to masquerade as "running".
+    if not runtime and derived_run_status != RUN_STATUS_RUNNING:
         if run_status in {RUN_STATUS_QUEUED, RUN_STATUS_RUNNING} or workflow_run.get("status") in {RUN_STATUS_QUEUED, RUN_STATUS_RUNNING}:
             run_status = derived_run_status
 
@@ -1158,16 +1159,25 @@ async def run_orchestrator_task(
                         pause_reason = payload.get("waiting_reason")
                     known_artifacts = _handle_structured_graph_event(job_id, project_id, version, node_name, payload, known_artifacts)
 
-        # FINAL STATE GUARD: Check if we exited the loop while tasks are still 'running'
+        # FINAL STATE GUARD: if the graph exits with unfinished tasks, mark the run failed
+        # instead of leaving the workflow projection stuck in a pseudo-running state.
         if not paused_for_human:
             final_state = get_workflow_state(project_id, version, include_runtime=False)
             if final_state:
                 queue = final_state.get("task_queue", [])
-                stalled_tasks = [t for t in queue if t["status"] == "running"]
-                if stalled_tasks:
-                    print(f"[ERROR] Graph execution ended but {len(stalled_tasks)} tasks are still 'running'. Marking as failed.")
+                running_tasks = [t for t in queue if t["status"] == "running"]
+                todo_tasks = [t for t in queue if t["status"] == "todo"]
+                if running_tasks or todo_tasks:
+                    unfinished_tasks = running_tasks or todo_tasks
+                    if running_tasks:
+                        print(f"[ERROR] Graph execution ended but {len(running_tasks)} tasks are still 'running'. Marking as failed.")
+                        waiting_reason = "Execution stalled: Background task ended unexpectedly."
+                    else:
+                        print(f"[ERROR] Graph execution ended but {len(todo_tasks)} tasks remain 'todo'. Marking as failed.")
+                        waiting_reason = "Execution stalled: Graph ended with unfinished tasks remaining."
+
                     # Force failed status to avoid frontend spinning
-                    for task in stalled_tasks:
+                    for task in unfinished_tasks:
                         _emit_node_completed(
                             job_id,
                             job_id,
@@ -1183,12 +1193,13 @@ async def run_orchestrator_task(
                         project_id,
                         version,
                         run_status=RUN_STATUS_FAILED,
-                        current_node=stalled_tasks[0]["agent_type"],
-                        waiting_reason="Execution stalled: Background task ended unexpectedly.",
-                        can_resume=True, # Allow retry
+                        current_node=unfinished_tasks[0]["agent_type"],
+                        waiting_reason=waiting_reason,
+                        can_resume=True,
                         job_id=job_id,
                     )
                     _ensure_job(job_id)["status"] = RUN_STATUS_FAILED
+                    _emit_run_failed(job_id, job_id, waiting_reason)
                     return
 
         if paused_for_human:

@@ -7,7 +7,7 @@ skills:
 scheduling:
   priority: 85
   dependencies:
-    - architectural-design
+    - architecture-mapping
 policies:
   asset_baseline_required: true
   evidence_required: true
@@ -19,4 +19,4 @@ error_handling:
 tools:
   allowed: [clone_repository, query_database, query_knowledge_base, write_file, patch_file]
 outputs:
-  expected: [integration-spec.md]
+  expected: [integration.md, asyncapi.yaml]
