@@ -10,6 +10,9 @@ def run_command(root_dir: Path, tool_input: Dict[str, Any]) -> Dict[str, Any]:
     cmd = tool_input.get("command")
     if not cmd or not isinstance(cmd, list):
         raise ValueError("`command` is required and must be a list of strings.")
+    timeout = int(tool_input.get("timeout", 30) or 30)
+    if timeout < 1:
+        raise ValueError("`timeout` must be >= 1.")
 
     # Convert cmd elements to strings for safety
     cmd_str_list = [str(item) for item in cmd]
@@ -26,12 +29,16 @@ def run_command(root_dir: Path, tool_input: Dict[str, Any]) -> Dict[str, Any]:
             text=True,
             encoding="utf-8",
             errors="replace",
+            timeout=timeout,
         )
         return {
             "stdout": result.stdout,
             "stderr": result.stderr,
             "returncode": result.returncode,
             "command": cmd_str_list,
+            "timeout": timeout,
         }
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"Command timed out after {timeout} seconds: {' '.join(cmd_str_list)}") from exc
     except Exception as exc:
         raise RuntimeError(f"Failed to execute command {' '.join(cmd_str_list)}: {exc}")

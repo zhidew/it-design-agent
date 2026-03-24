@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 from .list_files import _resolve_search_roots
+from .standards import normalize_path_text, resolve_path_within_root
 
 
 def read_file_chunk(root_dir: Path, tool_input: Dict[str, Any]) -> Dict[str, Any]:
@@ -25,21 +26,19 @@ def read_file_chunk(root_dir: Path, tool_input: Dict[str, Any]) -> Dict[str, Any
         raise ValueError(f"Unknown search_root: {search_root_label}")
 
     selected_root = search_roots[search_root_label]
-    file_path = (selected_root / relative_path).resolve()
-    try:
-        file_path.relative_to(selected_root.resolve())
-    except ValueError as exc:
-        raise ValueError(f"File path escapes root: {relative_path}") from exc
-
-    if not file_path.exists() or not file_path.is_file():
-        raise FileNotFoundError(f"File not found: {relative_path}")
+    file_path, normalized_path = resolve_path_within_root(
+        selected_root,
+        relative_path,
+        must_exist=True,
+        expected_kind="file",
+    )
 
     lines = file_path.read_text(encoding="utf-8", errors="replace").splitlines()
     selected = lines[start_line - 1 : end_line]
     return {
         "root_dir": str(root_dir),
         "search_root": search_root_label,
-        "path": relative_path,
+        "path": normalize_path_text(normalized_path),
         "start_line": start_line,
         "end_line": min(end_line, len(lines)),
         "content": "\n".join(selected),

@@ -4,8 +4,10 @@ Provides reusable test functions for repositories, databases, and knowledge base
 """
 import os
 import subprocess
+from base64 import b64encode
 from pathlib import Path
 from typing import Any, Dict
+from urllib.parse import quote, urlsplit, urlunsplit
 
 
 class TestResult:
@@ -21,6 +23,39 @@ class TestResult:
             "message": self.message,
             **self.details
         }
+
+
+def _default_git_username(url: str) -> str:
+    host = (urlsplit(url).hostname or "").lower()
+    if host == "github.com" or host.endswith(".github.com"):
+        return "x-access-token"
+    if host == "gitlab.com" or host.endswith(".gitlab.com"):
+        return "oauth2"
+    return "git"
+
+
+def _build_git_url_with_credentials(url: str, username: str | None, token: str | None) -> str:
+    if not token:
+        return url
+
+    parsed = urlsplit(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return url
+
+    auth_username = username or _default_git_username(url)
+    netloc = f"{quote(auth_username, safe='')}:{quote(token, safe='')}@{parsed.hostname}"
+    if parsed.port:
+        netloc = f"{netloc}:{parsed.port}"
+
+    return urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment))
+
+
+def _build_git_auth_header(username: str | None, token: str | None, url: str) -> str | None:
+    if not token:
+        return None
+    auth_username = username or _default_git_username(url)
+    encoded = b64encode(f"{auth_username}:{token}".encode("utf-8")).decode("ascii")
+    return f"Authorization: Basic {encoded}"
 
 
 def test_repository_connection(config: Dict[str, Any]) -> TestResult:
@@ -41,15 +76,7 @@ def test_repository_connection(config: Dict[str, Any]) -> TestResult:
     if repo_type != "git":
         return TestResult(False, f"Unsupported repository type: {repo_type}")
     
-    # Build the Git URL with credentials if provided
-    git_url = url
-    if token and username:
-        # Handle GitHub/GitLab style URLs
-        if url.startswith("https://"):
-            # Insert credentials into HTTPS URL
-            git_url = url.replace("https://", f"https://{username}:{token}@")
-        elif url.startswith("http://"):
-            git_url = url.replace("http://", f"http://{username}:{token}@")
+    git_url = _build_git_url_with_credentials(url, username, token)
     
     # If local path exists, test if it's a valid git directory
     if local_path:
@@ -74,11 +101,28 @@ def test_repository_connection(config: Dict[str, Any]) -> TestResult:
     
     # Test remote connection using git ls-remote
     try:
-        cmd = ["git", "ls-remote", "--heads", git_url, branch]
+        cmd = [
+            "git",
+            "-c",
+            "credential.helper=",
+            "-c",
+            "core.askPass=",
+            "-c",
+            "credential.interactive=never",
+            "ls-remote",
+            "--heads",
+        ]
+        auth_header = _build_git_auth_header(username, token, url)
+        if auth_header:
+            cmd.extend(["-c", f"http.extraHeader={auth_header}"])
+        cmd.extend([git_url, branch])
         env = os.environ.copy()
-        # Use minimal Git config to avoid prompts
+        # Force Git/GCM into non-interactive mode so the test reflects only the supplied config.
         env["GIT_TERMINAL_PROMPT"] = "0"
-        env["GIT_ASKPASS"] = "echo"
+        env["GIT_ASKPASS"] = ""
+        env["SSH_ASKPASS"] = ""
+        env["GCM_INTERACTIVE"] = "never"
+        env["GCM_MODAL_PROMPT"] = "0"
         
         result = subprocess.run(
             cmd,
@@ -103,9 +147,15 @@ def test_repository_connection(config: Dict[str, Any]) -> TestResult:
                 )
         else:
             error_msg = result.stderr.strip() if result.stderr else "Unknown error"
-            if "authentication" in error_msg.lower() or "credential" in error_msg.lower():
+            lowered = error_msg.lower()
+            if (
+                "authentication" in lowered
+                or "credential" in lowered
+                or "could not read username" in lowered
+                or "terminal prompts disabled" in lowered
+            ):
                 return TestResult(False, "Authentication failed. Please check username and token.")
-            if "not found" in error_msg.lower():
+            if "not found" in lowered:
                 return TestResult(False, "Repository not found. Please check the URL.")
             return TestResult(False, f"Failed to connect: {error_msg}")
             

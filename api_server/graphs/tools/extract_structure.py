@@ -6,6 +6,8 @@ from ast import AsyncFunctionDef, ClassDef, FunctionDef, parse
 from pathlib import Path
 from typing import Any, Dict, List
 
+from .standards import resolve_path_within_root
+
 
 def extract_structure(root_dir: Path, tool_input: Dict[str, Any]) -> Dict[str, Any]:
     file_paths = tool_input.get("files")
@@ -14,19 +16,17 @@ def extract_structure(root_dir: Path, tool_input: Dict[str, Any]) -> Dict[str, A
 
     summaries = []
     missing_files = []
-    root_resolved = root_dir.resolve()
 
     for relative_path in file_paths:
         if not isinstance(relative_path, str) or not relative_path.strip():
             continue
-        file_path = (root_dir / relative_path).resolve()
         try:
-            file_path.relative_to(root_resolved)
+            file_path, normalized_path = resolve_path_within_root(root_dir, relative_path, expected_kind="file")
         except ValueError as exc:
             raise ValueError(f"File path escapes root: {relative_path}") from exc
 
         if not file_path.exists() or not file_path.is_file():
-            missing_files.append(relative_path)
+            missing_files.append(normalized_path)
             continue
 
         summaries.append(_summarize_file(root_dir, file_path))

@@ -31,7 +31,7 @@ RUN_STATUS_SUCCESS = "success"
 RUN_STATUS_FAILED = "failed"
 STALE_RUNNING_TIMEOUT_SECONDS = int(os.getenv("ORCHESTRATOR_STALE_TIMEOUT_SECONDS", "180"))
 EFFORT_LEVEL_TO_REACT_STEPS = {
-    "low": 6,
+    "low": 5,
     "medium": 12,
     "high": 20,
     "ultra": 32,

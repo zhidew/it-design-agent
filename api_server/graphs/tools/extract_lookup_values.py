@@ -5,6 +5,8 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List
 
+from .standards import resolve_path_within_root
+
 
 def extract_lookup_values(root_dir: Path, tool_input: Dict[str, Any]) -> Dict[str, Any]:
     requested_files = tool_input.get("files")
@@ -13,7 +15,8 @@ def extract_lookup_values(root_dir: Path, tool_input: Dict[str, Any]) -> Dict[st
         for relative_path in requested_files:
             if not isinstance(relative_path, str) or not relative_path.strip():
                 continue
-            candidate_paths.append(root_dir / relative_path)
+            resolved_path, _ = resolve_path_within_root(root_dir, relative_path, expected_kind="file")
+            candidate_paths.append(resolved_path)
     else:
         candidate_paths = [path for path in root_dir.rglob("*") if path.is_file()]
 

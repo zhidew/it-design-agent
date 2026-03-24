@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict
 
+from .standards import resolve_path_within_root
+
 
 def patch_file(root_dir: Path, tool_input: Dict[str, Any]) -> Dict[str, Any]:
     file_path_str = tool_input.get("path")
@@ -16,16 +18,16 @@ def patch_file(root_dir: Path, tool_input: Dict[str, Any]) -> Dict[str, Any]:
     if new_content is None or not isinstance(new_content, str):
         raise ValueError("`new_content` is required and must be a string.")
 
-    target_path = (root_dir / file_path_str).resolve()
-    if not str(target_path).startswith(str(root_dir)):
-        raise ValueError(f"Path is outside of root directory: {file_path_str}")
-
-    if not target_path.exists():
-        raise FileNotFoundError(f"File not found: {file_path_str}")
+    target_path, normalized_path = resolve_path_within_root(
+        root_dir,
+        file_path_str,
+        must_exist=True,
+        expected_kind="file",
+    )
 
     content = target_path.read_text(encoding="utf-8")
     if old_content not in content:
-        raise ValueError(f"Old content not found in {file_path_str}")
+        raise ValueError(f"Old content not found in {normalized_path}")
 
     # For safety, ensure there's exactly one occurrence
     count = content.count(old_content)
@@ -36,7 +38,7 @@ def patch_file(root_dir: Path, tool_input: Dict[str, Any]) -> Dict[str, Any]:
     target_path.write_text(new_full_content, encoding="utf-8")
 
     return {
-        "path": file_path_str,
+        "path": normalized_path,
         "size_bytes": target_path.stat().st_size,
-        "message": f"Successfully patched {file_path_str}",
+        "message": f"Successfully patched {normalized_path}",
     }

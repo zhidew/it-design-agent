@@ -87,6 +87,8 @@ interface ModelConfig {
   description?: string;
 }
 
+const isOpenAICompatibleProvider = (provider?: string) => (provider || 'openai').toLowerCase() !== 'gemini';
+
 const createModel = (): ModelConfig => ({
   id: Math.random().toString(36).substring(2, 9),
   name: '',
@@ -154,6 +156,17 @@ function parseHeadersJson(value?: string): Record<string, string> | undefined {
   return Object.fromEntries(
     Object.entries(candidate).map(([key, item]) => [String(key), String(item)]),
   );
+}
+
+function normalizeModelPayload(model: ModelConfig) {
+  const isOpenAICompatible = isOpenAICompatibleProvider(model.provider);
+
+  return {
+    ...model,
+    api_key: model.api_key?.trim() ? model.api_key.trim() : undefined,
+    base_url: isOpenAICompatible && model.base_url?.trim() ? model.base_url.trim() : undefined,
+    headers: isOpenAICompatible ? parseHeadersJson(model.headers) : undefined,
+  };
 }
 
 interface ConfigEditorModalProps {
@@ -244,11 +257,7 @@ export function ProjectConfig() {
     setTestingModel(true);
     setTestResult(null);
     try {
-      const res = await api.testProjectModel(projectId, {
-        ...editingModel,
-        api_key: editingModel.api_key?.trim() || undefined,
-        headers: parseHeadersJson(editingModel.headers),
-      });
+      const res = await api.testProjectModel(projectId, normalizeModelPayload(editingModel));
       setTestResult(res);
     } catch (err: any) {
       setTestResult({ success: false, message: err.response?.data?.detail || err.message });
@@ -329,6 +338,24 @@ export function ProjectConfig() {
     };
   }, [i18n.language, t]);
 
+  const getTranslatedValue = (lang: 'zh' | 'en', key: string) => {
+    const value = t(key, { lng: lang, defaultValue: '' });
+    return value && value !== key ? value : '';
+  };
+
+  const getExpertDisplayNames = (expert: ExpertConfig) => {
+    const zhName = getTranslatedValue('zh', `experts.${expert.id}.name`);
+    const enName = getTranslatedValue('en', `experts.${expert.id}.name`);
+    const fallbackName = expert.name || expert.id;
+    const isZh = i18n.language.toLowerCase().startsWith('zh');
+    const primary = (isZh ? zhName : enName) || fallbackName;
+    const secondary = isZh ? enName : zhName;
+    return {
+      primary,
+      secondary: secondary && secondary !== primary ? secondary : '',
+    };
+  };
+
   const llmCopy = useMemo(() => {
     const isZh = i18n.language.toLowerCase().startsWith('zh');
     return {
@@ -341,10 +368,15 @@ export function ProjectConfig() {
       refresh: isZh ? '刷新配置' : 'Refresh Config',
       provider: isZh ? '模型提供商' : 'Provider',
       openaiBaseUrl: isZh ? 'OpenAI 网关地址' : 'OpenAI Base URL',
+      geminiEndpoint: isZh ? 'Gemini 接口模式' : 'Gemini API Mode',
       openaiModel: isZh ? 'OpenAI 模型名' : 'OpenAI Model',
       geminiModel: isZh ? 'Gemini 模型名' : 'Gemini Model',
       openaiKey: isZh ? 'OpenAI API Key (选填)' : 'OpenAI API Key (Optional)',
       geminiKey: isZh ? 'Gemini API Key (选填)' : 'Gemini API Key (Optional)',
+      requestHeaders: isZh ? '请求头 JSON' : 'Request Headers JSON',
+      requestHeadersPlaceholder: '{"Authorization":"Bearer custom-token"}',
+      keepCurrentHeaders: isZh ? '留空则保持当前请求头' : 'Leave blank to keep current headers',
+      geminiNativeApi: isZh ? 'Google Native API（无需 Base URL / Headers）' : 'Google Native API (no Base URL or Headers required)',
       saved: isZh ? '保存' : 'Save',
       keepCurrent: isZh ? '留空则保持当前密钥' : 'Leave blank to keep current key',
       enterKey: isZh ? 'API Key (选填)' : 'API Key (Optional)',
@@ -562,11 +594,7 @@ export function ProjectConfig() {
     setSaving(true);
     setIsSaved(false);
     try {
-      await api.saveProjectModel(projectId, {
-        ...model,
-        api_key: model.api_key?.trim() ? model.api_key.trim() : undefined,
-        headers: parseHeadersJson(model.headers),
-      });
+      await api.saveProjectModel(projectId, normalizeModelPayload(model));
       setSaving(false);
       setIsSaved(true);
       
@@ -643,6 +671,11 @@ export function ProjectConfig() {
     } catch {
     }
   };
+
+  const isEditingOpenAICompatible = isOpenAICompatibleProvider(editingModel?.provider);
+  const editingModelIdLabel = isEditingOpenAICompatible ? llmCopy.openaiModel : llmCopy.geminiModel;
+  const editingModelIdPlaceholder = isEditingOpenAICompatible ? 'gpt-4o' : 'gemini-2.5-flash';
+  const editingModelApiKeyLabel = isEditingOpenAICompatible ? llmCopy.openaiKey : llmCopy.geminiKey;
 
   return (
     <div className="min-h-screen bg-[#F8FAFC]">
@@ -1189,30 +1222,38 @@ export function ProjectConfig() {
                 </div>
 
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                  {experts.map((expert, index) => (
-                    <div key={expert.id} className="rounded-xl border border-gray-200 bg-white p-3 transition-all hover:border-indigo-200 hover:shadow-sm">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex-1 min-w-0">
-                          <div className="text-xs font-bold text-gray-900 truncate">{expert.name}</div>
-                          <div className={`mt-1.5 text-[10px] font-black uppercase tracking-wider ${expert.enabled ? 'text-emerald-600' : 'text-gray-400'}`}>
-                            {expert.enabled ? expertCopy.enabled : expertCopy.disabled}
+                  {experts.map((expert, index) => {
+                    const expertNames = getExpertDisplayNames(expert);
+                    return (
+                      <div key={expert.id} className="rounded-xl border border-gray-200 bg-white p-3 transition-all hover:border-indigo-200 hover:shadow-sm">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex-1 min-w-0">
+                            <div className="text-xs font-bold text-gray-900 truncate">{expertNames.primary}</div>
+                            {expertNames.secondary && (
+                              <div className="mt-1 text-[10px] font-medium text-gray-400 truncate">
+                                {expertNames.secondary}
+                              </div>
+                            )}
+                            <div className={`mt-1.5 text-[10px] font-black uppercase tracking-wider ${expert.enabled ? 'text-emerald-600' : 'text-gray-400'}`}>
+                              {expert.enabled ? expertCopy.enabled : expertCopy.disabled}
+                            </div>
                           </div>
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={expert.enabled}
+                            aria-label={`${expertNames.primary} ${expert.enabled ? expertCopy.enabled : expertCopy.disabled}`}
+                            onClick={() => setExperts((prev) => prev.map((item, i) => i === index ? { ...item, enabled: !item.enabled } : item))}
+                            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 ${expert.enabled ? 'bg-emerald-500' : 'bg-gray-300'}`}
+                          >
+                            <span
+                              className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${expert.enabled ? 'translate-x-6' : 'translate-x-1'}`}
+                            />
+                          </button>
                         </div>
-                        <button
-                          type="button"
-                          role="switch"
-                          aria-checked={expert.enabled}
-                          aria-label={`${expert.name} ${expert.enabled ? expertCopy.enabled : expertCopy.disabled}`}
-                          onClick={() => setExperts((prev) => prev.map((item, i) => i === index ? { ...item, enabled: !item.enabled } : item))}
-                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 ${expert.enabled ? 'bg-emerald-500' : 'bg-gray-300'}`}
-                        >
-                          <span
-                            className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${expert.enabled ? 'translate-x-6' : 'translate-x-1'}`}
-                          />
-                        </button>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                   {experts.length === 0 && <div className="col-span-full rounded-2xl border border-dashed border-gray-200 p-6 text-center text-sm text-gray-400">{expertCopy.empty}</div>}
                 </div>
               </section>
@@ -1367,7 +1408,15 @@ export function ProjectConfig() {
                         <label className="mb-1 block text-[10px] font-black uppercase tracking-widest text-gray-400">{llmCopy.provider}</label>
                         <select
                           value={editingModel.provider}
-                          onChange={(e) => setEditingModel({ ...editingModel, provider: e.target.value })}
+                          onChange={(e) => {
+                            const nextProvider = e.target.value;
+                            setEditingModel({
+                              ...editingModel,
+                              provider: nextProvider,
+                              base_url: isOpenAICompatibleProvider(nextProvider) ? editingModel.base_url : '',
+                              headers: isOpenAICompatibleProvider(nextProvider) ? editingModel.headers : '',
+                            });
+                          }}
                           className="w-full rounded-xl border border-gray-100 bg-gray-50 p-2.5 outline-none transition-all focus:ring-2 focus:ring-indigo-500"
                         >
                           <option value="openai">OpenAI Compatible</option>
@@ -1376,24 +1425,33 @@ export function ProjectConfig() {
                       </div>
 
                       <div className="md:col-span-2 xl:col-span-1">
-                        <label className="mb-1 block text-[10px] font-black uppercase tracking-widest text-gray-400">{llmCopy.modelId}</label>
+                        <label className="mb-1 block text-[10px] font-black uppercase tracking-widest text-gray-400">{editingModelIdLabel}</label>
                         <input
                           value={editingModel.model_name}
                           onChange={(e) => setEditingModel({ ...editingModel, model_name: e.target.value })}
-                          placeholder="gpt-4o"
+                          placeholder={editingModelIdPlaceholder}
                           className="w-full rounded-xl border border-gray-100 bg-gray-50 p-2.5 outline-none transition-all focus:ring-2 focus:ring-indigo-500"
                         />
                       </div>
 
-                      <div className="md:col-span-2 xl:col-span-2">
-                        <label className="mb-1 block text-[10px] font-black uppercase tracking-widest text-gray-400">{llmCopy.openaiBaseUrl}</label>
-                        <input
-                          value={editingModel.base_url || ''}
-                          onChange={(e) => setEditingModel({ ...editingModel, base_url: e.target.value })}
-                          placeholder="https://api.openai.com/v1"
-                          className="w-full rounded-xl border border-gray-100 bg-gray-50 p-2.5 outline-none transition-all focus:ring-2 focus:ring-indigo-500"
-                        />
-                      </div>
+                      {isEditingOpenAICompatible ? (
+                        <div className="md:col-span-2 xl:col-span-2">
+                          <label className="mb-1 block text-[10px] font-black uppercase tracking-widest text-gray-400">{llmCopy.openaiBaseUrl}</label>
+                          <input
+                            value={editingModel.base_url || ''}
+                            onChange={(e) => setEditingModel({ ...editingModel, base_url: e.target.value })}
+                            placeholder="https://api.openai.com/v1"
+                            className="w-full rounded-xl border border-gray-100 bg-gray-50 p-2.5 outline-none transition-all focus:ring-2 focus:ring-indigo-500"
+                          />
+                        </div>
+                      ) : (
+                        <div className="md:col-span-2 xl:col-span-2">
+                          <label className="mb-1 block text-[10px] font-black uppercase tracking-widest text-gray-400">{llmCopy.geminiEndpoint}</label>
+                          <div className="w-full rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2.5 text-sm text-emerald-700">
+                            {llmCopy.geminiNativeApi}
+                          </div>
+                        </div>
+                      )}
 
                       <div className="flex items-center gap-3 rounded-2xl border border-gray-100 bg-gray-50 px-3 py-2.5">
                         <button
@@ -1408,7 +1466,7 @@ export function ProjectConfig() {
 
                       <div className="md:col-span-2 xl:col-span-3">
                         <label className="mb-1 block text-[10px] font-black uppercase tracking-widest text-gray-400">
-                          {llmCopy.enterKey} {editingModel.has_api_key ? `(${llmCopy.saved})` : ''}
+                          {editingModelApiKeyLabel} {editingModel.has_api_key ? `(${llmCopy.saved})` : ''}
                         </label>
                         <input
                           type="password"
@@ -1419,17 +1477,19 @@ export function ProjectConfig() {
                         />
                       </div>
 
-                      <div className="md:col-span-2 xl:col-span-3">
-                        <label className="mb-1 block text-[10px] font-black uppercase tracking-widest text-gray-400">
-                          Request Headers JSON {editingModel.has_headers ? `(${llmCopy.saved})` : ''}
-                        </label>
-                        <textarea
-                          value={editingModel.headers || ''}
-                          onChange={(e) => setEditingModel({ ...editingModel, headers: e.target.value })}
-                          placeholder={editingModel.has_headers ? 'Leave blank to keep current headers' : '{"Authorization":"Bearer custom-token"}'}
-                          className="min-h-16 w-full resize-none rounded-xl border border-gray-100 bg-gray-50 p-2.5 font-mono text-xs outline-none transition-all focus:ring-2 focus:ring-indigo-500"
-                        />
-                      </div>
+                      {isEditingOpenAICompatible && (
+                        <div className="md:col-span-2 xl:col-span-3">
+                          <label className="mb-1 block text-[10px] font-black uppercase tracking-widest text-gray-400">
+                            {llmCopy.requestHeaders} {editingModel.has_headers ? `(${llmCopy.saved})` : ''}
+                          </label>
+                          <textarea
+                            value={editingModel.headers || ''}
+                            onChange={(e) => setEditingModel({ ...editingModel, headers: e.target.value })}
+                            placeholder={editingModel.has_headers ? llmCopy.keepCurrentHeaders : llmCopy.requestHeadersPlaceholder}
+                            className="min-h-16 w-full resize-none rounded-xl border border-gray-100 bg-gray-50 p-2.5 font-mono text-xs outline-none transition-all focus:ring-2 focus:ring-indigo-500"
+                          />
+                        </div>
+                      )}
                     </div>
                   </ConfigEditorModal>
                 )}
