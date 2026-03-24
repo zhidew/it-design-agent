@@ -1471,15 +1471,26 @@ async def continue_workflow(
 
     run_status = current_state.get("run_status")
     can_resume = current_state.get("can_resume")
+    waiting_reason = current_state.get("waiting_reason")
     print(f"[DEBUG] continue_workflow: {project_id}/{version} status={run_status}, can_resume={can_resume}")
 
-    if run_status != RUN_STATUS_QUEUED:
-        print(f"[DEBUG] continue_workflow: Status is not queued ({run_status})")
+    # Support continuing from:
+    # 1. queued status (normal continuation)
+    # 2. waiting_human status (after user cancelled, need to retry with new parameters)
+    is_cancelled = waiting_reason and "[CANCELLED]" in waiting_reason
+
+    if run_status == RUN_STATUS_RUNNING:
+        print(f"[DEBUG] continue_workflow: Status is running, cannot continue directly")
         return False
 
-    # If status is queued, we allow continuation even if can_resume was True (it shouldn't be, but we're robust)
-    if can_resume and run_status != RUN_STATUS_QUEUED:
-        print(f"[DEBUG] continue_workflow: can_resume is True and status is not queued")
+    if run_status != RUN_STATUS_QUEUED and run_status != RUN_STATUS_WAITING_HUMAN:
+        print(f"[DEBUG] continue_workflow: Status is not queued or waiting_human ({run_status})")
+        return False
+
+    # If status is waiting_human but not cancelled, and can_resume is True, treat as normal resume
+    # Only allow if can_resume is True or if it's a cancelled state
+    if not can_resume and not is_cancelled:
+        print(f"[DEBUG] continue_workflow: can_resume is False and not a cancelled state")
         return False
 
     has_todo_tasks = any(task.get("status") == "todo" for task in current_state.get("task_queue", []))
@@ -1489,7 +1500,14 @@ async def continue_workflow(
 
     run_id = current_state.get("run_id")
     if not run_id:
-        return False
+        # Generate new run_id if not exists (e.g., after cancel)
+        run_id = str(uuid.uuid4())
+
+    # Build history message based on continuation type
+    if is_cancelled:
+        history_msg = f"[HUMAN] Retry workflow with model={model or 'default'}, effort={effort_level or 'default'}"
+    else:
+        history_msg = "[HUMAN] Continue workflow from queued state"
 
     continue_state = {
         **current_state,
@@ -1497,15 +1515,18 @@ async def continue_workflow(
         "current_node": "bootstrap",
         "human_intervention_required": False,
         "waiting_reason": None,
+        "can_resume": False,
         "resume_action": "approve",
         "history": [
             *(current_state.get("history") or []),
-            "[HUMAN] Continue workflow from queued state",
+            history_msg,
         ],
     }
 
     _delete_checkpoint_state(project_id, version)
     _ensure_job(run_id)
+    jobs[run_id]["status"] = RUN_STATUS_RUNNING
+
     _set_runtime_state(
         project_id,
         version,
@@ -1515,8 +1536,19 @@ async def continue_workflow(
         can_resume=False,
         job_id=run_id,
     )
+
+    # Cancel existing task before starting new one
+    thread_id = _thread_id(project_id, version)
+    existing_task = runtime_tasks.get(thread_id)
+    if existing_task and not existing_task.done():
+        existing_task.cancel()
+        try:
+            await asyncio.wait_for(existing_task, timeout=1.0)
+        except (asyncio.CancelledError, asyncio.TimeoutError):
+            pass
+
     _launch_runtime_task(
-        _thread_id(project_id, version),
+        thread_id,
         run_orchestrator_task(
             run_id,
             project_id,
@@ -1529,6 +1561,80 @@ async def continue_workflow(
             effort_level=effort_level,
         )
     )
+    return True
+
+
+async def cancel_workflow(
+    project_id: str,
+    version: str,
+    reason: str | None = None,
+) -> bool:
+    """Cancel a running workflow and set it to a cancellable state for user to retry with new parameters."""
+    current_state = get_workflow_state(project_id, version)
+    if not current_state:
+        print(f"[DEBUG] cancel_workflow: No state found for {project_id}/{version}")
+        return False
+
+    run_status = current_state.get("run_status")
+    thread_id = _thread_id(project_id, version)
+
+    # Cancel the running task if exists
+    existing_task = runtime_tasks.get(thread_id)
+    if existing_task and not existing_task.done():
+        print(f"[DEBUG] Cancelling running task for thread {thread_id}")
+        existing_task.cancel()
+        try:
+            await asyncio.wait_for(existing_task, timeout=2.0)
+        except (asyncio.CancelledError, asyncio.TimeoutError):
+            pass
+
+    # Determine which tasks to mark as todo based on current state
+    task_queue = current_state.get("task_queue", [])
+    current_node = current_state.get("current_node")
+
+    # Mark the currently running task as todo, keep completed tasks as is
+    updated_task_queue = []
+    for task in task_queue:
+        if task.get("status") == "running":
+            # Set the running task back to todo so it can be retried
+            updated_task_queue.append({
+                **task,
+                "status": "todo"
+            })
+        else:
+            updated_task_queue.append(task)
+
+    # Update job status
+    run_id = current_state.get("run_id")
+    if run_id and run_id in jobs:
+        jobs[run_id]["status"] = RUN_STATUS_FAILED
+
+    # Update runtime state to indicate cancelled and can be resumed
+    cancel_reason = reason or "Cancelled by user"
+    _set_runtime_state(
+        project_id,
+        version,
+        run_status=RUN_STATUS_WAITING_HUMAN,
+        current_node=current_node,
+        waiting_reason=f"[CANCELLED] {cancel_reason}. You can now retry with different LLM or effort level.",
+        can_resume=True,
+        job_id=None,
+    )
+
+    # Update the persisted state
+    from services.db_service import metadata_db
+    metadata_db.upsert_version(
+        project_id,
+        version,
+        current_state.get("requirement", ""),
+        RUN_STATUS_WAITING_HUMAN
+    )
+
+    # Add to history
+    history = current_state.get("history", [])
+    history.append(f"[HUMAN] Workflow cancelled: {cancel_reason}")
+
+    print(f"[DEBUG] cancel_workflow: Workflow {project_id}/{version} cancelled successfully")
     return True
 
 

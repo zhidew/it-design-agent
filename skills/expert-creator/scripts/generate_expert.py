@@ -226,7 +226,19 @@ Return each file in a code block with the filename as header.
     
     def _clean_yaml(self, raw: str) -> str:
         """Clean YAML content from markdown code blocks."""
-        cleaned = raw.replace("```yaml", "").replace("```", "").strip()
+        cleaned = raw.strip()
+        import re
+        if cleaned.startswith("```"):
+            match = re.match(r"^```(?:yaml)?\s+([\s\S]*?)\s*```$", cleaned)
+            if match:
+                cleaned = match.group(1).strip()
+            else:
+                match = re.match(r"^```(?:yaml)?\s+([\s\S]*)", cleaned)
+                if match:
+                    cleaned = match.group(1).strip()
+                    if cleaned.endswith("```"):
+                        cleaned = cleaned[:-3].strip()
+
         try:
             if "capability:" in cleaned:
                 yaml.safe_load(cleaned)

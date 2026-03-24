@@ -540,7 +540,7 @@ def _fallback_decision(candidate_files: List[str]) -> Dict[str, Any]:
             "done": False,
             "thought": "Starting evidence collection from available files",
             "tool_name": "read_file_chunk",
-            "tool_input": {"file_name": candidate_files[0], "start_line": 1, "limit": 100},
+            "tool_input": {"path": candidate_files[0], "start_line": 1, "end_line": 100},
             "evidence_note": "Reading initial requirements",
         }
     return {

@@ -53,3 +53,7 @@ class NodeRetryRequest(BaseModel):
 class ContinueRequest(BaseModel):
     model: Optional[str] = None
     effort_level: Optional[str] = None
+
+
+class CancelRequest(BaseModel):
+    reason: Optional[str] = None

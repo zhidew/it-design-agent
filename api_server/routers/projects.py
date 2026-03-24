@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File
 import shutil
 from typing import List
-from models.project import ProjectCreateRequest, ProjectResponse, VersionRunRequest, JobResponse, ResumeRequest, NodeRetryRequest, ContinueRequest
+from models.project import ProjectCreateRequest, ProjectResponse, VersionRunRequest, JobResponse, ResumeRequest, NodeRetryRequest, ContinueRequest, CancelRequest
 from models.management import VersionListResponse
 import services.orchestrator_service as orch
 
@@ -130,6 +130,20 @@ async def continue_workflow(project_id: str, version: str, req: ContinueRequest)
     if not success:
         raise HTTPException(status_code=409, detail="Workflow cannot be continued in the current state.")
     return {"success": True, "status": "queued"}
+
+
+@router.post("/{project_id}/versions/{version}/cancel")
+async def cancel_workflow(project_id: str, version: str, req: CancelRequest):
+    payload = req.model_dump() if hasattr(req, "model_dump") else req.dict()
+    success = await orch.cancel_workflow(
+        project_id,
+        version,
+        payload.get("reason"),
+    )
+    if not success:
+        raise HTTPException(status_code=409, detail="Workflow cannot be cancelled in the current state.")
+    return {"success": True, "status": "cancelled"}
+
 
 @router.get("/{project_id}/versions/{version}/logs")
 async def get_version_logs(project_id: str, version: str):

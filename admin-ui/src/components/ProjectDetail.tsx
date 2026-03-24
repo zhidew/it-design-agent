@@ -1,7 +1,7 @@
 ﻿import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { useParams, Link, useLocation } from 'react-router-dom';
 import { api, type EffortLevel } from '../api';
-import { ArrowLeft, Play, RefreshCw, Activity, Check, X, Upload, FileText, Database, Layers, Book, List, Trash2, ChevronLeft, ChevronRight, Settings2, FolderGit2, BookOpen, Bot, Cpu, Info } from 'lucide-react';
+import { ArrowLeft, Play, RefreshCw, Activity, Check, X, Upload, FileText, Database, Layers, Book, List, Trash2, ChevronLeft, ChevronRight, Settings2, FolderGit2, BookOpen, Bot, Cpu, Info, Square } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { TaskKanban } from './TaskKanban';
@@ -261,6 +261,7 @@ export function ProjectDetail() {
   const [deletingVersion, setDeletingVersion] = useState<string | null>(null);
   const [retryingNode, setRetryingNode] = useState<string | null>(null);
   const [continuingWorkflow, setContinuingWorkflow] = useState(false);
+  const [cancellingWorkflow, setCancellingWorkflow] = useState(false);
   const [resourceSummary, setResourceSummary] = useState<{
     repositories: RepositoryResourceSummary[];
     databases: DatabaseResourceSummary[];
@@ -1301,6 +1302,7 @@ export function ProjectDetail() {
   );
   const pendingInterrupt = workflowState?.pending_interrupt ?? null;
   const isClarificationInterrupt = pendingInterrupt?.interrupt_kind === 'ask_human';
+  const isCancelledState = workflowState?.waiting_reason?.includes('[CANCELLED]') ?? false;
   const interruptOptions = useMemo(() => {
     const rawOptions = pendingInterrupt?.context?.options;
     if (!Array.isArray(rawOptions)) {
@@ -1454,8 +1456,10 @@ export function ProjectDetail() {
 
   const handleContinueWorkflow = async () => {
     if (!id || !selectedVersion) return;
-    if (workflowState?.run_status !== 'queued') {
-      setUiError('Workflow can only be continued from a queued state.');
+    const runStatus = workflowState?.run_status;
+    // Allow continuation from queued, waiting_human (including cancelled state)
+    if (runStatus !== 'queued' && runStatus !== 'waiting_human') {
+      setUiError('Workflow can only be continued from a queued or cancelled state.');
       return;
     }
     setContinuingWorkflow(true);
@@ -1468,6 +1472,27 @@ export function ProjectDetail() {
       setStreamStatus('error');
     } finally {
       setContinuingWorkflow(false);
+    }
+  };
+
+  const handleCancelWorkflow = async () => {
+    if (!id || !selectedVersion) return;
+    if (workflowState?.run_status !== 'running') {
+      setUiError('Workflow can only be cancelled while running.');
+      return;
+    }
+    if (!confirm('Are you sure you want to cancel the running workflow? You can then retry with different parameters.')) {
+      return;
+    }
+    setCancellingWorkflow(true);
+    try {
+      await api.cancelWorkflow(id, selectedVersion, 'Cancelled by user');
+      void fetchState();
+    } catch (err: any) {
+      setUiError(err?.response?.data?.detail || 'Failed to cancel workflow');
+      setStreamStatus('error');
+    } finally {
+      setCancellingWorkflow(false);
     }
   };
 
@@ -1842,6 +1867,16 @@ export function ProjectDetail() {
               </div>
 
             <div className="space-y-3">
+                {workflowState?.run_status === 'running' && (
+                  <button
+                    onClick={handleCancelWorkflow}
+                    disabled={cancellingWorkflow || continuingWorkflow || retryingNode !== null}
+                    className="px-4 py-2 bg-rose-100 text-rose-700 rounded-xl text-xs font-black uppercase tracking-wider hover:bg-rose-200 transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {cancellingWorkflow ? <RefreshCw size={14} className="animate-spin" /> : <Square size={14} fill="currentColor" />}
+                    {cancellingWorkflow ? 'Cancelling...' : 'Stop Workflow'}
+                  </button>
+                )}
                 {workflowState?.run_status === 'queued' && hasPendingTodoTasks && (
                   <button
                     onClick={handleContinueWorkflow}
@@ -2025,30 +2060,69 @@ export function ProjectDetail() {
           )}
 
           {workflowState?.run_status === 'waiting_human' && (
-            <section className="bg-amber-50 rounded-3xl border border-amber-200 shadow-sm p-8 space-y-5">
+            <section className={`rounded-3xl border shadow-sm p-8 space-y-5 ${isCancelledState ? 'bg-rose-50 border-rose-200' : 'bg-amber-50 border-amber-200'}`}>
               <div className="flex items-start justify-between gap-4">
                 <div className="space-y-2">
-                  <div className="inline-flex items-center rounded-full bg-amber-100 px-3 py-1 text-[10px] font-black uppercase tracking-[0.2em] text-amber-700">
-                    Waiting Human
+                  <div className={`inline-flex items-center rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.2em] ${isCancelledState ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-700'}`}>
+                    {isCancelledState ? 'Workflow Cancelled' : 'Waiting Human'}
                   </div>
                   <h2 className="text-xl font-black tracking-tight text-amber-950">
-                    {isClarificationInterrupt ? 'Planner needs clarification' : 'Planner is waiting for review'}
+                    {isCancelledState ? 'Workflow Stopped - Ready to Retry' : (isClarificationInterrupt ? 'Planner needs clarification' : 'Planner is waiting for review')}
                   </h2>
                   <p className="text-sm font-medium text-amber-900/80">
-                    {workflowState.waiting_reason || 'Provide the missing detail or review feedback before the workflow continues.'}
+                    {workflowState.waiting_reason || (isCancelledState ? 'You can now retry with different LLM or effort level.' : 'Provide the missing detail or review feedback before the workflow continues.')}
                   </p>
                 </div>
                 {workflowState.current_node && (
-                  <span className="rounded-full bg-white px-3 py-1 text-[10px] font-black uppercase tracking-wider text-amber-700 border border-amber-200">
+                  <span className={`rounded-full bg-white px-3 py-1 text-[10px] font-black uppercase tracking-wider border ${isCancelledState ? 'text-rose-700 border-rose-200' : 'text-amber-700 border-amber-200'}`}>
                     {workflowState.current_node}
                   </span>
                 )}
               </div>
 
+              {/* Show model/effort level selection for retry when cancelled */}
+              {isCancelledState && (
+                <div className="rounded-2xl border border-rose-200 bg-white/60 px-4 py-4 space-y-4">
+                  <div className="text-[10px] font-black uppercase tracking-widest text-rose-700">
+                    Retry Configuration
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label className="text-xs font-medium text-gray-600">LLM Model</label>
+                      <select
+                        value={selectedModel}
+                        onChange={(e) => setSelectedModel(e.target.value as string)}
+                        className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-400"
+                      >
+                        <option value="">Default</option>
+                        <option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
+                        <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet</option>
+                        <option value="claude-3-opus-20240229">Claude 3 Opus</option>
+                        <option value="gpt-4o">GPT-4o</option>
+                        <option value="gpt-4-turbo">GPT-4 Turbo</option>
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-xs font-medium text-gray-600">Effort Level</label>
+                      <select
+                        value={selectedEffortLevel}
+                        onChange={(e) => setSelectedEffortLevel(e.target.value as EffortLevel)}
+                        className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-400"
+                      >
+                        <option value="low">Low (faster)</option>
+                        <option value="medium">Medium</option>
+                        <option value="high">High (thorough)</option>
+                        <option value="ultra">Ultra (comprehensive)</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Hidden: Technical interrupt details (node_id, interrupt_id, raw context) not shown to end users */}
 
               {/* Show why this clarification is needed */}
-              {pendingInterrupt?.context?.why_needed !== undefined && pendingInterrupt?.context?.why_needed !== null && (
+              {!isCancelledState && pendingInterrupt?.context?.why_needed !== undefined && pendingInterrupt?.context?.why_needed !== null && (
                 <div className="rounded-2xl border border-amber-200 bg-white/60 px-4 py-3">
                   <p className="text-xs text-amber-800">
                     <span className="font-bold">Why this matters: </span>
@@ -2057,7 +2131,7 @@ export function ProjectDetail() {
                 </div>
               )}
 
-              {isClarificationInterrupt && interruptOptions.length > 0 && (
+              {!isCancelledState && isClarificationInterrupt && interruptOptions.length > 0 && (
                 <div className="space-y-3">
                   <label className="text-[10px] font-black uppercase tracking-widest text-amber-700">
                     Suggested options
@@ -2095,24 +2169,37 @@ export function ProjectDetail() {
                 </div>
               )}
 
-              <div className="space-y-2">
-                <label className="text-[10px] font-black uppercase tracking-widest text-amber-700">
-                  {isClarificationInterrupt ? 'Additional details (optional)' : 'Revision feedback'}
-                </label>
-                <textarea
-                  value={reviewFeedback}
-                  onChange={(e) => setReviewFeedback(e.target.value)}
-                  placeholder={
-                    isClarificationInterrupt
-                      ? 'If none of the options fit, explain your answer here. You can also add constraints, scope, or business context.'
-                      : 'Explain what should change before planner runs again.'
-                  }
-                  className="w-full min-h-28 rounded-2xl border border-amber-200 bg-white px-4 py-3 text-sm font-medium text-gray-800 focus:outline-none focus:ring-2 focus:ring-amber-400 resize-none"
-                />
-              </div>
+              {!isCancelledState && (
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-amber-700">
+                    {isClarificationInterrupt ? 'Additional details (optional)' : 'Revision feedback'}
+                  </label>
+                  <textarea
+                    value={reviewFeedback}
+                    onChange={(e) => setReviewFeedback(e.target.value)}
+                    placeholder={
+                      isClarificationInterrupt
+                        ? 'If none of the options fit, explain your answer here. You can also add constraints, scope, or business context.'
+                        : 'Explain what should change before planner runs again.'
+                    }
+                    className="w-full min-h-28 rounded-2xl border border-amber-200 bg-white px-4 py-3 text-sm font-medium text-gray-800 focus:outline-none focus:ring-2 focus:ring-amber-400 resize-none"
+                  />
+                </div>
+              )}
 
               <div className="flex flex-col sm:flex-row gap-3">
-                {isClarificationInterrupt ? (
+                {isCancelledState ? (
+                  <>
+                    <button
+                      onClick={handleContinueWorkflow}
+                      disabled={continuingWorkflow}
+                      className="flex-1 rounded-2xl bg-rose-600 px-5 py-4 text-sm font-black uppercase tracking-widest text-white transition-all hover:bg-rose-700 disabled:cursor-not-allowed disabled:bg-rose-300 flex items-center justify-center gap-2"
+                    >
+                      {continuingWorkflow ? <RefreshCw size={16} className="animate-spin" /> : <Play size={16} fill="currentColor" />}
+                      {continuingWorkflow ? 'Retrying...' : 'Retry with New Settings'}
+                    </button>
+                  </>
+                ) : isClarificationInterrupt ? (
                   <button
                     onClick={() => handleResumeExecution('answer')}
                     disabled={resumeActionLoading !== null || (!selectedInterruptOption && reviewFeedback.trim().length === 0)}
