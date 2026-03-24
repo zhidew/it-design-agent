@@ -5,7 +5,7 @@ from models.project_config import DatabaseConfig, DebugConfig, ExpertConfig, Kno
 try:
     from api_server.services.db_service import metadata_db
     from api_server.services.llm_service import test_llm_connectivity
-    from api_server.services.test_service import (
+    from api_server.services.connectivity_service import (
         test_repository_connection,
         test_database_connection,
         test_knowledge_base_connection,
@@ -13,7 +13,7 @@ try:
 except ModuleNotFoundError:
     from services.db_service import metadata_db
     from services.llm_service import test_llm_connectivity
-    from services.test_service import (
+    from services.connectivity_service import (
         test_repository_connection,
         test_database_connection,
         test_knowledge_base_connection,
