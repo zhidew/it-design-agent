@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException
 from models.project_config import DatabaseConfig, DebugConfig, ExpertConfig, KnowledgeBaseConfig, LlmConfig, RepositoryConfig, ModelConfig, ModelConfigs
 from services.db_service import metadata_db
 from services.llm_service import test_llm_connectivity
+from services.test_service import test_repository_connection, test_database_connection, test_knowledge_base_connection
 
 
 router = APIRouter(
@@ -148,6 +149,40 @@ async def delete_project_model_config(project_id: str, model_id: str):
     if not deleted:
         raise HTTPException(status_code=404, detail=f"Model config '{model_id}' not found.")
     return {"success": True, "project_id": project_id, "model_id": model_id}
+
+
+@router.post("/repositories/test")
+async def test_repository_config(project_id: str, req: RepositoryConfig):
+    _require_project(project_id)
+    payload = req.model_dump() if hasattr(req, "model_dump") else req.dict()
+    # If token is None but we have an existing one in DB, fetch it
+    if payload.get("token") is None and payload.get("id"):
+        existing = metadata_db.get_repository(project_id, payload["id"], include_secrets=True)
+        if existing:
+            payload["token"] = existing.get("token")
+    result = test_repository_connection(payload)
+    return result.to_dict()
+
+
+@router.post("/databases/test")
+async def test_database_config(project_id: str, req: DatabaseConfig):
+    _require_project(project_id)
+    payload = req.model_dump() if hasattr(req, "model_dump") else req.dict()
+    # If password is None but we have an existing one in DB, fetch it
+    if payload.get("password") is None and payload.get("id"):
+        existing = metadata_db.get_database(project_id, payload["id"], include_secrets=True)
+        if existing:
+            payload["password"] = existing.get("password")
+    result = test_database_connection(payload)
+    return result.to_dict()
+
+
+@router.post("/knowledge-bases/test")
+async def test_knowledge_base_config(project_id: str, req: KnowledgeBaseConfig):
+    _require_project(project_id)
+    payload = req.model_dump() if hasattr(req, "model_dump") else req.dict()
+    result = test_knowledge_base_connection(payload)
+    return result.to_dict()
 
 
 @router.post("/llm/test")

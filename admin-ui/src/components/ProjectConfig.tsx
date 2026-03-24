@@ -181,6 +181,24 @@ export function ProjectConfig() {
   const [testingModel, setTestingModel] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
+  // Repository modal & test states
+  const [isRepoModalOpen, setIsRepoModalOpen] = useState(false);
+  const [editingRepo, setEditingRepo] = useState<RepositoryConfig | null>(null);
+  const [isNewRepo, setIsNewRepo] = useState(false);
+  const [testingRepo, setTestingRepo] = useState(false);
+
+  // Database modal & test states
+  const [isDbModalOpen, setIsDbModalOpen] = useState(false);
+  const [editingDb, setEditingDb] = useState<DatabaseConfig | null>(null);
+  const [isNewDb, setIsNewDb] = useState(false);
+  const [testingDb, setTestingDb] = useState(false);
+
+  // Knowledge base modal & test states
+  const [isKbModalOpen, setIsKbModalOpen] = useState(false);
+  const [editingKb, setEditingKb] = useState<KnowledgeBaseConfig | null>(null);
+  const [isNewKb, setIsNewKb] = useState(false);
+  const [testingKb, setTestingKb] = useState(false);
+
   // Project Deletion states
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [assetsSummary, setAssetsSummary] = useState<AssetsSummary | null>(null);
@@ -203,6 +221,54 @@ export function ProjectConfig() {
       setTestResult({ success: false, message: err.response?.data?.detail || err.message });
     } finally {
       setTestingModel(false);
+    }
+  };
+
+  const testRepoConfig = async () => {
+    if (!projectId || !editingRepo) return;
+    setTestingRepo(true);
+    setTestResult(null);
+    try {
+      const res = await api.testProjectRepository(projectId, {
+        ...editingRepo,
+        token: editingRepo.token?.trim() || undefined,
+      });
+      setTestResult(res);
+    } catch (err: any) {
+      setTestResult({ success: false, message: err.response?.data?.detail || err.message });
+    } finally {
+      setTestingRepo(false);
+    }
+  };
+
+  const testDbConfig = async () => {
+    if (!projectId || !editingDb) return;
+    setTestingDb(true);
+    setTestResult(null);
+    try {
+      const res = await api.testProjectDatabase(projectId, {
+        ...editingDb,
+        password: editingDb.password?.trim() || undefined,
+      });
+      setTestResult(res);
+    } catch (err: any) {
+      setTestResult({ success: false, message: err.response?.data?.detail || err.message });
+    } finally {
+      setTestingDb(false);
+    }
+  };
+
+  const testKbConfig = async () => {
+    if (!projectId || !editingKb) return;
+    setTestingKb(true);
+    setTestResult(null);
+    try {
+      const res = await api.testProjectKnowledgeBase(projectId, editingKb);
+      setTestResult(res);
+    } catch (err: any) {
+      setTestResult({ success: false, message: err.response?.data?.detail || err.message });
+    } finally {
+      setTestingKb(false);
     }
   };
 
@@ -444,6 +510,72 @@ export function ProjectConfig() {
     }
   };
 
+  const saveRepositoryModal = async (repo: RepositoryConfig) => {
+    if (!projectId) return;
+    setSaving(true);
+    setIsSaved(false);
+    try {
+      await api.saveRepositoryConfig(projectId, {
+        ...repo,
+        branch: repo.branch || 'main',
+        type: repo.type || 'git',
+        token: repo.token?.trim() ? repo.token.trim() : undefined,
+      });
+      setSaving(false);
+      setIsSaved(true);
+      await loadAll();
+      setEditingRepo(prev => prev ? { ...prev, token: '', has_token: true } : null);
+      setTimeout(() => setIsSaved(false), 3000);
+    } catch (error: any) {
+      setSaving(false);
+      setIsSaved(false);
+      setTestResult({ success: false, message: error?.message || 'Failed to save repository.' });
+    }
+  };
+
+  const saveDatabaseModal = async (db: DatabaseConfig) => {
+    if (!projectId) return;
+    setSaving(true);
+    setIsSaved(false);
+    try {
+      await api.saveDatabaseConfig(projectId, {
+        ...db,
+        port: Number(db.port),
+        schema_filter: db.schema_filter || [],
+        password: db.password?.trim() ? db.password.trim() : undefined,
+      });
+      setSaving(false);
+      setIsSaved(true);
+      await loadAll();
+      setEditingDb(prev => prev ? { ...prev, password: '', has_password: true } : null);
+      setTimeout(() => setIsSaved(false), 3000);
+    } catch (error: any) {
+      setSaving(false);
+      setIsSaved(false);
+      setTestResult({ success: false, message: error?.message || 'Failed to save database.' });
+    }
+  };
+
+  const saveKnowledgeBaseModal = async (kb: KnowledgeBaseConfig) => {
+    if (!projectId) return;
+    setSaving(true);
+    setIsSaved(false);
+    try {
+      await api.saveKnowledgeBaseConfig(projectId, {
+        ...kb,
+        includes: kb.includes || [],
+      });
+      setSaving(false);
+      setIsSaved(true);
+      await loadAll();
+      setTimeout(() => setIsSaved(false), 3000);
+    } catch (error: any) {
+      setSaving(false);
+      setIsSaved(false);
+      setTestResult({ success: false, message: error?.message || 'Failed to save knowledge base.' });
+    }
+  };
+
   const saveExperts = async () => {
     if (!projectId) return;
     setSaving(true);
@@ -639,173 +771,436 @@ export function ProjectConfig() {
 
           <div className="lg:col-span-9">
             {activeTab === 'repositories' && (
-              <section className="bg-white rounded-3xl border border-gray-100 shadow-sm p-8 space-y-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">{t('projectConfig.repositories.eyebrow')}</div>
-                    <h2 className="text-xl font-black text-gray-900">{t('projectConfig.repositories.title')}</h2>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <button onClick={() => setRepositories((prev) => [...prev, createRepository()])} className="inline-flex items-center gap-2 px-4 py-2 bg-gray-100 rounded-xl text-xs font-black uppercase text-gray-700 hover:bg-gray-200 transition-all">
+              <section className="space-y-5">
+                <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-6 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">{t('projectConfig.repositories.eyebrow')}</div>
+                      <h2 className="text-xl font-black text-gray-900">{t('projectConfig.repositories.title')}</h2>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setEditingRepo(createRepository());
+                        setTestResult(null);
+                        setIsRepoModalOpen(true);
+                      }}
+                      className="inline-flex items-center gap-2 px-4 py-2 bg-gray-100 rounded-xl text-xs font-black uppercase text-gray-700 hover:bg-gray-200 transition-all"
+                    >
                       <Plus size={14} />
                       {t('projectConfig.actions.addRepo')}
                     </button>
-                    <button
-                      onClick={() => void saveRepositories()}
-                      disabled={saving || isSaved}
-                      className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase transition-all shadow-lg disabled:opacity-50 min-w-[100px] justify-center ${isSaved ? 'bg-emerald-500 text-white shadow-emerald-100' : 'bg-indigo-600 text-white shadow-indigo-100 hover:bg-indigo-700'}`}
-                    >
-                      {saving ? <RefreshCw size={14} className="animate-spin" /> : (isSaved ? <CheckCircle size={14} /> : <Save size={14} />)}
-                      {saving ? t('common.saving') : (isSaved ? t('common.saveSuccess') : t('common.save'))}
-                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    {repositories.map((repo) => (
+                      <div
+                        key={repo.id}
+                        onClick={() => {
+                          setEditingRepo({ ...repo, token: '' });
+                          setTestResult(null);
+                          setIsRepoModalOpen(true);
+                        }}
+                        className="group relative rounded-2xl border border-gray-200 bg-white hover:border-indigo-200 hover:shadow-md p-4 transition-all flex flex-col justify-between gap-3 cursor-pointer"
+                      >
+                        <div className="flex items-start justify-between">
+                          <div className="min-w-0">
+                            <span className="text-sm font-black text-gray-900 truncate group-hover:text-indigo-600 transition-colors">{repo.name}</span>
+                            <div className="text-[10px] font-mono text-gray-400 mt-1 flex items-center gap-2">
+                              <span className="uppercase">{repo.type || 'git'}</span>
+                              <span className="w-1 h-1 rounded-full bg-gray-300" />
+                              <span className="truncate">{repo.url}</span>
+                            </div>
+                          </div>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void handleDeleteRepository(repo.id);
+                            }}
+                            className="p-2 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {repo.branch && (
+                            <span className="px-1.5 py-0.5 rounded-md bg-gray-100 text-gray-500 text-[8px] font-bold uppercase">{repo.branch}</span>
+                          )}
+                          {repo.has_token && (
+                            <span className="px-1.5 py-0.5 rounded-md bg-emerald-50 text-emerald-600 text-[8px] font-bold uppercase">Token Configured</span>
+                          )}
+                        </div>
+                        {repo.description && <p className="text-[10px] text-gray-500 line-clamp-2">{repo.description}</p>}
+                      </div>
+                    ))}
+                    {repositories.length === 0 && (
+                      <div className="md:col-span-2 rounded-2xl border border-dashed border-gray-200 p-8 text-center text-sm text-gray-400">{t('projectConfig.repositories.empty')}</div>
+                    )}
                   </div>
                 </div>
 
-                <div className="space-y-5">
-                  {repositories.map((repo, index) => (
-                    <div key={`${repo.id || 'new'}-${index}`} className="rounded-2xl border border-gray-200 p-5 bg-gray-50/50 space-y-4">
-                      <div className="flex items-center justify-between">
-                        <div className="text-xs font-black uppercase tracking-widest text-gray-500">
-                          {t('projectConfig.repositories.itemLabel', { index: index + 1 })}
-                        </div>
-                        <button onClick={() => repo.id ? void handleDeleteRepository(repo.id) : setRepositories((prev) => prev.filter((_, i) => i !== index))} className="inline-flex items-center gap-2 text-rose-600 text-xs font-black uppercase">
-                          <Trash2 size={14} />
-                          {t('projectConfig.actions.delete')}
-                        </button>
+                {isRepoModalOpen && editingRepo && (
+                  <div className="bg-white rounded-3xl border border-indigo-100 shadow-xl p-8 space-y-6 animate-in slide-in-from-bottom-4 duration-300">
+                    <div className="flex items-center justify-between border-b border-gray-50 pb-4">
+                      <h3 className="text-lg font-black text-gray-900 uppercase tracking-tight flex items-center gap-3">
+                        <FolderGit2 size={20} className="text-indigo-600" />
+                        {isNewRepo ? (t('projectConfig.actions.addRepo') || 'Add Repository') : (t('projectConfig.repositories.editRepo') || 'Edit Repository')}
+                      </h3>
+                      <button onClick={() => { setIsRepoModalOpen(false); setTestResult(null); }} className="text-gray-400 hover:text-gray-600">
+                        <Trash2 size={18} />
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                      <div>
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block">{t('projectConfig.repositories.placeholders.id')}</label>
+                        <input value={editingRepo.id} onChange={(e) => setEditingRepo({ ...editingRepo, id: e.target.value })} className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all" />
                       </div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <input value={repo.id} onChange={(e) => setRepositories((prev) => prev.map((item, i) => i === index ? { ...item, id: e.target.value } : item))} placeholder={t('projectConfig.repositories.placeholders.id')} className="w-full p-3 bg-white border border-gray-200 rounded-xl" />
-                        <input value={repo.name} onChange={(e) => setRepositories((prev) => prev.map((item, i) => i === index ? { ...item, name: e.target.value } : item))} placeholder={t('projectConfig.repositories.placeholders.name')} className="w-full p-3 bg-white border border-gray-200 rounded-xl" />
-                        <input value={repo.url} onChange={(e) => setRepositories((prev) => prev.map((item, i) => i === index ? { ...item, url: e.target.value } : item))} placeholder={t('projectConfig.repositories.placeholders.url')} className="w-full p-3 bg-white border border-gray-200 rounded-xl md:col-span-2" />
-                        <input value={repo.branch || ''} onChange={(e) => setRepositories((prev) => prev.map((item, i) => i === index ? { ...item, branch: e.target.value } : item))} placeholder={t('projectConfig.repositories.placeholders.branch')} className="w-full p-3 bg-white border border-gray-200 rounded-xl" />
-                        <input value={repo.username || ''} onChange={(e) => setRepositories((prev) => prev.map((item, i) => i === index ? { ...item, username: e.target.value } : item))} placeholder={t('projectConfig.repositories.placeholders.username')} className="w-full p-3 bg-white border border-gray-200 rounded-xl" />
-                        <input value={repo.token || ''} onChange={(e) => setRepositories((prev) => prev.map((item, i) => i === index ? { ...item, token: e.target.value } : item))} placeholder={repo.has_token ? t('projectConfig.repositories.placeholders.tokenExisting') : t('projectConfig.repositories.placeholders.token')} className="w-full p-3 bg-white border border-gray-200 rounded-xl" />
-                        <input value={repo.local_path || ''} onChange={(e) => setRepositories((prev) => prev.map((item, i) => i === index ? { ...item, local_path: e.target.value } : item))} placeholder={t('projectConfig.repositories.placeholders.localPath')} className="w-full p-3 bg-white border border-gray-200 rounded-xl" />
-                        <textarea value={repo.description || ''} onChange={(e) => setRepositories((prev) => prev.map((item, i) => i === index ? { ...item, description: e.target.value } : item))} placeholder={t('projectConfig.placeholders.description')} className="w-full p-3 bg-white border border-gray-200 rounded-xl md:col-span-2 min-h-24 resize-none" />
+                      <div>
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block">{t('projectConfig.repositories.placeholders.name')}</label>
+                        <input value={editingRepo.name} onChange={(e) => setEditingRepo({ ...editingRepo, name: e.target.value })} className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all" />
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block">{t('projectConfig.repositories.placeholders.url')}</label>
+                        <input value={editingRepo.url} onChange={(e) => setEditingRepo({ ...editingRepo, url: e.target.value })} className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all" />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block">{t('projectConfig.repositories.placeholders.branch')}</label>
+                        <input value={editingRepo.branch || ''} onChange={(e) => setEditingRepo({ ...editingRepo, branch: e.target.value })} className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all" />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block">{t('projectConfig.repositories.placeholders.username')}</label>
+                        <input value={editingRepo.username || ''} onChange={(e) => setEditingRepo({ ...editingRepo, username: e.target.value })} className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all" />
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block">
+                          {editingRepo.has_token ? t('projectConfig.repositories.placeholders.tokenExisting') : t('projectConfig.repositories.placeholders.token')}
+                        </label>
+                        <input type="password" value={editingRepo.token || ''} onChange={(e) => setEditingRepo({ ...editingRepo, token: e.target.value })} placeholder={editingRepo.has_token ? (t('common.keepCurrent') || 'Leave blank to keep current') : t('projectConfig.repositories.placeholders.token')} className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all" />
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block">{t('projectConfig.repositories.placeholders.localPath')}</label>
+                        <input value={editingRepo.local_path || ''} onChange={(e) => setEditingRepo({ ...editingRepo, local_path: e.target.value })} className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all" />
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block">{t('projectConfig.placeholders.description')}</label>
+                        <textarea value={editingRepo.description || ''} onChange={(e) => setEditingRepo({ ...editingRepo, description: e.target.value })} className="w-full min-h-20 p-3 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all resize-none" />
                       </div>
                     </div>
-                  ))}
-                  {repositories.length === 0 && <div className="rounded-2xl border border-dashed border-gray-200 p-10 text-center text-sm text-gray-400">{t('projectConfig.repositories.empty')}</div>}
-                </div>
+                    <div className="flex flex-col gap-4 pt-6 border-t border-gray-50">
+                      {testResult && (
+                        <div className={`flex items-start gap-3 p-3 rounded-xl border ${testResult.success ? 'bg-emerald-50 border-emerald-100 text-emerald-800' : 'bg-rose-50 border-rose-100 text-rose-800'} animate-in fade-in slide-in-from-top-2 duration-300`}>
+                          <div className="mt-0.5">{testResult.success ? <CheckCircle size={16} className="text-emerald-500" /> : <XCircle size={16} className="text-rose-500" />}</div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-black uppercase tracking-tight leading-none mb-1">{testResult.success ? 'Success' : 'Error'}</p>
+                            <p className="text-[11px] font-medium leading-normal break-words opacity-90">{testResult.message}</p>
+                          </div>
+                        </div>
+                      )}
+                      <div className="flex items-center gap-3">
+                        <button onClick={() => void testRepoConfig()} disabled={testingRepo || !editingRepo.url} className="flex-1 flex items-center justify-center gap-2 py-4 bg-white border-2 border-gray-100 text-gray-700 rounded-2xl font-black text-xs uppercase tracking-widest hover:border-indigo-100 hover:text-indigo-600 transition-all disabled:opacity-50">
+                          {testingRepo ? <RefreshCw size={16} className="animate-spin" /> : <Activity size={16} />}
+                          {testingRepo ? (llmCopy.testing) : (llmCopy.testModel)}
+                        </button>
+                        <button onClick={() => void saveRepositoryModal(editingRepo)} disabled={saving || isSaved || !editingRepo.id || !editingRepo.name || !editingRepo.url} className={`flex-[1.5] flex items-center justify-center gap-2 py-4 rounded-2xl font-black text-xs uppercase tracking-widest transition-all shadow-lg disabled:opacity-50 ${isSaved ? 'bg-emerald-500 text-white shadow-emerald-100' : 'bg-indigo-600 text-white shadow-indigo-100 hover:bg-indigo-700'}`}>
+                          {saving ? <RefreshCw size={16} className="animate-spin" /> : (isSaved ? <CheckCircle size={16} /> : null)}
+                          {saving ? t('common.saving') : (isSaved ? t('common.saveSuccess') : t('common.save'))}
+                        </button>
+                      </div>
+                      <button onClick={() => { setIsRepoModalOpen(false); setTestResult(null); }} className="w-full py-3 text-gray-400 font-bold text-[10px] uppercase tracking-widest hover:text-gray-600 transition-all">{t('common.cancel')}</button>
+                    </div>
+                  </div>
+                )}
               </section>
             )}
 
             {activeTab === 'databases' && (
-              <section className="bg-white rounded-3xl border border-gray-100 shadow-sm p-8 space-y-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">{t('projectConfig.databases.eyebrow')}</div>
-                    <h2 className="text-xl font-black text-gray-900">{t('projectConfig.databases.title')}</h2>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <button onClick={() => setDatabases((prev) => [...prev, createDatabase()])} className="inline-flex items-center gap-2 px-4 py-2 bg-gray-100 rounded-xl text-xs font-black uppercase text-gray-700 hover:bg-gray-200 transition-all">
+              <section className="space-y-5">
+                <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-6 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">{t('projectConfig.databases.eyebrow')}</div>
+                      <h2 className="text-xl font-black text-gray-900">{t('projectConfig.databases.title')}</h2>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setEditingDb(createDatabase());
+                        setTestResult(null);
+                        setIsDbModalOpen(true);
+                      }}
+                      className="inline-flex items-center gap-2 px-4 py-2 bg-gray-100 rounded-xl text-xs font-black uppercase text-gray-700 hover:bg-gray-200 transition-all"
+                    >
                       <Plus size={14} />
                       {t('projectConfig.actions.addDatabase')}
                     </button>
-                    <button
-                      onClick={() => void saveDatabases()}
-                      disabled={saving || isSaved}
-                      className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase transition-all shadow-lg disabled:opacity-50 min-w-[100px] justify-center ${isSaved ? 'bg-emerald-500 text-white shadow-emerald-100' : 'bg-indigo-600 text-white shadow-indigo-100 hover:bg-indigo-700'}`}
-                    >
-                      {saving ? <RefreshCw size={14} className="animate-spin" /> : (isSaved ? <CheckCircle size={14} /> : <Save size={14} />)}
-                      {saving ? t('common.saving') : (isSaved ? t('common.saveSuccess') : t('common.save'))}
-                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    {databases.map((db) => (
+                      <div
+                        key={db.id}
+                        onClick={() => {
+                          setEditingDb({ ...db, password: '' });
+                          setTestResult(null);
+                          setIsDbModalOpen(true);
+                        }}
+                        className="group relative rounded-2xl border border-gray-200 bg-white hover:border-indigo-200 hover:shadow-md p-4 transition-all flex flex-col justify-between gap-3 cursor-pointer"
+                      >
+                        <div className="flex items-start justify-between">
+                          <div className="min-w-0">
+                            <span className="text-sm font-black text-gray-900 truncate group-hover:text-indigo-600 transition-colors">{db.name}</span>
+                            <div className="text-[10px] font-mono text-gray-400 mt-1 flex items-center gap-2">
+                              <span className="uppercase">{db.type}</span>
+                              <span className="w-1 h-1 rounded-full bg-gray-300" />
+                              <span>{db.host}:{db.port}</span>
+                            </div>
+                          </div>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void handleDeleteDatabase(db.id);
+                            }}
+                            className="p-2 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="px-1.5 py-0.5 rounded-md bg-gray-100 text-gray-500 text-[8px] font-bold uppercase">{db.database}</span>
+                          {db.has_password && (
+                            <span className="px-1.5 py-0.5 rounded-md bg-emerald-50 text-emerald-600 text-[8px] font-bold uppercase">Password Configured</span>
+                          )}
+                        </div>
+                        {db.description && <p className="text-[10px] text-gray-500 line-clamp-2">{db.description}</p>}
+                      </div>
+                    ))}
+                    {databases.length === 0 && (
+                      <div className="md:col-span-2 rounded-2xl border border-dashed border-gray-200 p-8 text-center text-sm text-gray-400">{t('projectConfig.databases.empty')}</div>
+                    )}
                   </div>
                 </div>
 
-                <div className="space-y-5">
-                  {databases.map((db, index) => (
-                    <div key={`${db.id || 'new'}-${index}`} className="rounded-2xl border border-gray-200 p-5 bg-gray-50/50 space-y-4">
-                      <div className="flex items-center justify-between">
-                        <div className="text-xs font-black uppercase tracking-widest text-gray-500">
-                          {t('projectConfig.databases.itemLabel', { index: index + 1 })}
-                        </div>
-                        <button onClick={() => db.id ? void handleDeleteDatabase(db.id) : setDatabases((prev) => prev.filter((_, i) => i !== index))} className="inline-flex items-center gap-2 text-rose-600 text-xs font-black uppercase">
-                          <Trash2 size={14} />
-                          {t('projectConfig.actions.delete')}
-                        </button>
+                {isDbModalOpen && editingDb && (
+                  <div className="bg-white rounded-3xl border border-indigo-100 shadow-xl p-8 space-y-6 animate-in slide-in-from-bottom-4 duration-300">
+                    <div className="flex items-center justify-between border-b border-gray-50 pb-4">
+                      <h3 className="text-lg font-black text-gray-900 uppercase tracking-tight flex items-center gap-3">
+                        <Database size={20} className="text-indigo-600" />
+                        {isNewDb ? (t('projectConfig.actions.addDatabase') || 'Add Database') : (t('projectConfig.databases.editDatabase') || 'Edit Database')}
+                      </h3>
+                      <button onClick={() => { setIsDbModalOpen(false); setTestResult(null); }} className="text-gray-400 hover:text-gray-600">
+                        <Trash2 size={18} />
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                      <div>
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block">{t('projectConfig.databases.placeholders.id')}</label>
+                        <input value={editingDb.id} onChange={(e) => setEditingDb({ ...editingDb, id: e.target.value })} className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all" />
                       </div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <input value={db.id} onChange={(e) => setDatabases((prev) => prev.map((item, i) => i === index ? { ...item, id: e.target.value } : item))} placeholder={t('projectConfig.databases.placeholders.id')} className="w-full p-3 bg-white border border-gray-200 rounded-xl" />
-                        <input value={db.name} onChange={(e) => setDatabases((prev) => prev.map((item, i) => i === index ? { ...item, name: e.target.value } : item))} placeholder={t('projectConfig.databases.placeholders.name')} className="w-full p-3 bg-white border border-gray-200 rounded-xl" />
-                        <select value={db.type} onChange={(e) => setDatabases((prev) => prev.map((item, i) => i === index ? { ...item, type: e.target.value } : item))} className="w-full p-3 bg-white border border-gray-200 rounded-xl">
-                          <option value="postgresql">PostgreSQL</option>
-                          <option value="opengauss">openGauss</option>
-                          <option value="dws">DWS</option>
-                          <option value="mysql">MySQL</option>
-                          <option value="oracle">Oracle</option>
-                          <option value="sqlite">SQLite</option>
-                        </select>
-                        <input value={db.port} onChange={(e) => setDatabases((prev) => prev.map((item, i) => i === index ? { ...item, port: Number(e.target.value || 0) } : item))} placeholder={t('projectConfig.databases.placeholders.port')} type="number" className="w-full p-3 bg-white border border-gray-200 rounded-xl" />
-                        <input value={db.host} onChange={(e) => setDatabases((prev) => prev.map((item, i) => i === index ? { ...item, host: e.target.value } : item))} placeholder={t('projectConfig.databases.placeholders.host')} className="w-full p-3 bg-white border border-gray-200 rounded-xl" />
-                        <input value={db.database} onChange={(e) => setDatabases((prev) => prev.map((item, i) => i === index ? { ...item, database: e.target.value } : item))} placeholder={t('projectConfig.databases.placeholders.database')} className="w-full p-3 bg-white border border-gray-200 rounded-xl" />
-                        <input value={db.username || ''} onChange={(e) => setDatabases((prev) => prev.map((item, i) => i === index ? { ...item, username: e.target.value } : item))} placeholder={t('projectConfig.databases.placeholders.username')} className="w-full p-3 bg-white border border-gray-200 rounded-xl" />
-                        <input value={db.password || ''} onChange={(e) => setDatabases((prev) => prev.map((item, i) => i === index ? { ...item, password: e.target.value } : item))} placeholder={db.has_password ? t('projectConfig.databases.placeholders.passwordExisting') : t('projectConfig.databases.placeholders.password')} className="w-full p-3 bg-white border border-gray-200 rounded-xl" />
-                        <textarea value={(db.schema_filter || []).join('\n')} onChange={(e) => setDatabases((prev) => prev.map((item, i) => i === index ? { ...item, schema_filter: splitMultiline(e.target.value) } : item))} placeholder={t('projectConfig.databases.placeholders.schemaFilter')} className="w-full p-3 bg-white border border-gray-200 rounded-xl min-h-24 resize-none" />
-                        <textarea value={db.description || ''} onChange={(e) => setDatabases((prev) => prev.map((item, i) => i === index ? { ...item, description: e.target.value } : item))} placeholder={t('projectConfig.placeholders.description')} className="w-full p-3 bg-white border border-gray-200 rounded-xl min-h-24 resize-none" />
+                      <div>
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block">{t('projectConfig.databases.placeholders.name')}</label>
+                        <input value={editingDb.name} onChange={(e) => setEditingDb({ ...editingDb, name: e.target.value })} className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all" />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block">{t('projectConfig.databases.placeholders.host')}</label>
+                        <input value={editingDb.host} onChange={(e) => setEditingDb({ ...editingDb, host: e.target.value })} className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all" />
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block">{t('projectConfig.databases.placeholders.port')}</label>
+                          <input value={editingDb.port} onChange={(e) => setEditingDb({ ...editingDb, port: Number(e.target.value || 0) })} type="number" className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all" />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block">Type</label>
+                          <select value={editingDb.type} onChange={(e) => setEditingDb({ ...editingDb, type: e.target.value })} className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all">
+                            <option value="postgresql">PostgreSQL</option>
+                            <option value="opengauss">openGauss</option>
+                            <option value="dws">DWS</option>
+                            <option value="mysql">MySQL</option>
+                            <option value="oracle">Oracle</option>
+                            <option value="sqlite">SQLite</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block">{t('projectConfig.databases.placeholders.database')}</label>
+                        <input value={editingDb.database} onChange={(e) => setEditingDb({ ...editingDb, database: e.target.value })} className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all" />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block">{t('projectConfig.databases.placeholders.username')}</label>
+                        <input value={editingDb.username || ''} onChange={(e) => setEditingDb({ ...editingDb, username: e.target.value })} className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all" />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block">
+                          {editingDb.has_password ? t('projectConfig.databases.placeholders.passwordExisting') : t('projectConfig.databases.placeholders.password')}
+                        </label>
+                        <input type="password" value={editingDb.password || ''} onChange={(e) => setEditingDb({ ...editingDb, password: e.target.value })} placeholder={editingDb.has_password ? (t('common.keepCurrent') || 'Leave blank to keep current') : t('projectConfig.databases.placeholders.password')} className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all" />
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block">{t('projectConfig.databases.placeholders.schemaFilter')}</label>
+                        <textarea value={(editingDb.schema_filter || []).join('\n')} onChange={(e) => setEditingDb({ ...editingDb, schema_filter: splitMultiline(e.target.value) })} className="w-full min-h-20 p-3 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all resize-none font-mono text-xs" />
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block">{t('projectConfig.placeholders.description')}</label>
+                        <textarea value={editingDb.description || ''} onChange={(e) => setEditingDb({ ...editingDb, description: e.target.value })} className="w-full min-h-20 p-3 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all resize-none" />
                       </div>
                     </div>
-                  ))}
-                  {databases.length === 0 && <div className="rounded-2xl border border-dashed border-gray-200 p-10 text-center text-sm text-gray-400">{t('projectConfig.databases.empty')}</div>}
-                </div>
+                    <div className="flex flex-col gap-4 pt-6 border-t border-gray-50">
+                      {testResult && (
+                        <div className={`flex items-start gap-3 p-3 rounded-xl border ${testResult.success ? 'bg-emerald-50 border-emerald-100 text-emerald-800' : 'bg-rose-50 border-rose-100 text-rose-800'} animate-in fade-in slide-in-from-top-2 duration-300`}>
+                          <div className="mt-0.5">{testResult.success ? <CheckCircle size={16} className="text-emerald-500" /> : <XCircle size={16} className="text-rose-500" />}</div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-black uppercase tracking-tight leading-none mb-1">{testResult.success ? 'Success' : 'Error'}</p>
+                            <p className="text-[11px] font-medium leading-normal break-words opacity-90">{testResult.message}</p>
+                          </div>
+                        </div>
+                      )}
+                      <div className="flex items-center gap-3">
+                        <button onClick={() => void testDbConfig()} disabled={testingDb || !editingDb.host} className="flex-1 flex items-center justify-center gap-2 py-4 bg-white border-2 border-gray-100 text-gray-700 rounded-2xl font-black text-xs uppercase tracking-widest hover:border-indigo-100 hover:text-indigo-600 transition-all disabled:opacity-50">
+                          {testingDb ? <RefreshCw size={16} className="animate-spin" /> : <Activity size={16} />}
+                          {testingDb ? (llmCopy.testing) : (llmCopy.testModel)}
+                        </button>
+                        <button onClick={() => void saveDatabaseModal(editingDb)} disabled={saving || isSaved || !editingDb.id || !editingDb.name || !editingDb.host || !editingDb.database} className={`flex-[1.5] flex items-center justify-center gap-2 py-4 rounded-2xl font-black text-xs uppercase tracking-widest transition-all shadow-lg disabled:opacity-50 ${isSaved ? 'bg-emerald-500 text-white shadow-emerald-100' : 'bg-indigo-600 text-white shadow-indigo-100 hover:bg-indigo-700'}`}>
+                          {saving ? <RefreshCw size={16} className="animate-spin" /> : (isSaved ? <CheckCircle size={16} /> : null)}
+                          {saving ? t('common.saving') : (isSaved ? t('common.saveSuccess') : t('common.save'))}
+                        </button>
+                      </div>
+                      <button onClick={() => { setIsDbModalOpen(false); setTestResult(null); }} className="w-full py-3 text-gray-400 font-bold text-[10px] uppercase tracking-widest hover:text-gray-600 transition-all">{t('common.cancel')}</button>
+                    </div>
+                  </div>
+                )}
               </section>
             )}
 
             {activeTab === 'knowledge' && (
-              <section className="bg-white rounded-3xl border border-gray-100 shadow-sm p-8 space-y-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">{t('projectConfig.knowledge.eyebrow')}</div>
-                    <h2 className="text-xl font-black text-gray-900">{t('projectConfig.knowledge.title')}</h2>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <button onClick={() => setKnowledgeBases((prev) => [...prev, createKnowledgeBase()])} className="inline-flex items-center gap-2 px-4 py-2 bg-gray-100 rounded-xl text-xs font-black uppercase text-gray-700 hover:bg-gray-200 transition-all">
+              <section className="space-y-5">
+                <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-6 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">{t('projectConfig.knowledge.eyebrow')}</div>
+                      <h2 className="text-xl font-black text-gray-900">{t('projectConfig.knowledge.title')}</h2>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setEditingKb(createKnowledgeBase());
+                        setTestResult(null);
+                        setIsKbModalOpen(true);
+                      }}
+                      className="inline-flex items-center gap-2 px-4 py-2 bg-gray-100 rounded-xl text-xs font-black uppercase text-gray-700 hover:bg-gray-200 transition-all"
+                    >
                       <Plus size={14} />
                       {t('projectConfig.actions.addKnowledgeBase')}
                     </button>
-                    <button
-                      onClick={() => void saveKnowledgeBases()}
-                      disabled={saving || isSaved}
-                      className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase transition-all shadow-lg disabled:opacity-50 min-w-[100px] justify-center ${isSaved ? 'bg-emerald-500 text-white shadow-emerald-100' : 'bg-indigo-600 text-white shadow-indigo-100 hover:bg-indigo-700'}`}
-                    >
-                      {saving ? <RefreshCw size={14} className="animate-spin" /> : (isSaved ? <CheckCircle size={14} /> : <Save size={14} />)}
-                      {saving ? t('common.saving') : (isSaved ? t('common.saveSuccess') : t('common.save'))}
-                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    {knowledgeBases.map((kb) => (
+                      <div
+                        key={kb.id}
+                        onClick={() => {
+                          setEditingKb({ ...kb });
+                          setIsNewKb(false);
+                          setTestResult(null);
+                          setIsKbModalOpen(true);
+                        }}
+                        className="group relative rounded-2xl border border-gray-200 bg-white hover:border-indigo-200 hover:shadow-md p-4 transition-all flex flex-col justify-between gap-3 cursor-pointer"
+                      >
+                        <div className="flex items-start justify-between">
+                          <div className="min-w-0">
+                            <span className="text-sm font-black text-gray-900 truncate group-hover:text-indigo-600 transition-colors">{kb.name}</span>
+                            <div className="text-[10px] font-mono text-gray-400 mt-1 flex items-center gap-2">
+                              <span className="uppercase">{kb.type}</span>
+                              <span className="w-1 h-1 rounded-full bg-gray-300" />
+                              <span className="truncate">{kb.type === 'local' ? (kb.path || '') : (kb.index_url || '')}</span>
+                            </div>
+                          </div>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void handleDeleteKnowledgeBase(kb.id);
+                            }}
+                            className="p-2 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                        {kb.description && <p className="text-[10px] text-gray-500 line-clamp-2">{kb.description}</p>}
+                      </div>
+                    ))}
+                    {knowledgeBases.length === 0 && (
+                      <div className="md:col-span-2 rounded-2xl border border-dashed border-gray-200 p-8 text-center text-sm text-gray-400">{t('projectConfig.knowledge.empty')}</div>
+                    )}
                   </div>
                 </div>
 
-                <div className="space-y-5">
-                  {knowledgeBases.map((kb, index) => (
-                    <div key={`${kb.id || 'new'}-${index}`} className="rounded-2xl border border-gray-200 p-5 bg-gray-50/50 space-y-4">
-                      <div className="flex items-center justify-between">
-                        <div className="text-xs font-black uppercase tracking-widest text-gray-500">
-                          {t('projectConfig.knowledge.itemLabel', { index: index + 1 })}
-                        </div>
-                        <button onClick={() => kb.id ? void handleDeleteKnowledgeBase(kb.id) : setKnowledgeBases((prev) => prev.filter((_, i) => i !== index))} className="inline-flex items-center gap-2 text-rose-600 text-xs font-black uppercase">
-                          <Trash2 size={14} />
-                          {t('projectConfig.actions.delete')}
-                        </button>
+                {isKbModalOpen && editingKb && (
+                  <div className="bg-white rounded-3xl border border-indigo-100 shadow-xl p-8 space-y-6 animate-in slide-in-from-bottom-4 duration-300">
+                    <div className="flex items-center justify-between border-b border-gray-50 pb-4">
+                      <h3 className="text-lg font-black text-gray-900 uppercase tracking-tight flex items-center gap-3">
+                        <BookOpen size={20} className="text-indigo-600" />
+                        {isNewKb ? (t('projectConfig.actions.addKnowledgeBase') || 'Add Knowledge Base') : (t('projectConfig.knowledge.editKnowledgeBase') || 'Edit Knowledge Base')}
+                      </h3>
+                      <button onClick={() => { setIsKbModalOpen(false); setTestResult(null); }} className="text-gray-400 hover:text-gray-600">
+                        <Trash2 size={18} />
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                      <div>
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block">{t('projectConfig.knowledge.placeholders.id')}</label>
+                        <input value={editingKb.id} onChange={(e) => setEditingKb({ ...editingKb, id: e.target.value })} className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all" />
                       </div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <input value={kb.id} onChange={(e) => setKnowledgeBases((prev) => prev.map((item, i) => i === index ? { ...item, id: e.target.value } : item))} placeholder={t('projectConfig.knowledge.placeholders.id')} className="w-full p-3 bg-white border border-gray-200 rounded-xl" />
-                        <input value={kb.name} onChange={(e) => setKnowledgeBases((prev) => prev.map((item, i) => i === index ? { ...item, name: e.target.value } : item))} placeholder={t('projectConfig.knowledge.placeholders.name')} className="w-full p-3 bg-white border border-gray-200 rounded-xl" />
-                        <select value={kb.type} onChange={(e) => setKnowledgeBases((prev) => prev.map((item, i) => i === index ? { ...item, type: e.target.value } : item))} className="w-full p-3 bg-white border border-gray-200 rounded-xl">
+                      <div>
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block">{t('projectConfig.knowledge.placeholders.name')}</label>
+                        <input value={editingKb.name} onChange={(e) => setEditingKb({ ...editingKb, name: e.target.value })} className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all" />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block">Type</label>
+                        <select value={editingKb.type} onChange={(e) => setEditingKb({ ...editingKb, type: e.target.value })} className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all">
                           <option value="local">{t('projectConfig.knowledge.types.local')}</option>
                           <option value="remote">{t('projectConfig.knowledge.types.remote')}</option>
                         </select>
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block">
+                          {editingKb.type === 'local' ? t('projectConfig.knowledge.placeholders.path') : t('projectConfig.knowledge.placeholders.indexUrl')}
+                        </label>
                         <input
-                          value={kb.type === 'local' ? (kb.path || '') : (kb.index_url || '')}
-                          onChange={(e) => setKnowledgeBases((prev) => prev.map((item, i) => i === index ? (item.type === 'local' ? { ...item, path: e.target.value } : { ...item, index_url: e.target.value }) : item))}
-                          placeholder={kb.type === 'local' ? t('projectConfig.knowledge.placeholders.path') : t('projectConfig.knowledge.placeholders.indexUrl')}
-                          className="w-full p-3 bg-white border border-gray-200 rounded-xl"
+                          value={editingKb.type === 'local' ? (editingKb.path || '') : (editingKb.index_url || '')}
+                          onChange={(e) => setEditingKb(editingKb.type === 'local' ? { ...editingKb, path: e.target.value } : { ...editingKb, index_url: e.target.value })}
+                          placeholder={editingKb.type === 'local' ? t('projectConfig.knowledge.placeholders.path') : t('projectConfig.knowledge.placeholders.indexUrl')}
+                          className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
                         />
-                        <textarea value={(kb.includes || []).join('\n')} onChange={(e) => setKnowledgeBases((prev) => prev.map((item, i) => i === index ? { ...item, includes: splitMultiline(e.target.value) } : item))} placeholder={t('projectConfig.knowledge.placeholders.includes')} className="w-full p-3 bg-white border border-gray-200 rounded-xl min-h-24 resize-none" />
-                        <textarea value={kb.description || ''} onChange={(e) => setKnowledgeBases((prev) => prev.map((item, i) => i === index ? { ...item, description: e.target.value } : item))} placeholder={t('projectConfig.placeholders.description')} className="w-full p-3 bg-white border border-gray-200 rounded-xl min-h-24 resize-none" />
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block">{t('projectConfig.knowledge.placeholders.includes')}</label>
+                        <textarea value={(editingKb.includes || []).join('\n')} onChange={(e) => setEditingKb({ ...editingKb, includes: splitMultiline(e.target.value) })} className="w-full min-h-20 p-3 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all resize-none" />
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block">{t('projectConfig.placeholders.description')}</label>
+                        <textarea value={editingKb.description || ''} onChange={(e) => setEditingKb({ ...editingKb, description: e.target.value })} className="w-full min-h-20 p-3 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all resize-none" />
                       </div>
                     </div>
-                  ))}
-                  {knowledgeBases.length === 0 && <div className="rounded-2xl border border-dashed border-gray-200 p-10 text-center text-sm text-gray-400">{t('projectConfig.knowledge.empty')}</div>}
-                </div>
+                    <div className="flex flex-col gap-4 pt-6 border-t border-gray-50">
+                      {testResult && (
+                        <div className={`flex items-start gap-3 p-3 rounded-xl border ${testResult.success ? 'bg-emerald-50 border-emerald-100 text-emerald-800' : 'bg-rose-50 border-rose-100 text-rose-800'} animate-in fade-in slide-in-from-top-2 duration-300`}>
+                          <div className="mt-0.5">{testResult.success ? <CheckCircle size={16} className="text-emerald-500" /> : <XCircle size={16} className="text-rose-500" />}</div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-black uppercase tracking-tight leading-none mb-1">{testResult.success ? 'Success' : 'Error'}</p>
+                            <p className="text-[11px] font-medium leading-normal break-words opacity-90">{testResult.message}</p>
+                          </div>
+                        </div>
+                      )}
+                      <div className="flex items-center gap-3">
+                        <button onClick={() => void testKbConfig()} disabled={testingKb || (editingKb.type === 'local' ? !editingKb.path : !editingKb.index_url)} className="flex-1 flex items-center justify-center gap-2 py-4 bg-white border-2 border-gray-100 text-gray-700 rounded-2xl font-black text-xs uppercase tracking-widest hover:border-indigo-100 hover:text-indigo-600 transition-all disabled:opacity-50">
+                          {testingKb ? <RefreshCw size={16} className="animate-spin" /> : <Activity size={16} />}
+                          {testingKb ? (llmCopy.testing) : (llmCopy.testModel)}
+                        </button>
+                        <button onClick={() => void saveKnowledgeBaseModal(editingKb)} disabled={saving || isSaved || !editingKb.id || !editingKb.name} className={`flex-[1.5] flex items-center justify-center gap-2 py-4 rounded-2xl font-black text-xs uppercase tracking-widest transition-all shadow-lg disabled:opacity-50 ${isSaved ? 'bg-emerald-500 text-white shadow-emerald-100' : 'bg-indigo-600 text-white shadow-indigo-100 hover:bg-indigo-700'}`}>
+                          {saving ? <RefreshCw size={16} className="animate-spin" /> : (isSaved ? <CheckCircle size={16} /> : null)}
+                          {saving ? t('common.saving') : (isSaved ? t('common.saveSuccess') : t('common.save'))}
+                        </button>
+                      </div>
+                      <button onClick={() => { setIsKbModalOpen(false); setTestResult(null); }} className="w-full py-3 text-gray-400 font-bold text-[10px] uppercase tracking-widest hover:text-gray-600 transition-all">{t('common.cancel')}</button>
+                    </div>
+                  </div>
+                )}
               </section>
             )}
 

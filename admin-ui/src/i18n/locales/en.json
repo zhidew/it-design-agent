@@ -24,7 +24,16 @@
     "newProject": "New Project",
     "loadingProjects": "Loading Projects...",
     "configuration": "Config",
-    "loadError": "Load Error"
+    "loadError": "Load Error",
+    "saveSuccess": "Saved",
+    "saveError": "Save failed",
+    "saving": "Saving...",
+    "saved": "Saved",
+    "deleteSuccess": "Deleted",
+    "deleteError": "Delete failed",
+    "confirmDelete": "Confirm delete?",
+    "testing": "Testing...",
+    "keepCurrent": "Leave blank to keep current"
   },
   "projectList": {
     "title": "AI Design Workspaces",
@@ -217,6 +226,8 @@
       "eyebrow": "Code Repository Access",
       "title": "Repository Config",
       "itemLabel": "Repository #{{index}}",
+      "editRepo": "Edit Repository",
+      "testConnection": "Test Connection",
       "empty": "No repositories configured yet. Click Add Repo to start.",
       "placeholders": {
         "id": "Config ID, for example frontend",
@@ -233,6 +244,8 @@
       "eyebrow": "Database Metadata Access",
       "title": "Database Config",
       "itemLabel": "Database #{{index}}",
+      "editDatabase": "Edit Database",
+      "testConnection": "Test Connection",
       "empty": "No databases configured yet. Click Add DB to start.",
       "placeholders": {
         "id": "Config ID, for example primary",
@@ -250,6 +263,8 @@
       "eyebrow": "Knowledge Search Sources",
       "title": "Knowledge Base Config",
       "itemLabel": "Knowledge Base #{{index}}",
+      "editKnowledgeBase": "Edit Knowledge Base",
+      "testConnection": "Test Connection",
       "empty": "No knowledge bases configured yet. Click Add KB to start.",
       "types": {
         "local": "Local",

@@ -179,6 +179,38 @@ export const api = {
     is_default: boolean;
     description?: string;
   }) => apiClient.post(`/projects/${projectId}/config/llm/test`, payload).then(res => res.data),
+  testProjectRepository: (projectId: string, payload: {
+    id: string;
+    name: string;
+    type?: string;
+    url: string;
+    branch?: string;
+    username?: string;
+    token?: string;
+    local_path?: string;
+    description?: string;
+  }) => apiClient.post(`/projects/${projectId}/config/repositories/test`, payload).then(res => res.data),
+  testProjectDatabase: (projectId: string, payload: {
+    id: string;
+    name: string;
+    type: string;
+    host: string;
+    port: number;
+    database: string;
+    username?: string;
+    password?: string;
+    schema_filter?: string[];
+    description?: string;
+  }) => apiClient.post(`/projects/${projectId}/config/databases/test`, payload).then(res => res.data),
+  testProjectKnowledgeBase: (projectId: string, payload: {
+    id: string;
+    name: string;
+    type: string;
+    path?: string;
+    index_url?: string;
+    includes?: string[];
+    description?: string;
+  }) => apiClient.post(`/projects/${projectId}/config/knowledge-bases/test`, payload).then(res => res.data),
   getSystemLlmDefaults: () =>
     apiClient.get('/system/llm-config').then(res => res.data),
 };

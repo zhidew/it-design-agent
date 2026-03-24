@@ -31,7 +31,9 @@
     "saved": "已保存",
     "deleteSuccess": "删除成功",
     "deleteError": "删除失败",
-    "confirmDelete": "确认删除吗？"
+    "confirmDelete": "确认删除吗？",
+    "testing": "测试中...",
+    "keepCurrent": "留空保持当前值"
   },
   "projectList": {
     "title": "智能设计工作空间",
@@ -213,6 +215,8 @@
       "eyebrow": "代码仓库访问",
       "title": "仓库配置",
       "itemLabel": "仓库 #{{index}}",
+      "editRepo": "编辑仓库",
+      "testConnection": "测试连接",
       "empty": "暂未配置仓库，点击「添加仓库」开始。",
       "placeholders": {
         "id": "配置ID，例如 frontend",
@@ -229,6 +233,8 @@
       "eyebrow": "数据库元数据访问",
       "title": "数据库配置",
       "itemLabel": "数据库 #{{index}}",
+      "editDatabase": "编辑数据库",
+      "testConnection": "测试连接",
       "empty": "暂未配置数据库，点击「添加数据库」开始。",
       "placeholders": {
         "id": "配置ID，例如 primary",
@@ -246,6 +252,8 @@
       "eyebrow": "知识搜索源",
       "title": "知识库配置",
       "itemLabel": "知识库 #{{index}}",
+      "editKnowledgeBase": "编辑知识库",
+      "testConnection": "测试连接",
       "empty": "暂未配置知识库，点击「添加知识库」开始。",
       "types": {
         "local": "本地",
