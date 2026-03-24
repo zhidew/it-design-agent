@@ -1874,7 +1874,7 @@ export function ProjectDetail() {
                     className="px-4 py-2 bg-rose-100 text-rose-700 rounded-xl text-xs font-black uppercase tracking-wider hover:bg-rose-200 transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {cancellingWorkflow ? <RefreshCw size={14} className="animate-spin" /> : <Square size={14} fill="currentColor" />}
-                    {cancellingWorkflow ? 'Cancelling...' : 'Stop Workflow'}
+                    {cancellingWorkflow ? t('projectDetail.retry.cancelling') : t('projectDetail.retry.stopWorkflow')}
                   </button>
                 )}
                 {workflowState?.run_status === 'queued' && hasPendingTodoTasks && (
@@ -1884,7 +1884,7 @@ export function ProjectDetail() {
                     className="px-4 py-2 bg-indigo-100 text-indigo-700 rounded-xl text-xs font-black uppercase tracking-wider hover:bg-indigo-200 transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {continuingWorkflow ? <RefreshCw size={14} className="animate-spin" /> : <Play size={14} fill="currentColor" />}
-                    Continue Workflow
+                    {t('projectDetail.retry.continueWorkflow')}
                   </button>
                 )}
                 {selectedTask?.status === 'failed' && workflowState?.run_status === 'failed' && retryingNode === null && (
@@ -1894,7 +1894,7 @@ export function ProjectDetail() {
                     className="px-4 py-2 bg-rose-100 text-rose-700 rounded-xl text-xs font-black uppercase tracking-wider hover:bg-rose-200 transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {retryingNode === selectedNode ? <RefreshCw size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-                    Retry Node
+                    {t('projectDetail.retry.retryNode')}
                   </button>
                 )}
               </div>
@@ -1920,13 +1920,13 @@ export function ProjectDetail() {
               <div className="flex items-start justify-between gap-4">
                 <div className="space-y-2">
                   <div className="inline-flex items-center rounded-full bg-rose-100 px-3 py-1 text-[10px] font-black uppercase tracking-[0.2em] text-rose-700">
-                    Intervention Needed
+                    {t('projectDetail.failed.interventionNeeded')}
                   </div>
                   <h2 className="text-xl font-black tracking-tight text-rose-950">
-                    {workflowState.stale_execution_detected ? 'Execution looks stalled' : 'Workflow needs attention'}
+                    {workflowState.stale_execution_detected ? t('projectDetail.failed.stalledTitle') : t('projectDetail.failed.needsAttention')}
                   </h2>
                   <p className="text-sm font-medium text-rose-900/80">
-                    {workflowState.waiting_reason || 'The workflow stopped unexpectedly. Review the latest logs and retry the affected node.'}
+                    {workflowState.waiting_reason || t('projectDetail.failed.stoppedDescription')}
                   </p>
                 </div>
                 <div className="flex flex-col items-end gap-2">
@@ -1936,7 +1936,7 @@ export function ProjectDetail() {
                     </span>
                   )}
                   <span className="text-[10px] font-bold uppercase tracking-wider text-rose-500">
-                    Last update: {new Date(workflowState.updated_at).toLocaleString()}
+                    {t('projectDetail.failed.lastUpdate')}: {new Date(workflowState.updated_at).toLocaleString()}
                   </span>
                 </div>
               </div>
@@ -1948,7 +1948,7 @@ export function ProjectDetail() {
                     disabled={retryingNode !== null || continuingWorkflow}
                     className="flex-1 rounded-2xl bg-rose-600 px-5 py-4 text-sm font-black uppercase tracking-widest text-white transition-all hover:bg-rose-700 disabled:cursor-not-allowed disabled:bg-rose-300"
                   >
-                    {retryingNode === selectedNode ? 'Retrying...' : 'Retry Current Node'}
+                    {retryingNode === selectedNode ? t('projectDetail.failed.retrying') : t('projectDetail.failed.retryCurrentNode')}
                   </button>
                 )}
               </div>
@@ -1959,15 +1959,15 @@ export function ProjectDetail() {
             <section className="bg-amber-50 rounded-3xl border border-amber-200 shadow-sm p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <h2 className="text-sm font-bold text-amber-800">Queue Paused</h2>
-                  <p className="text-xs text-amber-600">The workflow queue is paused. Resume when ready.</p>
+                  <h2 className="text-sm font-bold text-amber-800">{t('projectDetail.queued.queuePaused')}</h2>
+                  <p className="text-xs text-amber-600">{t('projectDetail.queued.pausedDescription')}</p>
                 </div>
                 <button
                   onClick={handleContinueWorkflow}
                   disabled={continuingWorkflow || retryingNode !== null}
                   className="rounded-xl bg-amber-600 px-4 py-2 text-sm font-bold text-white transition-all hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {continuingWorkflow ? 'Resuming...' : 'Resume Queue'}
+                  {continuingWorkflow ? t('projectDetail.queued.resuming') : t('projectDetail.queued.resumeQueue')}
                 </button>
               </div>
             </section>
@@ -2064,13 +2064,13 @@ export function ProjectDetail() {
               <div className="flex items-start justify-between gap-4">
                 <div className="space-y-2">
                   <div className={`inline-flex items-center rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.2em] ${isCancelledState ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-700'}`}>
-                    {isCancelledState ? 'Workflow Cancelled' : 'Waiting Human'}
+                    {isCancelledState ? t('projectDetail.retry.cancelled') : t('projectDetail.retry.waitingHuman')}
                   </div>
                   <h2 className="text-xl font-black tracking-tight text-amber-950">
-                    {isCancelledState ? 'Workflow Stopped - Ready to Retry' : (isClarificationInterrupt ? 'Planner needs clarification' : 'Planner is waiting for review')}
+                    {isCancelledState ? t('projectDetail.retry.stoppedTitle') : (isClarificationInterrupt ? t('projectDetail.retry.clarificationTitle') : t('projectDetail.retry.reviewTitle'))}
                   </h2>
                   <p className="text-sm font-medium text-amber-900/80">
-                    {workflowState.waiting_reason || (isCancelledState ? 'You can now retry with different LLM or effort level.' : 'Provide the missing detail or review feedback before the workflow continues.')}
+                    {workflowState.waiting_reason || (isCancelledState ? t('projectDetail.retry.stoppedDescription') : t('projectDetail.retry.reviewDescription'))}
                   </p>
                 </div>
                 {workflowState.current_node && (
@@ -2084,35 +2084,36 @@ export function ProjectDetail() {
               {isCancelledState && (
                 <div className="rounded-2xl border border-rose-200 bg-white/60 px-4 py-4 space-y-4">
                   <div className="text-[10px] font-black uppercase tracking-widest text-rose-700">
-                    Retry Configuration
+                    {t('projectDetail.retry.configTitle')}
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <label className="text-xs font-medium text-gray-600">LLM Model</label>
+                      <label className="text-xs font-medium text-gray-600">{t('projectDetail.retry.llmModel')}</label>
                       <select
                         value={selectedModel}
                         onChange={(e) => setSelectedModel(e.target.value as string)}
                         className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-400"
                       >
-                        <option value="">Default</option>
-                        <option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
-                        <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet</option>
-                        <option value="claude-3-opus-20240229">Claude 3 Opus</option>
-                        <option value="gpt-4o">GPT-4o</option>
-                        <option value="gpt-4-turbo">GPT-4 Turbo</option>
+                        <option value="">{t('projectDetail.retry.default')}</option>
+                        {projectModels.map((model) => (
+                          <option key={model.id} value={model.id}>
+                            {formatProjectModelLabel(model)}
+                          </option>
+                        ))}
                       </select>
                     </div>
                     <div className="space-y-2">
-                      <label className="text-xs font-medium text-gray-600">Effort Level</label>
+                      <label className="text-xs font-medium text-gray-600">{t('projectDetail.retry.effortLevel')}</label>
                       <select
                         value={selectedEffortLevel}
                         onChange={(e) => setSelectedEffortLevel(e.target.value as EffortLevel)}
                         className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-400"
                       >
-                        <option value="low">Low (faster)</option>
-                        <option value="medium">Medium</option>
-                        <option value="high">High (thorough)</option>
-                        <option value="ultra">Ultra (comprehensive)</option>
+                        {effortOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.title}
+                          </option>
+                        ))}
                       </select>
                     </div>
                   </div>
@@ -2125,7 +2126,7 @@ export function ProjectDetail() {
               {!isCancelledState && pendingInterrupt?.context?.why_needed !== undefined && pendingInterrupt?.context?.why_needed !== null && (
                 <div className="rounded-2xl border border-amber-200 bg-white/60 px-4 py-3">
                   <p className="text-xs text-amber-800">
-                    <span className="font-bold">Why this matters: </span>
+                    <span className="font-bold">{t('projectDetail.waitingHuman.whyMatters')}: </span>
                     {String(pendingInterrupt.context.why_needed)}
                   </p>
                 </div>
@@ -2134,7 +2135,7 @@ export function ProjectDetail() {
               {!isCancelledState && isClarificationInterrupt && interruptOptions.length > 0 && (
                 <div className="space-y-3">
                   <label className="text-[10px] font-black uppercase tracking-widest text-amber-700">
-                    Suggested options
+                    {t('projectDetail.waitingHuman.suggestedOptions')}
                   </label>
                   <div className="grid gap-3">
                     {interruptOptions.map((option) => {
@@ -2172,15 +2173,15 @@ export function ProjectDetail() {
               {!isCancelledState && (
                 <div className="space-y-2">
                   <label className="text-[10px] font-black uppercase tracking-widest text-amber-700">
-                    {isClarificationInterrupt ? 'Additional details (optional)' : 'Revision feedback'}
+                    {isClarificationInterrupt ? t('projectDetail.waitingHuman.additionalDetails') : t('projectDetail.waitingHuman.revisionFeedback')}
                   </label>
                   <textarea
                     value={reviewFeedback}
                     onChange={(e) => setReviewFeedback(e.target.value)}
                     placeholder={
                       isClarificationInterrupt
-                        ? 'If none of the options fit, explain your answer here. You can also add constraints, scope, or business context.'
-                        : 'Explain what should change before planner runs again.'
+                        ? t('projectDetail.waitingHuman.clarificationPlaceholder')
+                        : t('projectDetail.waitingHuman.revisionPlaceholder')
                     }
                     className="w-full min-h-28 rounded-2xl border border-amber-200 bg-white px-4 py-3 text-sm font-medium text-gray-800 focus:outline-none focus:ring-2 focus:ring-amber-400 resize-none"
                   />
@@ -2196,7 +2197,7 @@ export function ProjectDetail() {
                       className="flex-1 rounded-2xl bg-rose-600 px-5 py-4 text-sm font-black uppercase tracking-widest text-white transition-all hover:bg-rose-700 disabled:cursor-not-allowed disabled:bg-rose-300 flex items-center justify-center gap-2"
                     >
                       {continuingWorkflow ? <RefreshCw size={16} className="animate-spin" /> : <Play size={16} fill="currentColor" />}
-                      {continuingWorkflow ? 'Retrying...' : 'Retry with New Settings'}
+                      {continuingWorkflow ? t('projectDetail.retry.retrying') : t('projectDetail.retry.retryWithSettings')}
                     </button>
                   </>
                 ) : isClarificationInterrupt ? (
@@ -2205,7 +2206,7 @@ export function ProjectDetail() {
                     disabled={resumeActionLoading !== null || (!selectedInterruptOption && reviewFeedback.trim().length === 0)}
                     className="flex-1 rounded-2xl bg-emerald-600 px-5 py-4 text-sm font-black uppercase tracking-widest text-white transition-all hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-300"
                   >
-                    {resumeActionLoading === 'answer' ? 'Submitting...' : 'Submit Answer'}
+                    {resumeActionLoading === 'answer' ? t('projectDetail.waitingHuman.submitting') : t('projectDetail.waitingHuman.submitAnswer')}
                   </button>
                 ) : (
                   <>
@@ -2214,14 +2215,14 @@ export function ProjectDetail() {
                       disabled={resumeActionLoading !== null}
                       className="flex-1 rounded-2xl bg-emerald-600 px-5 py-4 text-sm font-black uppercase tracking-widest text-white transition-all hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-300"
                     >
-                      {resumeActionLoading === 'approve' ? 'Approving...' : 'Approve Continue'}
+                      {resumeActionLoading === 'approve' ? t('projectDetail.waitingHuman.approving') : t('projectDetail.waitingHuman.approveContinue')}
                     </button>
                     <button
                       onClick={() => handleResumeExecution('revise')}
                       disabled={resumeActionLoading !== null || reviewFeedback.trim().length === 0}
                       className="flex-1 rounded-2xl bg-amber-600 px-5 py-4 text-sm font-black uppercase tracking-widest text-white transition-all hover:bg-amber-700 disabled:cursor-not-allowed disabled:bg-amber-300"
                     >
-                      {resumeActionLoading === 'revise' ? 'Submitting...' : 'Revise Retry'}
+                      {resumeActionLoading === 'revise' ? t('projectDetail.waitingHuman.submitting') : t('projectDetail.waitingHuman.reviseRetry')}
                     </button>
                   </>
                 )}

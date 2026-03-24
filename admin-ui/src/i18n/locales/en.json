@@ -128,6 +128,53 @@
       "emptyKnowledgeBases": "No knowledge bases configured yet.",
       "emptyExperts": "No enabled experts configured yet.",
       "more": "+{{count}} more"
+    },
+    "retry": {
+      "configTitle": "Retry Configuration",
+      "llmModel": "LLM Model",
+      "default": "Default",
+      "effortLevel": "Effort Level",
+      "cancelled": "Workflow Cancelled",
+      "waitingHuman": "Waiting Human",
+      "stoppedTitle": "Workflow Stopped - Ready to Retry",
+      "clarificationTitle": "Planner needs clarification",
+      "reviewTitle": "Planner is waiting for review",
+      "stoppedDescription": "You can now retry with different LLM or effort level.",
+      "reviewDescription": "Provide the missing detail or review feedback before the workflow continues.",
+      "stopWorkflow": "Stop Workflow",
+      "cancelling": "Cancelling...",
+      "continueWorkflow": "Continue Workflow",
+      "retryNode": "Retry Node",
+      "retrying": "Retrying...",
+      "retryWithSettings": "Retry with New Settings"
+    },
+    "failed": {
+      "interventionNeeded": "Intervention Needed",
+      "stalledTitle": "Execution looks stalled",
+      "needsAttention": "Workflow needs attention",
+      "stoppedDescription": "The workflow stopped unexpectedly. Review the latest logs and retry the affected node.",
+      "lastUpdate": "Last update",
+      "retrying": "Retrying...",
+      "retryCurrentNode": "Retry Current Node"
+    },
+    "queued": {
+      "queuePaused": "Queue Paused",
+      "pausedDescription": "The workflow queue is paused. Resume when ready.",
+      "resuming": "Resuming...",
+      "resumeQueue": "Resume Queue"
+    },
+    "waitingHuman": {
+      "suggestedOptions": "Suggested options",
+      "whyMatters": "Why this matters",
+      "additionalDetails": "Additional details (optional)",
+      "revisionFeedback": "Revision feedback",
+      "clarificationPlaceholder": "If none of the options fit, explain your answer here. You can also add constraints, scope, or business context.",
+      "revisionPlaceholder": "Explain what should change before planner runs again.",
+      "submitting": "Submitting...",
+      "submitAnswer": "Submit Answer",
+      "approving": "Approving...",
+      "approveContinue": "Approve Continue",
+      "reviseRetry": "Revise Retry"
     }
   },
   "projectConfig": {

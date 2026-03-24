@@ -122,8 +122,55 @@
       "emptyDatabases": "暂未配置数据库。",
       "emptyKnowledgeBases": "暂未配置知识库。",
       "more": "还有 {{count}} 个",
-      "experts": "?????",
-      "emptyExperts": "??????????"
+      "experts": "已启用专家",
+      "emptyExperts": "暂无已启用的专家。"
+    },
+    "retry": {
+      "configTitle": "重试配置",
+      "llmModel": "大模型",
+      "default": "默认",
+      "effortLevel": "推理强度",
+      "cancelled": "工作流已取消",
+      "waitingHuman": "等待人工确认",
+      "stoppedTitle": "工作流已停止 - 可以重试",
+      "clarificationTitle": "规划器需要补充信息",
+      "reviewTitle": "规划器等待审核",
+      "stoppedDescription": "您现在可以更换大模型或推理强度后重试。",
+      "reviewDescription": "请提供缺失的细节或在工作流继续之前提交审核意见。",
+      "stopWorkflow": "停止工作流",
+      "cancelling": "取消中...",
+      "continueWorkflow": "继续工作流",
+      "retryNode": "重试节点",
+      "retrying": "重试中...",
+      "retryWithSettings": "使用新设置重试"
+    },
+    "failed": {
+      "interventionNeeded": "需要干预",
+      "stalledTitle": "执行似乎已停滞",
+      "needsAttention": "工作流需要关注",
+      "stoppedDescription": "工作流意外停止。请查看最新日志并重试受影响的节点。",
+      "lastUpdate": "最后更新",
+      "retrying": "重试中...",
+      "retryCurrentNode": "重试当前节点"
+    },
+    "queued": {
+      "queuePaused": "队列已暂停",
+      "pausedDescription": "工作流队列已暂停，准备好后恢复执行。",
+      "resuming": "恢复中...",
+      "resumeQueue": "恢复队列"
+    },
+    "waitingHuman": {
+      "suggestedOptions": "建议选项",
+      "whyMatters": "为什么重要",
+      "additionalDetails": "补充说明（可选）",
+      "revisionFeedback": "修改意见",
+      "clarificationPlaceholder": "如果没有合适的选项，请在此处说明。您也可以补充约束条件、范围或业务上下文。",
+      "revisionPlaceholder": "请说明需要修改的内容，规划器将据此重新执行。",
+      "submitting": "提交中...",
+      "submitAnswer": "提交回答",
+      "approving": "审批中...",
+      "approveContinue": "批准继续",
+      "reviseRetry": "修改后重试"
     }
   },
   "projectConfig": {
