@@ -26,7 +26,6 @@ Thumbs.db
 # Build Artifacts
 dist/
 build/
-*.exe
 *.dll
 *.so
 
