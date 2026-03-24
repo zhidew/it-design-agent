@@ -12,9 +12,13 @@ from pathlib import Path
 from contextlib import asynccontextmanager
 
 # 将项目根目录 (it-design-agent) 加入 sys.path 以便导入 scripts
-root_dir = Path(__file__).resolve().parent.parent
-if str(root_dir) not in sys.path:
-    sys.path.append(str(root_dir))
+api_server_dir = Path(__file__).resolve().parent
+root_dir = api_server_dir.parent
+for path_str in [str(root_dir), str(api_server_dir)]:
+    if path_str in sys.path:
+        sys.path.remove(path_str)
+sys.path.insert(0, str(root_dir))
+sys.path.insert(0, str(api_server_dir))
 
 # Ensure ProactorEventLoop on Windows for subprocess support
 # In Python 3.14+, ProactorEventLoop is the default and set_event_loop_policy is deprecated.
