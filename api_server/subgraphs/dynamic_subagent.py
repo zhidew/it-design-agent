@@ -741,6 +741,7 @@ async def run_dynamic_subagent(
     tool_results: List[Dict[str, Any]] = []
     react_trace: List[Dict[str, Any]] = []
     observations: List[Dict[str, Any]] = []
+    react_exhausted = False
 
     # Permission-aware tool executor
     def _execute_tool_with_permission(tool_name: str, tool_input: Dict[str, Any] | None) -> Dict[str, Any]:
@@ -820,9 +821,58 @@ async def run_dynamic_subagent(
                 }
             )
         else:
+            react_exhausted = True
             history_updates.append(
                 f"[{capability}] ReAct step {max_react_steps}: reached max steps."
             )
+
+        if react_exhausted:
+            reasoning_sections = [entry.get("reasoning", "") for entry in react_trace if entry.get("reasoning")]
+            reasoning_sections.append(
+                f"ReAct loop exhausted {max_react_steps} steps without reaching done=true. Final artifact generation was skipped."
+            )
+            (logs_dir / f"{capability}-reasoning.md").write_text(
+                "\n\n".join(section for section in reasoning_sections if section),
+                encoding="utf-8",
+            )
+
+            evidence = default_build_evidence(
+                capability,
+                payload,
+                {},
+                observations,
+                react_trace,
+                tool_results,
+                expected_files,
+            )
+            evidence.setdefault("source_files", candidate_files)
+            evidence.setdefault(
+                "tool_trace",
+                [
+                    {
+                        "tool_name": result["tool_name"],
+                        "status": result["status"],
+                        "error_code": result["error_code"],
+                        "duration_ms": result["duration_ms"],
+                    }
+                    for result in tool_results
+                ],
+            )
+            evidence.setdefault("react_trace", react_trace)
+            evidence["failure_reason"] = "max_steps_exhausted"
+            (evidence_dir / f"{capability}.json").write_text(
+                json.dumps(evidence, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+
+            history_updates.append(f"[{capability}] Completed with status: failed")
+            return {
+                "history": history_updates,
+                "task_queue": update_task_status_fn(state["task_queue"], capability, "failed"),
+                "human_intervention_required": False,
+                "last_worker": capability,
+                "tool_results": tool_results,
+            }
 
         # Generate final artifacts
         if generate_final_artifacts_fn:

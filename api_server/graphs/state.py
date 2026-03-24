@@ -20,6 +20,28 @@ def merge_artifacts(
     return merged
 
 
+def _node_status_rank(status: Optional[str]) -> int:
+    order = {
+        "todo": 0,
+        "running": 1,
+        "waiting_human": 2,
+        "success": 3,
+        "skipped": 3,
+        "failed": 4,
+    }
+    return order.get(str(status or "").lower(), -1)
+
+
+def _merge_node_status(current_status: Optional[str], incoming_status: Optional[str]) -> Optional[str]:
+    if incoming_status in (None, ""):
+        return current_status
+    if current_status in (None, ""):
+        return incoming_status
+    if _node_status_rank(incoming_status) >= _node_status_rank(current_status):
+        return incoming_status
+    return current_status
+
+
 def merge_task_queue(
     current: Optional[List["Task"]],
     incoming: Optional[List["Task"]],
@@ -39,7 +61,12 @@ def merge_task_queue(
             order.append(task_id)
             merged_by_id[task_id] = dict(task)
             continue
-        merged_by_id[task_id] = {**merged_by_id[task_id], **task}
+        merged_task = {**merged_by_id[task_id], **task}
+        merged_task["status"] = _merge_node_status(
+            merged_by_id[task_id].get("status"),
+            task.get("status"),
+        )
+        merged_by_id[task_id] = merged_task
 
     return [merged_by_id[task_id] for task_id in order]
 
