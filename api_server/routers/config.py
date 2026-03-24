@@ -1,9 +1,23 @@
 from fastapi import APIRouter, HTTPException
 
 from models.project_config import DatabaseConfig, DebugConfig, ExpertConfig, KnowledgeBaseConfig, LlmConfig, RepositoryConfig, ModelConfig, ModelConfigs
-from services.db_service import metadata_db
-from services.llm_service import test_llm_connectivity
-from services.test_service import test_repository_connection, test_database_connection, test_knowledge_base_connection
+
+try:
+    from api_server.services.db_service import metadata_db
+    from api_server.services.llm_service import test_llm_connectivity
+    from api_server.services.test_service import (
+        test_repository_connection,
+        test_database_connection,
+        test_knowledge_base_connection,
+    )
+except ModuleNotFoundError:
+    from services.db_service import metadata_db
+    from services.llm_service import test_llm_connectivity
+    from services.test_service import (
+        test_repository_connection,
+        test_database_connection,
+        test_knowledge_base_connection,
+    )
 
 
 router = APIRouter(
