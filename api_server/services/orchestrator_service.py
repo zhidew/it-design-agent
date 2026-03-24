@@ -388,6 +388,77 @@ def _parse_iso_timestamp(value: str | None) -> datetime.datetime | None:
         return None
 
 
+def _normalize_llm_log_node_id(node_id: str | None) -> str | None:
+    if not node_id:
+        return None
+    if node_id.endswith("-final"):
+        return node_id[:-6]
+    if "-react-step-" in node_id:
+        return node_id.split("-react-step-", 1)[0]
+    return node_id
+
+
+def _build_node_llm_map(project_id: str, version: str, state: dict, task_queue: list[dict]) -> dict[str, dict]:
+    design_context = state.get("design_context") or {}
+    model_config = design_context.get("model_config") or {}
+    orchestrator_context = design_context.get("orchestrator") or {}
+    effort_level = str(orchestrator_context.get("effort_level") or "").strip().lower() or None
+    fallback_model = (
+        str(model_config.get("model_name") or "").strip()
+        or str(design_context.get("model") or "").strip()
+        or None
+    )
+    fallback_provider = str(model_config.get("provider") or "").strip().lower() or None
+
+    latest_by_node: dict[str, dict] = {}
+    log_file = BASE_DIR / "projects" / project_id / version / "logs" / "llm_interactions.jsonl"
+    if log_file.exists():
+        try:
+            with open(log_file, "r", encoding="utf-8") as handle:
+                for raw_line in handle:
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    normalized_node_id = _normalize_llm_log_node_id(entry.get("node_id"))
+                    if not normalized_node_id:
+                        continue
+                    timestamp = _parse_iso_timestamp(entry.get("timestamp"))
+                    current = latest_by_node.get(normalized_node_id)
+                    current_timestamp = _parse_iso_timestamp((current or {}).get("timestamp"))
+                    if current is None or (timestamp and (current_timestamp is None or timestamp >= current_timestamp)):
+                        latest_by_node[normalized_node_id] = entry
+        except OSError:
+            pass
+
+    node_types = {
+        task.get("agent_type")
+        for task in task_queue
+        if task.get("agent_type")
+    }
+    if "planner" not in node_types and (latest_by_node.get("planner") or state.get("current_node") == "planner"):
+        node_types.add("planner")
+
+    node_llm_map: dict[str, dict] = {}
+    for node_type in node_types:
+        latest = latest_by_node.get(node_type) or {}
+        model_name = str(latest.get("model") or fallback_model or "").strip()
+        provider = str(latest.get("provider") or fallback_provider or "").strip().lower()
+        if not model_name and not effort_level and not provider:
+            continue
+        node_llm_map[node_type] = {
+            "provider": provider or None,
+            "model": model_name or None,
+            "effort_level": effort_level,
+            "label": " · ".join(part for part in [model_name or "", effort_level or ""] if part),
+        }
+
+    return node_llm_map
+
+
 def _normalize_state(project_id: str, version: str, raw_state: dict | None, runtime: dict | None = None) -> dict | None:
     runtime = runtime if runtime is not None else runtime_registry.get(_thread_id(project_id, version), {})
     if not raw_state and not runtime:
@@ -464,6 +535,8 @@ def _normalize_state(project_id: str, version: str, raw_state: dict | None, runt
     if run_status in {RUN_STATUS_QUEUED, RUN_STATUS_RUNNING}:
         can_resume = False
 
+    node_llm_map = _build_node_llm_map(project_id, version, state, normalized_task_queue)
+
     return {
         **state,
         "project_id": project_id,
@@ -482,6 +555,7 @@ def _normalize_state(project_id: str, version: str, raw_state: dict | None, runt
         "human_answers": state.get("human_answers") or {},
         "updated_at": normalized_updated_at,
         "stale_execution_detected": stale_running_detected,
+        "node_llm_map": node_llm_map,
     }
 
 

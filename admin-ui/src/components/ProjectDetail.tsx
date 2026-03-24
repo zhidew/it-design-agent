@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useMemo } from 'react';
+﻿import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { useParams, Link, useLocation } from 'react-router-dom';
 import { api, type EffortLevel } from '../api';
 import { ArrowLeft, Play, RefreshCw, Activity, Check, X, Upload, FileText, Database, Layers, Book, List, Trash2, ChevronLeft, ChevronRight, Settings2, FolderGit2, BookOpen, Bot, Cpu, Info } from 'lucide-react';
@@ -22,7 +22,8 @@ const AGENT_MAPPING: Record<string, string[]> = {
   'test-design': ['test-inputs.md', 'coverage-map.json'],
   'ops-design': ['slo.yaml', 'observability-spec.yaml', 'deployment-runbook.md'],
   'design-assembler': ['detailed-design.md', 'traceability.json', 'review-checklist.md'],
-  validator: [], // validator 使用独立的报告展示逻辑，不走产物清单
+  // validator 使用独立的报告展示逻辑，不走产物清单
+  validator: [],
 };
 
 type StreamStatus = 'idle' | 'connecting' | 'connected' | 'error';
@@ -69,6 +70,12 @@ interface WorkflowState {
   } | null;
   stale_execution_detected?: boolean;
   updated_at: string;
+  node_llm_map?: Record<string, {
+    provider?: string | null;
+    model?: string | null;
+    effort_level?: string | null;
+    label?: string | null;
+  }>;
 }
 
 interface VersionStateSummary {
@@ -303,6 +310,28 @@ export function ProjectDetail() {
     ];
   }, [i18n.language, t]);
   const selectedVersionRef = useRef<string | null>(null);
+  const formatProjectModelLabel = useMemo(() => {
+    return (model: any) => {
+      const modelId = model?.model_name || model?.model_id || model?.id || 'LLM';
+      const displayName = model?.name || modelId;
+      return displayName === modelId ? modelId : `${modelId} (${displayName})`;
+    };
+  }, []);
+
+  const selectedProjectModel = useMemo(
+    () => projectModels.find((model) => model.id === selectedModel) || null,
+    [projectModels, selectedModel]
+  );
+
+  const effortLabel = useMemo(() => {
+    const option = effortOptions.find((o) => o.value === selectedEffortLevel);
+    return option?.title || selectedEffortLevel;
+  }, [effortOptions, selectedEffortLevel]);
+
+  const currentRunLlmLabel = useMemo(() => {
+    const modelLabel = selectedProjectModel ? formatProjectModelLabel(selectedProjectModel) : 'LLM';
+    return `${modelLabel} · ${effortLabel}`;
+  }, [effortLabel, formatProjectModelLabel, selectedProjectModel]);
 
   const resourceCopy = useMemo(() => {
     const isZh = i18n.language.toLowerCase().startsWith('zh');
@@ -1448,20 +1477,43 @@ export function ProjectDetail() {
             </div>
           </div>
           <div className="flex items-center gap-4">
-            {projectModels.length > 0 && (
-              <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-50 rounded-xl border border-gray-100">
-                <Cpu size={14} className="text-indigo-500" />
-                <select
-                  value={selectedModel}
-                  onChange={(e) => setSelectedModel(e.target.value)}
-                  className="bg-transparent border-none text-[10px] font-black text-gray-600 outline-none focus:ring-0 focus:ring-offset-0 cursor-pointer hover:text-indigo-600 transition-colors uppercase tracking-wider"
-                >
-                  {projectModels.map((model) => (
-                    <option key={model.id} value={model.id}>
-                      {model.name} ({model.model_name})
-                    </option>
-                  ))}
-                </select>
+            {false && (projectModels.length > 0 || effortOptions.length > 0) && (
+              <div className="flex min-w-[320px] items-center gap-2 rounded-xl border border-gray-100 bg-gray-50 px-3 py-1.5">
+                <Cpu size={14} className="shrink-0 text-indigo-500" />
+                {projectModels.length > 0 && (
+                  <div className="min-w-0 flex-[1]">
+                    <select
+                      value={selectedModel}
+                      onChange={(e) => setSelectedModel(e.target.value)}
+                      className="w-full bg-transparent border-none text-[10px] font-black text-gray-600 outline-none focus:ring-0 focus:ring-offset-0 cursor-pointer hover:text-indigo-600 transition-colors uppercase tracking-wider"
+                    >
+                      {projectModels.map((model) => {
+                        const displayName = model.display_name || model.name || model.model_name || model.id;
+                        const modelId = model.model_id || model.id;
+                        return (
+                          <option key={model.id} value={model.id}>
+                            {modelId} ({displayName})
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
+                )}
+                <div className="h-4 w-px bg-gray-200" />
+                <div className="min-w-0 flex-[4]">
+                  <select
+                    value={selectedEffortLevel}
+                    onChange={(e) => setSelectedEffortLevel(e.target.value as EffortLevel)}
+                    className="w-full bg-transparent border-none text-[10px] font-black text-gray-600 outline-none focus:ring-0 focus:ring-offset-0 cursor-pointer hover:text-indigo-600 transition-colors uppercase tracking-wider"
+                    title={i18n.language.toLowerCase().startsWith('zh') ? '推理强度，等级越高成本越高。' : 'Reasoning intensity. Higher levels cost more.'}
+                  >
+                    {effortOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.title}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
             )}
             <LanguageSwitcher />
@@ -1497,31 +1549,52 @@ export function ProjectDetail() {
               />
             </div>
 
-            <div className="flex items-center gap-3">
-              <div
-                className={`w-1/5 min-w-[88px] max-w-[112px] flex items-center gap-1.5 rounded-2xl border px-2.5 py-3 bg-white transition-all ${loading || !isIRProvided ? 'border-gray-100 text-gray-400' : 'border-gray-200 text-gray-700 hover:border-indigo-200'}`}
-                title={i18n.language.toLowerCase().startsWith('zh') ? '推理强度，等级越高成本越高' : 'Reasoning intensity. Higher levels cost more.'}
-              >
-                <Cpu size={14} className="text-indigo-500" />
-                <select
-                  value={selectedEffortLevel}
-                  onChange={(e) => setSelectedEffortLevel(e.target.value as EffortLevel)}
-                  disabled={loading}
-                  className="w-full min-w-0 bg-transparent border-none text-[10px] font-black text-inherit outline-none focus:ring-0 focus:ring-offset-0 cursor-pointer uppercase tracking-wide disabled:cursor-not-allowed"
+            <div className="space-y-3">
+
+              {(projectModels.length > 0 || effortOptions.length > 0) && (
+                <div
+                  className="flex w-full items-center gap-2 rounded-2xl border border-gray-100 bg-gray-50 px-3 py-2.5"
+                  title={i18n.language.toLowerCase().startsWith('zh') ? '推理强度，等级越高成本越高。' : 'Reasoning intensity. Higher levels cost more.'}
                 >
-                  {effortOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.title}
-                    </option>
-                  ))}
-                </select>
-                <Info size={11} className="shrink-0 text-gray-400" />
-              </div>
+                  <Cpu size={14} className="shrink-0 text-indigo-500" />
+                  {projectModels.length > 0 && (
+                    <div className="min-w-0 flex-[4]">
+                      <select
+                        value={selectedModel}
+                        onChange={(e) => setSelectedModel(e.target.value)}
+                        disabled={loading}
+                        className="w-full bg-transparent border-none text-[10px] font-black text-gray-600 outline-none focus:ring-0 focus:ring-offset-0 cursor-pointer uppercase tracking-wide disabled:cursor-not-allowed"
+                      >
+                        {projectModels.map((model) => (
+                          <option key={model.id} value={model.id}>
+                            {formatProjectModelLabel(model)}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                  <div className="h-4 w-px bg-gray-200" />
+                  <div className="min-w-0 flex-[1]">
+                    <select
+                      value={selectedEffortLevel}
+                      onChange={(e) => setSelectedEffortLevel(e.target.value as EffortLevel)}
+                      disabled={loading}
+                      className="w-full bg-transparent border-none text-[10px] font-black text-gray-600 outline-none focus:ring-0 focus:ring-offset-0 cursor-pointer uppercase tracking-wide disabled:cursor-not-allowed"
+                    >
+                      {effortOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.title}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              )}
 
               <button
                 onClick={handleRun}
                 disabled={loading || !isIRProvided}
-                className={`w-4/5 py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 transition-all ${loading || !isIRProvided ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg shadow-indigo-200'
+                className={`w-full py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 transition-all ${loading || !isIRProvided ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg shadow-indigo-200'
                   }`}
               >
                 {loading ? <RefreshCw size={16} className="animate-spin" /> : <Play size={16} fill="currentColor" />}
@@ -1744,13 +1817,20 @@ export function ProjectDetail() {
                 <div className="p-3 bg-indigo-50 rounded-2xl text-indigo-600">
                   <Activity size={24} />
                 </div>
-                <div>
-                  <h2 className="text-xl font-black tracking-tight text-gray-800">{t('projectDetail.executionPipeline')}</h2>
-                  <p className="text-xs text-gray-400 font-bold uppercase tracking-wider mt-0.5">{t('projectDetail.realTimeOrchestration')}</p>
+                <div className="flex items-center gap-3">
+                  <div>
+                    <h2 className="text-xl font-black tracking-tight text-gray-800">{t('projectDetail.executionPipeline')}</h2>
+                    <p className="text-xs text-gray-400 font-bold uppercase tracking-wider mt-0.5">{t('projectDetail.realTimeOrchestration')}</p>
+                  </div>
+                  {workflowState?.run_status === 'running' && (
+                    <div className="inline-flex items-center rounded-full bg-indigo-600/50 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-white shadow-md animate-pulse">
+                      {currentRunLlmLabel}
+                    </div>
+                  )}
                 </div>
               </div>
 
-              <div className="flex items-center gap-3">
+            <div className="space-y-3">
                 {workflowState?.run_status === 'queued' && hasPendingTodoTasks && (
                   <button
                     onClick={handleContinueWorkflow}
@@ -1777,6 +1857,7 @@ export function ProjectDetail() {
             <TaskKanban
               tasks={workflowState?.task_queue || []}
               nodeStatuses={effectiveNodeStatuses}
+              nodeLlmMap={workflowState?.node_llm_map}
               selectedNode={selectedNode}
               onSelectNode={setSelectedNode}
               t={t}
@@ -2185,3 +2266,7 @@ export function ProjectDetail() {
     </div>
   );
 }
+
+
+
+

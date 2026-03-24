@@ -23,6 +23,7 @@ export interface Task {
 interface TaskKanbanProps {
   tasks: Task[];
   nodeStatuses: Record<string, NodeStatus>;
+  nodeLlmMap?: Record<string, { label?: string | null }>;
   selectedNode: string | null;
   onSelectNode: (nodeId: string) => void;
   t: (key: string) => string;
@@ -44,6 +45,7 @@ const ALL_STAGES = [
 const TaskKanbanComponent: React.FC<TaskKanbanProps> = ({
   tasks,
   nodeStatuses,
+  nodeLlmMap,
   selectedNode,
   onSelectNode,
   t,
@@ -197,10 +199,12 @@ const TaskKanbanComponent: React.FC<TaskKanbanProps> = ({
         key={nodeId}
         onClick={() => !isLoading && onSelectNode(nodeId)}
         disabled={isLoading}
-        className={`relative flex items-center gap-2 w-full p-2.5 rounded-xl border ${borderColor} ${bgColor} ${textColor} ${animation} transition-all duration-300 hover:translate-y-[-1px] text-[9px] uppercase tracking-tighter font-black shadow-sm group ${isLoading ? 'cursor-wait' : ''}`}
+        className={`relative flex items-start gap-2 w-full p-2.5 rounded-xl border ${borderColor} ${bgColor} ${textColor} ${animation} transition-all duration-300 hover:translate-y-[-1px] text-[9px] uppercase tracking-tighter font-black shadow-sm group ${isLoading ? 'cursor-wait' : ''}`}
       >
         <span className="flex-shrink-0">{icon}</span>
-        <span className="flex-1 text-left truncate">{label}</span>
+        <span className="flex-1 min-w-0 text-left">
+          <span className="block truncate">{label}</span>
+        </span>
       </button>
     );
   };
@@ -245,8 +249,22 @@ const TaskKanbanComponent: React.FC<TaskKanbanProps> = ({
     </div>
   );
 
+  const selectedNodeStatus = selectedNode ? (nodeStatuses[selectedNode] || 'idle') : 'idle';
+  let selectedNodeLabelColor = 'text-gray-400';
+  if (selectedNodeStatus === 'running') {
+    selectedNodeLabelColor = 'text-indigo-600';
+  } else if (selectedNodeStatus === 'success') {
+    selectedNodeLabelColor = 'text-emerald-600';
+  } else if (selectedNodeStatus === 'failed') {
+    selectedNodeLabelColor = 'text-rose-600';
+  } else if (selectedNodeStatus === 'waiting_human') {
+    selectedNodeLabelColor = 'text-amber-600';
+  } else if (selectedNodeStatus === 'skipped') {
+    selectedNodeLabelColor = 'text-gray-500';
+  }
+
   return (
-    <div className="w-full space-y-8">
+    <div className="relative w-full space-y-8 pb-8">
       <div className="relative px-2 py-2">
         <div className="absolute top-1/2 left-8 right-8 h-[1px] bg-gray-100 -translate-y-[12px] z-0" />
 
@@ -418,6 +436,14 @@ const TaskKanbanComponent: React.FC<TaskKanbanProps> = ({
           </div>
         ))}
       </div>
+
+      {selectedNode && nodeLlmMap?.[selectedNode]?.label && (
+        <div
+          className={`pointer-events-none absolute bottom-0 right-4 inline-flex max-w-[320px] items-center gap-2 px-3 py-1.5 text-[10px] font-black tracking-widest ${selectedNodeLabelColor}`}
+        >
+          {nodeLlmMap[selectedNode]?.label}
+        </div>
+      )}
     </div>
   );
 };
@@ -433,6 +459,13 @@ function buildNodeStatusesSignature(nodeStatuses: Record<string, NodeStatus>): s
     .join('|');
 }
 
+function buildNodeLlmSignature(nodeLlmMap?: Record<string, { label?: string | null }>): string {
+  return Object.entries(nodeLlmMap || {})
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}:${value?.label || ''}`)
+    .join('|');
+}
+
 export const TaskKanban = memo(TaskKanbanComponent, (prev, next) => (
   prev.selectedNode === next.selectedNode &&
   prev.currentPhase === next.currentPhase &&
@@ -441,5 +474,6 @@ export const TaskKanban = memo(TaskKanbanComponent, (prev, next) => (
   prev.isInitializing === next.isInitializing &&
   prev.showPlannedStages === next.showPlannedStages &&
   buildTasksSignature(prev.tasks) === buildTasksSignature(next.tasks) &&
-  buildNodeStatusesSignature(prev.nodeStatuses) === buildNodeStatusesSignature(next.nodeStatuses)
+  buildNodeStatusesSignature(prev.nodeStatuses) === buildNodeStatusesSignature(next.nodeStatuses) &&
+  buildNodeLlmSignature(prev.nodeLlmMap) === buildNodeLlmSignature(next.nodeLlmMap)
 ));

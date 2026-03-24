@@ -858,13 +858,13 @@ export function ProjectConfig() {
             )}
 
             {activeTab === 'llm' && (
-              <section className="space-y-6">
-                <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-8 space-y-6">
+              <section className="space-y-5">
+                <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-6 space-y-4">
                   <div className="flex items-center justify-between">
                     <div>
-                      <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">{llmCopy.eyebrow}</div>
+                      <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">{llmCopy.eyebrow}</div>
                       <h2 className="text-xl font-black text-gray-900">{llmCopy.title}</h2>
-                      <p className="text-sm text-gray-500 mt-2">{llmCopy.description}</p>
+                      <p className="text-sm text-gray-500 mt-1">{llmCopy.description}</p>
                     </div>
                     <div className="flex items-center gap-3">
                       <button
@@ -881,7 +881,7 @@ export function ProjectConfig() {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                     {models.map((model) => (
                       <div
                         key={model.id}
@@ -890,7 +890,7 @@ export function ProjectConfig() {
                           setTestResult(null);
                           setIsModelModalOpen(true);
                         }}
-                        className={`group relative rounded-2xl border p-5 transition-all flex flex-col justify-between gap-4 cursor-pointer ${model.is_default
+                        className={`group relative rounded-2xl border p-4 transition-all flex flex-col justify-between gap-3 cursor-pointer ${model.is_default
                           ? 'border-indigo-200 bg-indigo-50/30 hover:shadow-md hover:border-indigo-300'
                           : 'border-gray-200 bg-white hover:border-indigo-200 hover:shadow-md'
                           }`}
@@ -928,73 +928,10 @@ export function ProjectConfig() {
                       </div>
                     ))}
                     {models.length === 0 && (
-                      <div className="md:col-span-2 rounded-2xl border border-dashed border-gray-200 p-10 text-center text-sm text-gray-400">
+                      <div className="md:col-span-2 rounded-2xl border border-dashed border-gray-200 p-8 text-center text-sm text-gray-400">
                         {t('projectConfig.llm.empty') || 'No models configured yet.'}
                       </div>
                     )}
-                  </div>
-                </div>
-
-                <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-8 space-y-6">
-                  <div className="flex items-center justify-between gap-4">
-                    <div>
-                      <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">{llmCopy.debugEyebrow}</div>
-                      <h3 className="text-lg font-black text-gray-900">{llmCopy.debugTitle}</h3>
-                      <p className="text-sm text-gray-500 mt-2">{llmCopy.debugDescription}</p>
-                    </div>
-                    <button
-                      onClick={() => void saveDebugSettings()}
-                      disabled={saving || isSaved}
-                      className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase transition-all shadow-lg disabled:opacity-50 min-w-[132px] justify-center ${isSaved ? 'bg-emerald-500 text-white shadow-emerald-100' : 'bg-indigo-600 text-white shadow-indigo-100 hover:bg-indigo-700'}`}
-                    >
-                      {saving ? <RefreshCw size={14} className="animate-spin" /> : (isSaved ? <CheckCircle size={14} /> : <Save size={14} />)}
-                      {saving ? t('common.saving') : (isSaved ? t('common.saveSuccess') : llmCopy.debugSave)}
-                    </button>
-                  </div>
-
-                  <div className="grid grid-cols-1 gap-4">
-                    <div className="rounded-2xl border border-gray-200 bg-gray-50/60 p-5 flex items-start justify-between gap-4">
-                      <div className="min-w-0">
-                        <div className="text-sm font-black text-gray-900">{llmCopy.debugIndexTitle}</div>
-                        <p className="text-xs text-gray-500 mt-2">{llmCopy.debugIndexDesc}</p>
-                      </div>
-                      <button
-                        type="button"
-                        role="switch"
-                        aria-checked={debugConfig.llm_interaction_logging_enabled}
-                        onClick={() => setDebugConfig((prev) => ({
-                          llm_interaction_logging_enabled: !prev.llm_interaction_logging_enabled,
-                          llm_full_payload_logging_enabled: prev.llm_interaction_logging_enabled ? false : prev.llm_full_payload_logging_enabled,
-                        }))}
-                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 ${debugConfig.llm_interaction_logging_enabled ? 'bg-emerald-500' : 'bg-gray-300'}`}
-                      >
-                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${debugConfig.llm_interaction_logging_enabled ? 'translate-x-6' : 'translate-x-1'}`} />
-                      </button>
-                    </div>
-
-                    <div className={`rounded-2xl border p-5 flex items-start justify-between gap-4 ${debugConfig.llm_interaction_logging_enabled ? 'border-gray-200 bg-gray-50/60' : 'border-gray-100 bg-gray-50/30 opacity-60'}`}>
-                      <div className="min-w-0">
-                        <div className="text-sm font-black text-gray-900">{llmCopy.debugPayloadTitle}</div>
-                        <p className="text-xs text-gray-500 mt-2">{llmCopy.debugPayloadDesc}</p>
-                      </div>
-                      <button
-                        type="button"
-                        role="switch"
-                        aria-checked={debugConfig.llm_full_payload_logging_enabled}
-                        disabled={!debugConfig.llm_interaction_logging_enabled}
-                        onClick={() => setDebugConfig((prev) => ({
-                          ...prev,
-                          llm_full_payload_logging_enabled: !prev.llm_full_payload_logging_enabled,
-                        }))}
-                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 disabled:cursor-not-allowed ${debugConfig.llm_interaction_logging_enabled && debugConfig.llm_full_payload_logging_enabled ? 'bg-emerald-500' : 'bg-gray-300'}`}
-                      >
-                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${debugConfig.llm_interaction_logging_enabled && debugConfig.llm_full_payload_logging_enabled ? 'translate-x-6' : 'translate-x-1'}`} />
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
-                    {llmCopy.debugWarning}
                   </div>
                 </div>
 
@@ -1106,7 +1043,7 @@ export function ProjectConfig() {
                           </div>
                         </div>
                       )}
-                      
+
                       <div className="flex items-center gap-3">
                         <button
                           onClick={() => void testModelConfig()}
@@ -1137,6 +1074,69 @@ export function ProjectConfig() {
                     </div>
                   </div>
                 )}
+
+                <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-6 space-y-4">
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">{llmCopy.debugEyebrow}</div>
+                      <h3 className="text-lg font-black text-gray-900">{llmCopy.debugTitle}</h3>
+                      <p className="text-sm text-gray-500 mt-1">{llmCopy.debugDescription}</p>
+                    </div>
+                    <button
+                      onClick={() => void saveDebugSettings()}
+                      disabled={saving || isSaved}
+                      className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase transition-all shadow-lg disabled:opacity-50 min-w-[132px] justify-center ${isSaved ? 'bg-emerald-500 text-white shadow-emerald-100' : 'bg-indigo-600 text-white shadow-indigo-100 hover:bg-indigo-700'}`}
+                    >
+                      {saving ? <RefreshCw size={14} className="animate-spin" /> : (isSaved ? <CheckCircle size={14} /> : <Save size={14} />)}
+                      {saving ? t('common.saving') : (isSaved ? t('common.saveSuccess') : llmCopy.debugSave)}
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3">
+                    <div className="rounded-2xl border border-gray-200 bg-gray-50/60 p-4 flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-sm font-black text-gray-900">{llmCopy.debugIndexTitle}</div>
+                        <p className="text-xs text-gray-500 mt-1">{llmCopy.debugIndexDesc}</p>
+                      </div>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={debugConfig.llm_interaction_logging_enabled}
+                        onClick={() => setDebugConfig((prev) => ({
+                          llm_interaction_logging_enabled: !prev.llm_interaction_logging_enabled,
+                          llm_full_payload_logging_enabled: prev.llm_interaction_logging_enabled ? false : prev.llm_full_payload_logging_enabled,
+                        }))}
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 ${debugConfig.llm_interaction_logging_enabled ? 'bg-emerald-500' : 'bg-gray-300'}`}
+                      >
+                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${debugConfig.llm_interaction_logging_enabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                      </button>
+                    </div>
+
+                    <div className={`rounded-2xl border p-4 flex items-start justify-between gap-3 ${debugConfig.llm_interaction_logging_enabled ? 'border-gray-200 bg-gray-50/60' : 'border-gray-100 bg-gray-50/30 opacity-60'}`}>
+                      <div className="min-w-0">
+                        <div className="text-sm font-black text-gray-900">{llmCopy.debugPayloadTitle}</div>
+                        <p className="text-xs text-gray-500 mt-1">{llmCopy.debugPayloadDesc}</p>
+                      </div>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={debugConfig.llm_full_payload_logging_enabled}
+                        disabled={!debugConfig.llm_interaction_logging_enabled}
+                        onClick={() => setDebugConfig((prev) => ({
+                          ...prev,
+                          llm_full_payload_logging_enabled: !prev.llm_full_payload_logging_enabled,
+                        }))}
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 disabled:cursor-not-allowed ${debugConfig.llm_interaction_logging_enabled && debugConfig.llm_full_payload_logging_enabled ? 'bg-emerald-500' : 'bg-gray-300'}`}
+                      >
+                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${debugConfig.llm_interaction_logging_enabled && debugConfig.llm_full_payload_logging_enabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
+                    {llmCopy.debugWarning}
+                  </div>
+                </div>
               </section>
             )}
 
