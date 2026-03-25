@@ -1,6 +1,6 @@
 ﻿import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { useParams, Link, useLocation } from 'react-router-dom';
-import { api, type EffortLevel } from '../api';
+import { api } from '../api';
 import { ArrowLeft, Play, RefreshCw, Activity, Check, X, Upload, FileText, Database, Layers, Book, List, Trash2, ChevronLeft, ChevronRight, Settings2, FolderGit2, BookOpen, Bot, Cpu, Square } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { LanguageSwitcher } from './LanguageSwitcher';
@@ -73,7 +73,6 @@ interface WorkflowState {
   node_llm_map?: Record<string, {
     provider?: string | null;
     model?: string | null;
-    effort_level?: string | null;
     label?: string | null;
   }>;
 }
@@ -112,11 +111,6 @@ interface ExpertResourceSummary {
   name: string;
   enabled: boolean;
   dependencies?: string[];
-}
-
-interface EffortOption {
-  value: EffortLevel;
-  title: string;
 }
 
 interface EventBase {
@@ -225,7 +219,6 @@ export function ProjectDetail() {
   const [versions, setVersions] = useState<string[]>([]);
   const [requirement, setRequirement] = useState('');
   const [selectedModel, setSelectedModel] = useState<string>('');
-  const [selectedEffortLevel, setSelectedEffortLevel] = useState<EffortLevel>('medium');
   const [projectModels, setProjectModels] = useState<any[]>([]);
 
   const [inputFiles, setInputFiles] = useState<InputFile[]>([]);
@@ -274,42 +267,6 @@ export function ProjectDetail() {
   const seenEventIdsRef = useRef<Set<string>>(new Set());
   const latestFetchedStateAtRef = useRef<number>(0);
 
-  const effortOptions = useMemo<EffortOption[]>(() => {
-    const isZh = i18n.language.toLowerCase().startsWith('zh');
-    const fallback = {
-      label: isZh ? '执行预算' : 'Execution Budget',
-      low: isZh ? '低' : 'Low',
-      lowHint: isZh ? '最快返回，减少专家探索轮次。' : 'Fastest run with limited expert exploration.',
-      medium: isZh ? '中' : 'Medium',
-      mediumHint: isZh ? '速度与分析深度的平衡默认档。' : 'Balanced speed and coverage for most tasks.',
-      high: isZh ? '高' : 'High',
-      highHint: isZh ? '适合复杂需求，允许更多取证与推理。' : 'More evidence gathering for complex requirements.',
-      ultra: isZh ? '超高' : 'Ultra',
-      ultraHint: isZh ? '最深入的探索档位，但耗时也最长。' : 'Deepest exploration with the longest runtime.',
-    };
-    const pick = (key: string, fallbackValue: string) => {
-      const value = t(key);
-      return value === key || /\?{2,}/.test(value) ? fallbackValue : value;
-    };
-    return [
-      {
-        value: 'low',
-        title: pick('projectDetail.effort.low', fallback.low),
-      },
-      {
-        value: 'medium',
-        title: pick('projectDetail.effort.medium', fallback.medium),
-      },
-      {
-        value: 'high',
-        title: pick('projectDetail.effort.high', fallback.high),
-      },
-      {
-        value: 'ultra',
-        title: pick('projectDetail.effort.ultra', fallback.ultra),
-      },
-    ];
-  }, [i18n.language, t]);
   const selectedVersionRef = useRef<string | null>(null);
   const formatProjectModelLabel = useMemo(() => {
     return (model: any) => {
@@ -324,11 +281,6 @@ export function ProjectDetail() {
     [projectModels, selectedModel]
   );
 
-  const effortLabel = useMemo(() => {
-    const option = effortOptions.find((o) => o.value === selectedEffortLevel);
-    return option?.title || selectedEffortLevel;
-  }, [effortOptions, selectedEffortLevel]);
-
   const currentRunLlmLabel = useMemo(() => {
     const nodeLlmMap = workflowState?.node_llm_map || {};
     const currentNodeLabel = workflowState?.current_node ? nodeLlmMap[workflowState.current_node]?.label : null;
@@ -342,8 +294,8 @@ export function ProjectDetail() {
     }
 
     const modelLabel = selectedProjectModel ? formatProjectModelLabel(selectedProjectModel) : 'LLM';
-    return `${modelLabel} · ${effortLabel}`;
-  }, [effortLabel, formatProjectModelLabel, selectedProjectModel, workflowState]);
+    return modelLabel;
+  }, [formatProjectModelLabel, selectedProjectModel, workflowState]);
 
   const resourceCopy = useMemo(() => {
     const isZh = i18n.language.toLowerCase().startsWith('zh');
@@ -829,7 +781,7 @@ export function ProjectDetail() {
         await api.uploadBaselineFiles(id, timestampVersion, inputFiles.map(f => f.file));
       }
 
-      const run = await api.runOrchestrator(id, timestampVersion, requirement, selectedModel, selectedEffortLevel);
+      const run = await api.runOrchestrator(id, timestampVersion, requirement, selectedModel);
       setCurrentRunId(run.job_id);
       void fetchState(timestampVersion);
 
@@ -1444,7 +1396,7 @@ export function ProjectDetail() {
           task.agent_type === selectedNode ? { ...task, status: 'running' } : task
         )),
       } : prev);
-      await api.retryWorkflowNode(id, selectedVersion, selectedNode, selectedModel, selectedEffortLevel);
+      await api.retryWorkflowNode(id, selectedVersion, selectedNode, selectedModel);
       void fetchState();
     } catch (err: any) {
       setUiError(err?.response?.data?.detail || 'Failed to retry selected node');
@@ -1465,7 +1417,7 @@ export function ProjectDetail() {
     setContinuingWorkflow(true);
     try {
       setStreamStatus('connecting');
-      await api.continueWorkflow(id, selectedVersion, selectedModel, selectedEffortLevel);
+      await api.continueWorkflow(id, selectedVersion, selectedModel);
       void fetchState();
     } catch (err: any) {
       setUiError(err?.response?.data?.detail || 'Failed to continue workflow');
@@ -1513,7 +1465,7 @@ export function ProjectDetail() {
             </div>
           </div>
           <div className="flex items-center gap-4">
-            {false && (projectModels.length > 0 || effortOptions.length > 0) && (
+            {false && projectModels.length > 0 && (
               <div className="flex min-w-[320px] items-center gap-2 rounded-xl border border-gray-100 bg-gray-50 px-3 py-1.5">
                 <Cpu size={14} className="shrink-0 text-indigo-500" />
                 {projectModels.length > 0 && (
@@ -1535,21 +1487,6 @@ export function ProjectDetail() {
                     </select>
                   </div>
                 )}
-                <div className="h-4 w-px bg-gray-200" />
-                <div className="min-w-0 flex-[4]">
-                  <select
-                    value={selectedEffortLevel}
-                    onChange={(e) => setSelectedEffortLevel(e.target.value as EffortLevel)}
-                    className="w-full bg-transparent border-none text-[10px] font-black text-gray-600 outline-none focus:ring-0 focus:ring-offset-0 cursor-pointer hover:text-indigo-600 transition-colors uppercase tracking-wider"
-                    title={i18n.language.toLowerCase().startsWith('zh') ? '推理强度，等级越高成本越高。' : 'Reasoning intensity. Higher levels cost more.'}
-                  >
-                    {effortOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.title}
-                      </option>
-                    ))}
-                  </select>
-                </div>
               </div>
             )}
             <LanguageSwitcher />
@@ -1587,14 +1524,11 @@ export function ProjectDetail() {
 
             <div className="space-y-3">
 
-              {(projectModels.length > 0 || effortOptions.length > 0) && (
-                <div
-                  className="flex w-full items-center gap-2 rounded-2xl border border-gray-100 bg-gray-50 px-3 py-2.5"
-                  title={i18n.language.toLowerCase().startsWith('zh') ? '推理强度，等级越高成本越高。' : 'Reasoning intensity. Higher levels cost more.'}
-                >
+              {projectModels.length > 0 && (
+                <div className="flex w-full items-center gap-2 rounded-2xl border border-gray-100 bg-gray-50 px-3 py-2.5">
                   <Cpu size={14} className="shrink-0 text-indigo-500" />
                   {projectModels.length > 0 && (
-                    <div className="min-w-0 flex-[4]">
+                    <div className="min-w-0 flex-1">
                       <select
                         value={selectedModel}
                         onChange={(e) => setSelectedModel(e.target.value)}
@@ -1609,21 +1543,6 @@ export function ProjectDetail() {
                       </select>
                     </div>
                   )}
-                  <div className="h-4 w-px bg-gray-200" />
-                  <div className="min-w-0 flex-[1]">
-                    <select
-                      value={selectedEffortLevel}
-                      onChange={(e) => setSelectedEffortLevel(e.target.value as EffortLevel)}
-                      disabled={loading}
-                      className="w-full bg-transparent border-none text-[10px] font-black text-gray-600 outline-none focus:ring-0 focus:ring-offset-0 cursor-pointer uppercase tracking-wide disabled:cursor-not-allowed"
-                    >
-                      {effortOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.title}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
                 </div>
               )}
 
@@ -2086,7 +2005,7 @@ export function ProjectDetail() {
                   <div className="text-[10px] font-black uppercase tracking-widest text-rose-700">
                     {t('projectDetail.retry.configTitle')}
                   </div>
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 gap-4">
                     <div className="space-y-2">
                       <label className="text-xs font-medium text-gray-600">{t('projectDetail.retry.llmModel')}</label>
                       <select
@@ -2098,20 +2017,6 @@ export function ProjectDetail() {
                         {projectModels.map((model) => (
                           <option key={model.id} value={model.id}>
                             {formatProjectModelLabel(model)}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-xs font-medium text-gray-600">{t('projectDetail.retry.effortLevel')}</label>
-                      <select
-                        value={selectedEffortLevel}
-                        onChange={(e) => setSelectedEffortLevel(e.target.value as EffortLevel)}
-                        className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-400"
-                      >
-                        {effortOptions.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.title}
                           </option>
                         ))}
                       </select>

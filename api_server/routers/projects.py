@@ -72,7 +72,6 @@ async def run_design_orchestrator(project_id: str, version: str, req: VersionRun
         version,
         req.requirement_text,
         req.model,
-        req.effort_level,
     )
     return {"job_id": job_id, "status": "queued", "message": "Orchestrator job queued."}
 
@@ -112,7 +111,6 @@ async def retry_workflow_node(project_id: str, version: str, req: NodeRetryReque
         version,
         payload["node_type"],
         payload.get("model"),
-        payload.get("effort_level"),
     )
     if not success:
         raise HTTPException(status_code=409, detail="Node cannot be retried in the current workflow state.")
@@ -125,7 +123,6 @@ async def continue_workflow(project_id: str, version: str, req: ContinueRequest)
         project_id,
         version,
         payload.get("model"),
-        payload.get("effort_level"),
     )
     if not success:
         raise HTTPException(status_code=409, detail="Workflow cannot be continued in the current state.")

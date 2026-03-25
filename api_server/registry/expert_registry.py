@@ -311,6 +311,7 @@ class ExpertRegistry:
             templates=self._load_templates(capability),
             metadata={
                 **expert_data.get("metadata", {}),
+                "execution": expert_data.get("execution", {}),
                 "expected_outputs": manifest.expected_outputs,
             },
         )

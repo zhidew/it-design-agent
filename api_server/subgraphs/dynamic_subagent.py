@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from registry.agent_registry import AgentFullConfig
 
 
-MAX_REACT_STEPS = int(os.getenv("AGENT_MAX_REACT_STEPS", "12"))
+MAX_REACT_STEPS = int(os.getenv("AGENT_MAX_REACT_STEPS", "16"))
 
 # Default tools available to all subagents
 DEFAULT_READ_TOOLS = {"list_files", "extract_structure", "grep_search", "read_file_chunk", "extract_lookup_values"}
@@ -37,6 +37,14 @@ DEFAULT_WRITE_TOOLS = {"write_file", "patch_file"}
 
 def _tool_is_available(tool_name: str, tools_allowed: List[str]) -> bool:
     return tool_name in tools_allowed or "*" in tools_allowed
+
+
+def _coerce_positive_int(value: Any) -> Optional[int]:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
 
 
 def _normalize_relative_path(raw_path: str) -> str:
@@ -51,6 +59,35 @@ def _dedupe_preserve_order(items: List[str]) -> List[str]:
             seen.add(item)
             ordered.append(item)
     return ordered
+
+
+def _normalize_expected_output_paths(expected_files: List[str]) -> set[str]:
+    normalized: set[str] = set()
+    for item in expected_files:
+        if isinstance(item, str) and item.strip():
+            normalized.add(_normalize_relative_path(item))
+    return normalized
+
+
+def _decision_targets_final_artifact(
+    decision: Dict[str, Any],
+    expected_files: List[str],
+) -> Optional[str]:
+    tool_name = str(decision.get("tool_name") or "").strip()
+    if tool_name not in DEFAULT_WRITE_TOOLS:
+        return None
+
+    tool_input = dict(decision.get("tool_input") or {})
+    raw_path = tool_input.get("path")
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        return None
+
+    normalized_path = _normalize_relative_path(raw_path)
+    expected_paths = _normalize_expected_output_paths(expected_files)
+    expected_basenames = {Path(path).name for path in expected_paths}
+    if normalized_path in expected_paths or Path(normalized_path).name in expected_basenames:
+        return normalized_path
+    return None
 
 
 def _resolve_candidate_files(payload: Dict[str, Any]) -> List[str]:
@@ -101,6 +138,31 @@ def _get_runtime_project_root(payload: Dict[str, Any]) -> Optional[Path]:
     if not isinstance(raw_value, str) or not raw_value.strip():
         return None
     return Path(raw_value)
+
+
+def _resolve_explicit_max_react_steps(state: Dict[str, Any]) -> Optional[int]:
+    orchestrator_config = ((state.get("design_context") or {}).get("orchestrator") or {})
+    return _coerce_positive_int(orchestrator_config.get("max_react_steps"))
+
+
+def _estimate_react_budget(
+    *,
+    state: Dict[str, Any],
+    payload: Dict[str, Any],
+    expected_files: List[str],
+    agent_config: Optional["AgentFullConfig"],
+    upstream_artifacts: Dict[str, List[str]],
+    default_value: int,
+) -> int:
+    if default_value != MAX_REACT_STEPS:
+        return max(1, int(default_value))
+
+    explicit_override = _resolve_explicit_max_react_steps(state)
+    if explicit_override is not None:
+        return explicit_override
+
+    # ReAct budget is now a single global cap instead of per-expert tuning.
+    return MAX_REACT_STEPS
 
 
 def _relativize_path_for_prompt(raw_value: str, project_root: Optional[Path]) -> str:
@@ -434,8 +496,8 @@ def build_react_system_prompt(
     tools_section = f"""
 Available tools:
 - list_files / read_file_chunk / grep_search / extract_structure / extract_lookup_values (Read operations)
-- write_file (Write design artifacts when you already have enough grounded evidence)
-- patch_file (Make partial corrections to drafts under `artifacts/`)
+- write_file (Write scratch drafts only when they materially help evidence collection)
+- patch_file (Make partial corrections to scratch drafts under `artifacts/`)
 - run_command (Execute shell commands from project root when explicitly allowed)
 
 {tool_contract_section}
@@ -485,7 +547,7 @@ Choose one next action at a time to ground design artifacts.
 Strategy:
 1. Ground quickly: Anchor on the candidate baseline file immediately instead of searching for it by filename.
 2. Research: Use read tools to collect the minimum evidence needed from baseline/ and upstream artifacts/.
-3. Draft optionally: Use write_file only when an intermediate draft materially helps.
+3. Draft optionally: Use write_file only when an intermediate draft materially helps, and write it under `scratch/` with a `.draft` style filename.
 4. Verify: Use read_file_chunk to inspect generated drafts only when needed.
 5. Finalize: Set done=true as soon as the collected evidence is sufficient for final generation to produce all expected artifacts.
 
@@ -496,6 +558,7 @@ Rules:
 4. Candidate files in baseline/: {candidate_files}
 5. Only use asset-aware tools when the corresponding configured assets are present in the requirements payload.
 6. By step 2, you should already have grounded yourself on the correct baseline requirement content.
+7. Do NOT write or patch the final expected artifact paths during ReAct. If you are ready to produce the final expected artifacts, return `done=true` instead.
 
 Return JSON in artifacts.decision:
 {{
@@ -844,15 +907,6 @@ def default_build_evidence(
     }
 
 
-def _resolve_max_react_steps(state: Dict[str, Any], default_value: int) -> int:
-    orchestrator_config = ((state.get("design_context") or {}).get("orchestrator") or {})
-    raw_value = orchestrator_config.get("max_react_steps", default_value)
-    try:
-        return max(1, int(raw_value))
-    except (TypeError, ValueError):
-        return default_value
-
-
 async def run_dynamic_subagent(
     *,
     capability: str,
@@ -909,8 +963,6 @@ async def run_dynamic_subagent(
             # Registry not initialized, proceed without config
             pass
     
-    max_react_steps = _resolve_max_react_steps(state, max_react_steps)
-
     project_id = state["project_id"]
     version = state["version"]
     project_path = base_dir / "projects" / project_id / version
@@ -975,7 +1027,17 @@ async def run_dynamic_subagent(
         agent_config,
     )
 
+    max_react_steps = _estimate_react_budget(
+        state=state,
+        payload=payload,
+        expected_files=expected_files,
+        agent_config=agent_config,
+        upstream_artifacts=upstream_artifacts,
+        default_value=max_react_steps,
+    )
+
     history_updates.append(f"[SYSTEM] Dynamic subagent '{capability}' is now running.")
+    history_updates.append(f"[SYSTEM] ReAct budget resolved to {max_react_steps} step(s).")
     tool_results: List[Dict[str, Any]] = []
     react_trace: List[Dict[str, Any]] = []
     observations: List[Dict[str, Any]] = []
@@ -1016,11 +1078,30 @@ async def run_dynamic_subagent(
                     agent_config,
                     upstream_artifacts,
                 )
+
+            final_artifact_target = _decision_targets_final_artifact(decision, expected_files)
+            if final_artifact_target:
+                decision = dict(decision)
+                decision["done"] = True
+                decision["tool_name"] = "none"
+                decision["tool_input"] = {}
+                thought = str(decision.get("thought") or "").strip()
+                if thought:
+                    thought = f"{thought} Final expected artifacts must be generated in the final generation stage."
+                else:
+                    thought = "Evidence is sufficient; defer final artifact writing to the final generation stage."
+                decision["thought"] = thought
+                decision["coerced_done_from_final_artifact_write"] = final_artifact_target
             
             react_trace.append({"step": step, **decision})
             thought = decision.get("thought", "")
             if thought:
                 history_updates.append(f"[{capability}] ReAct step {step}: {thought}")
+
+            if final_artifact_target:
+                history_updates.append(
+                    f"[{capability}] ReAct step {step}: attempted to write final artifact `{final_artifact_target}` during ReAct; switching to final generation."
+                )
 
 
             if decision.get("done"):

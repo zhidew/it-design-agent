@@ -27,7 +27,6 @@ class ProjectResponse(BaseModel):
 class VersionRunRequest(BaseModel):
     requirement_text: str
     model: Optional[str] = None
-    effort_level: Optional[str] = None
 
 class JobResponse(BaseModel):
     job_id: str
@@ -47,12 +46,10 @@ class ResumeRequest(BaseModel):
 class NodeRetryRequest(BaseModel):
     node_type: str
     model: Optional[str] = None
-    effort_level: Optional[str] = None
 
 
 class ContinueRequest(BaseModel):
     model: Optional[str] = None
-    effort_level: Optional[str] = None
 
 
 class CancelRequest(BaseModel):

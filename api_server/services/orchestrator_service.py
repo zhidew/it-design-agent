@@ -30,12 +30,6 @@ RUN_STATUS_WAITING_HUMAN = "waiting_human"
 RUN_STATUS_SUCCESS = "success"
 RUN_STATUS_FAILED = "failed"
 STALE_RUNNING_TIMEOUT_SECONDS = int(os.getenv("ORCHESTRATOR_STALE_TIMEOUT_SECONDS", "180"))
-EFFORT_LEVEL_TO_REACT_STEPS = {
-    "low": 5,
-    "medium": 12,
-    "high": 20,
-    "ultra": 32,
-}
 
 jobs = {}
 runtime_registry = {}
@@ -401,8 +395,6 @@ def _normalize_llm_log_node_id(node_id: str | None) -> str | None:
 def _build_node_llm_map(project_id: str, version: str, state: dict, task_queue: list[dict]) -> dict[str, dict]:
     design_context = state.get("design_context") or {}
     model_config = design_context.get("model_config") or {}
-    orchestrator_context = design_context.get("orchestrator") or {}
-    effort_level = str(orchestrator_context.get("effort_level") or "").strip().lower() or None
     fallback_model = (
         str(model_config.get("model_name") or "").strip()
         or str(design_context.get("model") or "").strip()
@@ -447,13 +439,12 @@ def _build_node_llm_map(project_id: str, version: str, state: dict, task_queue: 
         latest = latest_by_node.get(node_type) or {}
         model_name = str(latest.get("model") or fallback_model or "").strip()
         provider = str(latest.get("provider") or fallback_provider or "").strip().lower()
-        if not model_name and not effort_level and not provider:
+        if not model_name and not provider:
             continue
         node_llm_map[node_type] = {
             "provider": provider or None,
             "model": model_name or None,
-            "effort_level": effort_level,
-            "label": " · ".join(part for part in [model_name or "", effort_level or ""] if part),
+            "label": " · ".join(part for part in [provider or "", model_name or ""] if part),
         }
 
     return node_llm_map
@@ -1021,7 +1012,6 @@ def _build_graph_input_state(
     resume_action: str | None = None,
     feedback: str = "",
     model: str | None = None,
-    effort_level: str | None = None,
 ) -> dict:
     messages = list((persisted_state or {}).get("messages", []))
     history = list((persisted_state or {}).get("history", []))
@@ -1038,14 +1028,14 @@ def _build_graph_input_state(
             f"[HUMAN] Action: {resume_action}. Feedback: {feedback or 'None'}"
         )
 
-    design_context = (persisted_state or {}).get("design_context", {})
-    orchestrator_context = dict((design_context or {}).get("orchestrator", {}))
-    normalized_effort_level = (effort_level or orchestrator_context.get("effort_level") or "").strip().lower()
-    if normalized_effort_level in EFFORT_LEVEL_TO_REACT_STEPS:
-        orchestrator_context["effort_level"] = normalized_effort_level
-        orchestrator_context["max_react_steps"] = EFFORT_LEVEL_TO_REACT_STEPS[normalized_effort_level]
-    if orchestrator_context:
-        design_context["orchestrator"] = orchestrator_context
+    design_context = dict((persisted_state or {}).get("design_context", {}) or {})
+    orchestrator_context = dict((design_context or {}).get("orchestrator", {}) or {})
+    if "max_react_steps" in orchestrator_context:
+        design_context["orchestrator"] = {
+            "max_react_steps": orchestrator_context["max_react_steps"],
+        }
+    else:
+        design_context.pop("orchestrator", None)
 
     if model:
         design_context["model"] = model
@@ -1106,7 +1096,6 @@ async def run_orchestrator_task(
     feedback: str = "",
     persisted_state_override: dict | None = None,
     model: str | None = None,
-    effort_level: str | None = None,
 ):
     thread_id = _thread_id(project_id, version)
     print(f"\n[DEBUG] Starting/Resuming Job: {job_id} for Thread: {thread_id}")
@@ -1140,7 +1129,6 @@ async def run_orchestrator_task(
             resume_action=resume_action,
             feedback=feedback,
             model=model,
-            effort_level=effort_level,
         )
 
         config = _graph_config(project_id, version, job_id)
@@ -1400,7 +1388,6 @@ async def retry_workflow_node(
     version: str,
     node_type: str,
     model: str | None = None,
-    effort_level: str | None = None,
 ):
     current_state = get_workflow_state(project_id, version)
     if not current_state:
@@ -1463,7 +1450,6 @@ async def retry_workflow_node(
             feedback="",
             persisted_state_override=retry_state,
             model=model,
-            effort_level=effort_level,
         )
     )
     return True
@@ -1473,7 +1459,6 @@ async def continue_workflow(
     project_id: str,
     version: str,
     model: str | None = None,
-    effort_level: str | None = None,
 ):
     current_state = get_workflow_state(project_id, version)
     if not current_state:
@@ -1516,7 +1501,7 @@ async def continue_workflow(
 
     # Build history message based on continuation type
     if is_cancelled:
-        history_msg = f"[HUMAN] Retry workflow with model={model or 'default'}, effort={effort_level or 'default'}"
+        history_msg = f"[HUMAN] Retry workflow with model={model or 'default'}"
     else:
         history_msg = "[HUMAN] Continue workflow from queued state"
 
@@ -1569,7 +1554,6 @@ async def continue_workflow(
             feedback="",
             persisted_state_override=continue_state,
             model=model,
-            effort_level=effort_level,
         )
     )
     return True
@@ -1627,7 +1611,7 @@ async def cancel_workflow(
         version,
         run_status=RUN_STATUS_WAITING_HUMAN,
         current_node=current_node,
-        waiting_reason=f"[CANCELLED] {cancel_reason}. You can now retry with different LLM or effort level.",
+        waiting_reason=f"[CANCELLED] {cancel_reason}. You can now retry with a different LLM.",
         can_resume=True,
         job_id=None,
     )
@@ -1654,7 +1638,6 @@ def trigger_orchestrator(
     version: str,
     requirement_text: str,
     model: str | None = None,
-    effort_level: str | None = None,
 ) -> str:
     job_id = str(uuid.uuid4())
     _ensure_job(job_id)
@@ -1675,7 +1658,6 @@ def trigger_orchestrator(
             version,
             requirement_text,
             model=model,
-            effort_level=effort_level,
         ),
     )
     return job_id

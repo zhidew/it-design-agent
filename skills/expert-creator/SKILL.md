@@ -192,7 +192,7 @@ Analyze the expert name and description to understand the domain.
 ```yaml
 Action: read_file_chunk
 Input:
-  file_path: "skills/expert-creator/assets/TOOL_REGISTRY.yaml"
+  path: "skills/expert-creator/assets/TOOL_REGISTRY.yaml"
 ```
 
 #### Observe 1: Available Tools
@@ -218,7 +218,7 @@ Plan the directory structure and file contents.
 ```yaml
 Action: write_file
 Input:
-  file_path: "experts/{expert_id}.expert.yaml"
+  path: "{expert_id}.expert.yaml"
   content: "{profile_content}"
 ```
 
