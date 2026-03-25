@@ -178,6 +178,7 @@
     "eyebrow": "Project Resources",
     "title": "Project Resource Config",
     "description": "Configure repository, database, knowledge base, and expert access for this project.",
+    "currentProject": "Current Project",
     "tabs": {
       "repositories": "Repo Config",
       "databases": "DB Config",

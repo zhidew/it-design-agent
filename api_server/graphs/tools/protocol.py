@@ -1019,10 +1019,19 @@ _TOOL_SCHEMAS: Dict[str, ToolSchema] = {
             "query_type": ToolParamSpec(
                 "string",
                 required=True,
-                allowed_values=("search_terms", "get_feature_tree", "search_design_docs", "get_related_designs"),
+                allowed_values=(
+                    "search_terms",
+                    "get_feature_tree",
+                    "search_design_docs",
+                    "vector_search_design_docs",
+                    "retrieve_design_context",
+                    "get_related_designs",
+                ),
             ),
             "keyword": ToolParamSpec("string"),
             "feature_id": ToolParamSpec("string"),
+            "limit": ToolParamSpec("int"),
+            "top_k": ToolParamSpec("int"),
         }
     ),
     "write_file": ToolSchema(

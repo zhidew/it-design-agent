@@ -75,10 +75,11 @@ description: 设计 SLO、告警规则、监控指标及发布回滚的运行手
 
 ## ReAct 规则
 
-1. 每次只输出一个下一步动作。
+1. 默认每次只输出一个下一步动作；只有在收集独立、低风险的读取证据时，才可使用 `actions` 返回最多 2 个只读动作。
 2. 仅当收集到足够证据且已写入 SLO、可观测性规范和 Runbook 时才停止。
 3. 先使用 `extract_structure` 检查标题和 JSON 键，再读取大块内容。
 4. 使用 `grep_search` 搜索 availability, latency, rollback, alert, Kafka, tracing, error rate, p99, dependency 等关键词。
+5. `actions` 只可包含 `read_file_chunk`、`extract_structure`、`grep_search`、`extract_lookup_values` 等只读工具，且不得混入 `write_file`、`patch_file`、`run_command`、`clone_repository`、`query_database` 或 `query_knowledge_base`。
 
 ## 返回格式
 
@@ -88,6 +89,10 @@ description: 设计 SLO、告警规则、监控指标及发布回滚的运行手
   "thought": "为什么需要这一步",
   "tool_name": "list_files | extract_structure | grep_search | read_file_chunk | none",
   "tool_input": {},
+  "actions": [
+    {"tool_name": "extract_structure", "tool_input": {"files": ["baseline/original-requirements.md"]}},
+    {"tool_name": "grep_search", "tool_input": {"pattern": "availability|latency|rollback|alert|Kafka|tracing|error rate|p99|dependency"}}
+  ],
   "evidence_note": "这一步应该确认或产出什么"
 }
 ```

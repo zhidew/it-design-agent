@@ -312,6 +312,14 @@ Create the design artifacts.
 #### Observe 2: Review Output
 Validate the generated content.
 
+## ReAct Guardrails
+
+- Default to one action per step.
+- Use `actions` only for short read-only batches such as `read_file_chunk`, `extract_structure`, `grep_search`, or `extract_lookup_values`.
+- Keep batched `actions` independent and low-risk, because later actions cannot see outputs from earlier actions in the same batch.
+- Never batch `write_file`, `patch_file`, `run_command`, `clone_repository`, `query_database`, or `query_knowledge_base`.
+- Set `done=true` as soon as the evidence is sufficient for final generation; do not wait for ReAct to write final artifacts.
+
 ## Output Artifacts
 
 | File | Description |

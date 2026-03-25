@@ -29,6 +29,7 @@ if TYPE_CHECKING:
 
 
 MAX_REACT_STEPS = int(os.getenv("AGENT_MAX_REACT_STEPS", "16"))
+MAX_ACTIONS_PER_STEP = int(os.getenv("AGENT_MAX_ACTIONS_PER_STEP", "2"))
 
 # Default tools available to all subagents
 DEFAULT_READ_TOOLS = {"list_files", "extract_structure", "grep_search", "read_file_chunk", "extract_lookup_values"}
@@ -37,6 +38,10 @@ DEFAULT_WRITE_TOOLS = {"write_file", "patch_file"}
 
 def _tool_is_available(tool_name: str, tools_allowed: List[str]) -> bool:
     return tool_name in tools_allowed or "*" in tools_allowed
+
+
+def _is_read_tool(tool_name: str) -> bool:
+    return tool_name in DEFAULT_READ_TOOLS
 
 
 def _coerce_positive_int(value: Any) -> Optional[int]:
@@ -67,6 +72,70 @@ def _normalize_expected_output_paths(expected_files: List[str]) -> set[str]:
         if isinstance(item, str) and item.strip():
             normalized.add(_normalize_relative_path(item))
     return normalized
+
+
+def _normalize_react_action(action: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(action, dict):
+        return None
+
+    tool_name = str(action.get("tool_name") or "none").strip() or "none"
+    tool_input = action.get("tool_input") or {}
+    if not isinstance(tool_input, dict):
+        tool_input = {}
+
+    return {
+        "tool_name": tool_name,
+        "tool_input": dict(tool_input),
+    }
+
+
+def _normalize_react_decision(decision: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = dict(decision)
+    normalized_actions: List[Dict[str, Any]] = []
+    raw_actions = normalized.get("actions")
+
+    if isinstance(raw_actions, list):
+        for raw_action in raw_actions[:MAX_ACTIONS_PER_STEP]:
+            action = _normalize_react_action(raw_action)
+            if action is not None:
+                normalized_actions.append(action)
+
+    if not normalized_actions:
+        single_action = _normalize_react_action(
+            {
+                "tool_name": normalized.get("tool_name"),
+                "tool_input": normalized.get("tool_input"),
+            }
+        )
+        if single_action is not None and single_action["tool_name"] != "none":
+            normalized_actions.append(single_action)
+
+    normalized["actions"] = normalized_actions
+    if normalized_actions:
+        normalized["tool_name"] = normalized_actions[0]["tool_name"]
+        normalized["tool_input"] = dict(normalized_actions[0]["tool_input"])
+    else:
+        normalized["tool_name"] = "none"
+        normalized["tool_input"] = {}
+
+    if isinstance(raw_actions, list) and len(raw_actions) > MAX_ACTIONS_PER_STEP:
+        normalized["actions_truncated"] = len(raw_actions) - MAX_ACTIONS_PER_STEP
+
+    if len(normalized_actions) > 1 and any(not _is_read_tool(action["tool_name"]) for action in normalized_actions):
+        normalized["actions_restricted_to_single"] = True
+        normalized_actions = normalized_actions[:1]
+        normalized["actions"] = normalized_actions
+        normalized["tool_name"] = normalized_actions[0]["tool_name"]
+        normalized["tool_input"] = dict(normalized_actions[0]["tool_input"])
+
+    return normalized
+
+
+def _action_targets_final_artifact(
+    action: Dict[str, Any],
+    expected_files: List[str],
+) -> Optional[str]:
+    return _decision_targets_final_artifact(action, expected_files)
 
 
 def _decision_targets_final_artifact(
@@ -216,6 +285,141 @@ def _build_asset_tool_section(tools_allowed: List[str], configured_assets: Dict[
 Asset-aware tools:
 {chr(10).join(asset_lines)}
 """
+
+
+def _get_configured_asset_items(configured_assets: Dict[str, Any] | None, asset_kind: str) -> List[Dict[str, Any]]:
+    configured_assets = configured_assets or {}
+    bucket = configured_assets.get(asset_kind) or {}
+    items = bucket.get("items") or []
+    return [item for item in items if isinstance(item, dict)]
+
+
+def _format_asset_examples(configured_assets: Dict[str, Any] | None) -> str:
+    configured_assets = configured_assets or {}
+    sections: List[str] = []
+
+    repositories = _get_configured_asset_items(configured_assets, "repositories")
+    if repositories:
+        repo_lines = [
+            f'  - `{item.get("id")}`: {item.get("name") or item.get("description") or "repository"}'
+            for item in repositories
+        ]
+        repo_example = repositories[0].get("id")
+        sections.append(
+            "\n".join(
+                [
+                    "Configured repositories:",
+                    *repo_lines,
+                    f'  Example: `{{"tool_name":"clone_repository","tool_input":{{"repo_id":"{repo_example}"}}}}`',
+                ]
+            )
+        )
+
+    databases = _get_configured_asset_items(configured_assets, "databases")
+    if databases:
+        db_lines = [
+            f'  - `{item.get("id")}`: {item.get("name") or item.get("description") or "database"}'
+            for item in databases
+        ]
+        db_example = databases[0].get("id")
+        sections.append(
+            "\n".join(
+                [
+                    "Configured databases:",
+                    *db_lines,
+                    f'  Example: `{{"tool_name":"query_database","tool_input":{{"db_id":"{db_example}","query_type":"list_tables"}}}}`',
+                ]
+            )
+        )
+
+    knowledge_bases = _get_configured_asset_items(configured_assets, "knowledge_bases")
+    if knowledge_bases:
+        kb_lines = [
+            f'  - `{item.get("id")}` ({item.get("type") or "local"}): {item.get("name") or item.get("description") or "knowledge base"}'
+            for item in knowledge_bases
+        ]
+        kb_example = knowledge_bases[0].get("id")
+        sections.append(
+            "\n".join(
+                [
+                    "Configured knowledge bases:",
+                    *kb_lines,
+                    f'  Example: `{{"tool_name":"query_knowledge_base","tool_input":{{"kb_id":"{kb_example}","query_type":"search_design_docs","keyword":"补发"}}}}`',
+                ]
+            )
+        )
+
+    if not sections:
+        return ""
+    return "\n\nKnown configured asset IDs:\n" + "\n\n".join(sections)
+
+
+def _resolve_single_asset_id(
+    configured_assets: Dict[str, Any] | None,
+    asset_kind: str,
+    requested_id: Any,
+) -> tuple[Optional[str], Optional[str]]:
+    items = _get_configured_asset_items(configured_assets, asset_kind)
+    asset_ids = [str(item.get("id")) for item in items if item.get("id")]
+    bucket = (configured_assets or {}).get(asset_kind) or {}
+    is_complete_catalog = len(asset_ids) == int(bucket.get("count") or len(asset_ids))
+
+    if isinstance(requested_id, str) and requested_id.strip():
+        requested_id = requested_id.strip()
+        if is_complete_catalog and requested_id not in asset_ids:
+            return None, (
+                f"Unknown {asset_kind[:-1]} id '{requested_id}'. "
+                f"Available ids: {', '.join(asset_ids) if asset_ids else '(none)'}."
+            )
+        return requested_id, None
+
+    if len(asset_ids) == 1:
+        return asset_ids[0], f"Auto-selected the only configured {asset_kind[:-1]} id '{asset_ids[0]}'."
+
+    if len(asset_ids) > 1:
+        return None, f"Missing {asset_kind[:-1]} id. Choose one of: {', '.join(asset_ids)}."
+
+    return None, f"No configured {asset_kind} are available for this project."
+
+
+def _preflight_asset_tool_action(
+    action: Dict[str, Any],
+    configured_assets: Dict[str, Any] | None,
+) -> tuple[Dict[str, Any], Optional[str], Optional[str]]:
+    tool_name = str(action.get("tool_name") or "").strip()
+    tool_input = dict(action.get("tool_input") or {})
+
+    if tool_name == "clone_repository":
+        resolved_id, note = _resolve_single_asset_id(configured_assets, "repositories", tool_input.get("repo_id"))
+        if resolved_id is None:
+            return tool_input, None, note
+        tool_input["repo_id"] = resolved_id
+        return tool_input, note, None
+
+    if tool_name == "query_database":
+        resolved_id, note = _resolve_single_asset_id(configured_assets, "databases", tool_input.get("db_id"))
+        if resolved_id is None:
+            return tool_input, None, note
+        tool_input["db_id"] = resolved_id
+        return tool_input, note, None
+
+    if tool_name == "query_knowledge_base":
+        kb_id = tool_input.get("kb_id")
+        if kb_id is None or (isinstance(kb_id, str) and not kb_id.strip()):
+            resolved_id, note = _resolve_single_asset_id(configured_assets, "knowledge_bases", kb_id)
+            if resolved_id is not None:
+                tool_input["kb_id"] = resolved_id
+                return tool_input, note, None
+            if "Missing knowledge_base id" in str(note):
+                return tool_input, None, note
+        else:
+            resolved_id, note = _resolve_single_asset_id(configured_assets, "knowledge_bases", kb_id)
+            if resolved_id is None:
+                return tool_input, None, note
+            tool_input["kb_id"] = resolved_id
+        return tool_input, None, None
+
+    return tool_input, None, None
 
 
 def _build_tool_name_options(tools_allowed: List[str], configured_assets: Dict[str, Any] | None) -> str:
@@ -439,6 +643,7 @@ def _compact_observations_for_prompt(
         compact_observations.append(
             {
                 "step": observation.get("step"),
+                "action_index": observation.get("action_index"),
                 "tool_name": observation.get("tool_name"),
                 "evidence_note": observation.get("evidence_note", ""),
                 "tool_input": _summarize_value_for_prompt(
@@ -503,6 +708,7 @@ Available tools:
 {tool_contract_section}
 """
     asset_tool_section = _build_asset_tool_section(tools_allowed, configured_assets)
+    asset_examples_section = _format_asset_examples(configured_assets)
     tool_name_options = _build_tool_name_options(tools_allowed, configured_assets)
     
     # Build workflow section if available
@@ -543,6 +749,7 @@ Choose one next action at a time to ground design artifacts.
 {custom_section}
 {tools_section}
 {asset_tool_section}
+{asset_examples_section}
 {workflow_section}{memory_section}
 Strategy:
 1. Ground quickly: Anchor on the candidate baseline file immediately instead of searching for it by filename.
@@ -552,13 +759,17 @@ Strategy:
 5. Finalize: Set done=true as soon as the collected evidence is sufficient for final generation to produce all expected artifacts.
 
 Rules:
-1. Only output one next action.
+1. You may output one action or a short sequential batch in `actions`, but keep it to at most {MAX_ACTIONS_PER_STEP} actions.
 2. Stop when evidence is sufficient for final generation, even if ReAct has not written any artifact files yet.
 3. Keep tool_input concise and machine-readable JSON.
 4. Candidate files in baseline/: {candidate_files}
 5. Only use asset-aware tools when the corresponding configured assets are present in the requirements payload.
+5a. For `clone_repository`, `query_database`, and most `query_knowledge_base` calls, prefer passing the concrete configured asset id shown above.
 6. By step 2, you should already have grounded yourself on the correct baseline requirement content.
 7. Do NOT write or patch the final expected artifact paths during ReAct. If you are ready to produce the final expected artifacts, return `done=true` instead.
+8. Only use `actions` for short read-only batches such as `read_file_chunk`, `extract_structure`, `grep_search`, or `extract_lookup_values`.
+9. Never batch `write_file`, `patch_file`, `run_command`, `clone_repository`, `query_database`, or `query_knowledge_base`; those must be emitted as a single action step.
+10. Later actions in the same batch cannot see outputs from earlier actions in that batch, so only batch independent or low-risk steps.
 
 Return JSON in artifacts.decision:
 {{
@@ -566,6 +777,10 @@ Return JSON in artifacts.decision:
   "thought": "why this step is needed",
   "tool_name": {tool_name_options},
   "tool_input": {{}},
+  "actions": [
+    {{"tool_name": "read_file_chunk", "tool_input": {{"path": "{candidate_files[0] if candidate_files else 'baseline/original-requirements.md'}", "start_line": 1, "end_line": 120}}}},
+    {{"tool_name": "extract_structure", "tool_input": {{"files": ["{candidate_files[0] if candidate_files else 'baseline/original-requirements.md'}"]}}}}
+  ],
   "evidence_note": "what this step should confirm or produce"
 }}
 """.strip()
@@ -718,6 +933,7 @@ def default_next_react_decision(
     decision.setdefault("tool_input", {})
     decision.setdefault("thought", "")
     decision.setdefault("evidence_note", "")
+    decision = _normalize_react_decision(decision)
     decision["reasoning"] = llm_output.reasoning
     
     return decision
@@ -990,6 +1206,7 @@ async def run_dynamic_subagent(
     payload["_runtime_project_root"] = str(project_path)
     history_updates = []
     runtime_llm_settings = resolve_runtime_llm_settings(state.get("design_context"))
+    configured_assets = payload.get("configured_assets") if isinstance(payload.get("configured_assets"), dict) else None
 
     def _generate_with_selected_llm(*args: Any, **kwargs: Any) -> SubagentOutput:
         if runtime_llm_settings and "llm_settings" not in kwargs:
@@ -1079,10 +1296,16 @@ async def run_dynamic_subagent(
                     upstream_artifacts,
                 )
 
-            final_artifact_target = _decision_targets_final_artifact(decision, expected_files)
+            decision = _normalize_react_decision(decision)
+            final_artifact_target = None
+            for action in decision.get("actions") or []:
+                final_artifact_target = _action_targets_final_artifact(action, expected_files)
+                if final_artifact_target:
+                    break
             if final_artifact_target:
                 decision = dict(decision)
                 decision["done"] = True
+                decision["actions"] = []
                 decision["tool_name"] = "none"
                 decision["tool_input"] = {}
                 thought = str(decision.get("thought") or "").strip()
@@ -1098,6 +1321,16 @@ async def run_dynamic_subagent(
             if thought:
                 history_updates.append(f"[{capability}] ReAct step {step}: {thought}")
 
+            if decision.get("actions_truncated"):
+                history_updates.append(
+                    f"[{capability}] ReAct step {step}: truncated actions batch by {decision['actions_truncated']} item(s) to respect the per-step cap."
+                )
+
+            if decision.get("actions_restricted_to_single"):
+                history_updates.append(
+                    f"[{capability}] ReAct step {step}: restricted batched actions to a single action because only read-only tools may be batched."
+                )
+
             if final_artifact_target:
                 history_updates.append(
                     f"[{capability}] ReAct step {step}: attempted to write final artifact `{final_artifact_target}` during ReAct; switching to final generation."
@@ -1108,37 +1341,86 @@ async def run_dynamic_subagent(
                 history_updates.append(f"[{capability}] ReAct step {step}: evidence is sufficient, moving to final generation.")
                 break
 
-            tool_name = decision.get("tool_name") or "none"
-            tool_input = dict(decision.get("tool_input") or {})
-            
-            # Set root_dir based on tool type for cross-agent memory
-            # - Write tools: write to artifacts directory
-            # - Read tools: can read from project root (baseline/, artifacts/, evidence/)
-            # This enables downstream agents to read upstream artifacts
-            if tool_name in DEFAULT_WRITE_TOOLS:
-                tool_input["root_dir"] = str(artifacts_dir)
-            else:
-                # Read tools can access project root for cross-agent memory
-                tool_input["root_dir"] = str(project_path)
+            executed_action_summaries: List[Dict[str, Any]] = []
+            for action_index, action in enumerate(decision.get("actions") or [], start=1):
+                tool_name = action.get("tool_name") or "none"
+                tool_input = dict(action.get("tool_input") or {})
 
-            tool_result = await asyncio.to_thread(_execute_tool_with_permission, tool_name, tool_input)
-            tool_results.append(tool_result)
-            react_trace[-1]["tool_result"] = {
-                "status": tool_result.get("status"),
-                "error_code": tool_result.get("error_code"),
-                "duration_ms": tool_result.get("duration_ms"),
-            }
-            
-            history_updates.extend(default_tool_history_entries(tool_name, tool_result))
-            observations.append(
-                {
-                    "step": step,
-                    "tool_name": tool_name,
-                    "tool_input": _sanitize_prompt_payload(tool_result.get("input") or {}, project_path),
-                    "tool_output": _sanitize_prompt_payload(tool_result.get("output") or {}, project_path),
-                    "evidence_note": decision.get("evidence_note", ""),
-                }
-            )
+                if tool_name == "none":
+                    continue
+
+                tool_input, autofill_note, validation_error = _preflight_asset_tool_action(
+                    action,
+                    configured_assets,
+                )
+                if autofill_note:
+                    history_updates.append(f"[{capability}] ReAct step {step}: {autofill_note}")
+                if validation_error:
+                    history_updates.append(
+                        f"[{capability}] ReAct step {step}: asset tool input rejected before execution. {validation_error}"
+                    )
+                    executed_action_summaries.append(
+                        {
+                            "action_index": action_index,
+                            "tool_name": tool_name,
+                            "status": "error",
+                            "error_code": "INVALID_ASSET_SELECTION",
+                            "duration_ms": 0,
+                        }
+                    )
+                    observations.append(
+                        {
+                            "step": step,
+                            "action_index": action_index,
+                            "tool_name": tool_name,
+                            "tool_input": _sanitize_prompt_payload(tool_input, project_path),
+                            "tool_output": {
+                                "error": {
+                                    "code": "INVALID_ASSET_SELECTION",
+                                    "message": validation_error,
+                                }
+                            },
+                            "evidence_note": decision.get("evidence_note", ""),
+                        }
+                    )
+                    continue
+
+                # Set root_dir based on tool type for cross-agent memory
+                # - Write tools: write to artifacts directory
+                # - Read tools: can read from project root (baseline/, artifacts/, evidence/)
+                # This enables downstream agents to read upstream artifacts
+                if tool_name in DEFAULT_WRITE_TOOLS:
+                    tool_input["root_dir"] = str(artifacts_dir)
+                else:
+                    # Read tools can access project root for cross-agent memory
+                    tool_input["root_dir"] = str(project_path)
+
+                tool_result = await asyncio.to_thread(_execute_tool_with_permission, tool_name, tool_input)
+                tool_results.append(tool_result)
+                executed_action_summaries.append(
+                    {
+                        "action_index": action_index,
+                        "tool_name": tool_name,
+                        "status": tool_result.get("status"),
+                        "error_code": tool_result.get("error_code"),
+                        "duration_ms": tool_result.get("duration_ms"),
+                    }
+                )
+
+                history_updates.extend(default_tool_history_entries(tool_name, tool_result))
+                observations.append(
+                    {
+                        "step": step,
+                        "action_index": action_index,
+                        "tool_name": tool_name,
+                        "tool_input": _sanitize_prompt_payload(tool_result.get("input") or {}, project_path),
+                        "tool_output": _sanitize_prompt_payload(tool_result.get("output") or {}, project_path),
+                        "evidence_note": decision.get("evidence_note", ""),
+                    }
+                )
+
+            if executed_action_summaries:
+                react_trace[-1]["tool_results"] = executed_action_summaries
         else:
             react_exhausted = True
             history_updates.append(

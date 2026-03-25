@@ -213,6 +213,7 @@ export function ProjectConfig() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
+  const [projectDisplayName, setProjectDisplayName] = useState('');
   const [repositories, setRepositories] = useState<RepositoryConfig[]>([]);
   const [databases, setDatabases] = useState<DatabaseConfig[]>([]);
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseConfig[]>([]);
@@ -441,7 +442,8 @@ export function ProjectConfig() {
     if (!projectId) return;
     setLoading(true);
     try {
-      const [repoRes, dbRes, kbRes, expertRes, _llmRes, modelRes, debugRes] = await Promise.all([
+      const [projectsRes, repoRes, dbRes, kbRes, expertRes, _llmRes, modelRes, debugRes] = await Promise.all([
+        api.getProjects(),
         api.getRepositoryConfigs(projectId),
         api.getDatabaseConfigs(projectId),
         api.getKnowledgeBaseConfigs(projectId),
@@ -450,6 +452,10 @@ export function ProjectConfig() {
         api.getProjectModels(projectId),
         api.getProjectDebugConfig(projectId),
       ]);
+      const matchedProject = Array.isArray(projectsRes)
+        ? projectsRes.find((project: { id?: string; name?: string }) => project.id === projectId)
+        : null;
+      setProjectDisplayName(matchedProject?.name || projectId);
       setRepositories(repoRes.repositories || []);
       setDatabases(dbRes.databases || []);
       setKnowledgeBases(kbRes.knowledge_bases || []);
@@ -676,6 +682,9 @@ export function ProjectConfig() {
   const editingModelIdLabel = isEditingOpenAICompatible ? llmCopy.openaiModel : llmCopy.geminiModel;
   const editingModelIdPlaceholder = isEditingOpenAICompatible ? 'gpt-4o' : 'gemini-2.5-flash';
   const editingModelApiKeyLabel = isEditingOpenAICompatible ? llmCopy.openaiKey : llmCopy.geminiKey;
+  const projectHeaderLabel = projectDisplayName && projectDisplayName !== projectId
+    ? `${projectDisplayName} (${projectId})`
+    : (projectDisplayName || projectId);
 
   return (
     <div className="min-h-screen bg-[#F8FAFC]">
@@ -687,9 +696,14 @@ export function ProjectConfig() {
             </Link>
             <div>
               <div className="text-[10px] font-black text-indigo-500 uppercase tracking-widest mb-0.5">{t('projectConfig.eyebrow')}</div>
-              <h1 className="text-2xl font-black text-gray-900 uppercase flex items-center gap-3">
+              <h1 className="flex flex-wrap items-center gap-3 text-2xl font-black text-gray-900 uppercase">
                 <Settings2 size={24} className="text-indigo-600" />
                 {t('projectConfig.title')}
+                <span className="inline-flex items-center gap-2 rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-[11px] font-bold normal-case tracking-normal text-indigo-700">
+                  <HardDrive size={13} className="text-indigo-600" />
+                  <span className="text-indigo-500">{t('projectConfig.currentProject')}</span>
+                  <span className="text-gray-900">{projectHeaderLabel}</span>
+                </span>
               </h1>
               <p className="text-sm text-gray-500 mt-1">{t('projectConfig.description')}</p>
             </div>

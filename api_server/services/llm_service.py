@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import threading
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 from pathlib import Path
@@ -30,6 +31,39 @@ from services.log_service import save_llm_interaction
 from services.db_service import metadata_db
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
+_LLM_CALL_THROTTLE_LOCK = threading.Lock()
+_LAST_LLM_CALL_STARTED_AT = 0.0
+
+
+def _resolve_nonnegative_float_env(env_key: str, default: float = 0.0) -> float:
+    raw_value = os.getenv(env_key)
+    if raw_value in (None, ""):
+        return default
+    try:
+        return max(0.0, float(raw_value))
+    except (TypeError, ValueError):
+        return default
+
+
+def _get_llm_min_call_interval_seconds() -> float:
+    return _resolve_nonnegative_float_env("LLM_MIN_CALL_INTERVAL_SECONDS", 0.0)
+
+
+def _throttle_llm_request() -> None:
+    global _LAST_LLM_CALL_STARTED_AT
+
+    min_interval = _get_llm_min_call_interval_seconds()
+    if min_interval <= 0:
+        return
+
+    with _LLM_CALL_THROTTLE_LOCK:
+        now = time.monotonic()
+        elapsed = now - _LAST_LLM_CALL_STARTED_AT if _LAST_LLM_CALL_STARTED_AT > 0 else None
+        remaining = min_interval - elapsed if elapsed is not None else 0.0
+        if remaining > 0:
+            time.sleep(remaining)
+            now = time.monotonic()
+        _LAST_LLM_CALL_STARTED_AT = now
 
 
 def _summarize_completion(completion, max_len: int = 300) -> str:
@@ -307,6 +341,7 @@ def _call_gemini_raw(system_prompt: str, user_prompt: str, llm_settings: dict | 
         system_instruction=system_prompt,
         generation_config={"response_mime_type": "application/json"}
     )
+    _throttle_llm_request()
     response = model.generate_content(user_prompt)
     # Use robust parsing
     return _parse_llm_response_to_dict(response.text)
@@ -387,6 +422,7 @@ def _call_openai_raw(system_prompt: str, user_prompt: str, llm_settings: dict | 
         effective_api_key = "not-required"
 
     client = OpenAI(api_key=effective_api_key or "", base_url=base_url, default_headers=headers or None)
+    _throttle_llm_request()
     completion = client.chat.completions.create(
         model=model_name,
         messages=[

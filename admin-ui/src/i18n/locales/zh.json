@@ -178,6 +178,7 @@
     "eyebrow": "项目资源",
     "title": "项目资源配置",
     "description": "配置此项目的仓库、数据库、知识库和专家启用权限。",
+    "currentProject": "当前项目",
     "tabs": {
       "repositories": "代码仓库配置",
       "databases": "数据库配置",

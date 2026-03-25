@@ -832,6 +832,7 @@ You MUST ONLY select from the 'Available Experts' listed above. These are the ON
 If a required design domain is NOT available in the list, explain this gap in your reasoning and proceed with available ones.
 Select experts strictly based on the requirement and their documented capabilities.
 Evaluate the current input materials, uploaded file structure, and any prior human clarifications.
+Assume downstream expert controllers default to single-step ReAct and only permit short read-only action batches for evidence gathering.
 Treat this as a material sufficiency assessment:
 - If the existing materials are already sufficient to choose a grounded pipeline, do NOT ask the human anything.
 - Only set needs_human=true when a real information gap would block accurate expert selection or materially weaken downstream design quality.
