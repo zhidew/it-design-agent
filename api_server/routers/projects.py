@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File
 import shutil
 from typing import List
-from models.project import ProjectCreateRequest, ProjectResponse, VersionRunRequest, JobResponse, ResumeRequest, NodeRetryRequest, ContinueRequest, CancelRequest
+from models.project import ProjectCreateRequest, ProjectResponse, VersionRunRequest, ScheduleRunRequest, JobResponse, ScheduleRunResponse, ResumeRequest, NodeRetryRequest, ContinueRequest, CancelRequest
 from models.management import VersionListResponse
 import services.orchestrator_service as orch
 
@@ -74,6 +74,27 @@ async def run_design_orchestrator(project_id: str, version: str, req: VersionRun
         req.model,
     )
     return {"job_id": job_id, "status": "queued", "message": "Orchestrator job queued."}
+
+
+@router.post("/{project_id}/versions/{version}/schedule-run", response_model=ScheduleRunResponse)
+async def schedule_design_orchestrator(project_id: str, version: str, req: ScheduleRunRequest):
+    try:
+        schedule = await orch.schedule_orchestrator_run(
+            project_id,
+            version,
+            req.requirement_text,
+            req.scheduled_for,
+            req.model,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {
+        "schedule_id": schedule["schedule_id"],
+        "status": "scheduled",
+        "message": "Orchestrator run scheduled.",
+        "scheduled_for": schedule["scheduled_for"],
+    }
 
 @router.get("/{project_id}/versions/{version}/artifacts")
 async def get_artifacts(project_id: str, version: str):

@@ -51,6 +51,12 @@ export const api = {
     apiClient.delete(`/projects/${projectId}/versions/${version}`).then(res => res.data),
   runOrchestrator: (projectId: string, version: string, requirementText: string, model?: string) =>
    apiClient.post(`/projects/${projectId}/versions/${version}/run`, { requirement_text: requirementText, model }).then(res => res.data),
+  scheduleOrchestrator: (projectId: string, version: string, requirementText: string, scheduledFor: string, model?: string) =>
+    apiClient.post(`/projects/${projectId}/versions/${version}/schedule-run`, {
+      requirement_text: requirementText,
+      scheduled_for: scheduledFor,
+      model,
+    }).then(res => res.data),
 
   uploadBaselineFiles: (projectId: string, version: string, files: File[]) => {
     const formData = new FormData();

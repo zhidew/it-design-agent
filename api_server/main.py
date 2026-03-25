@@ -51,6 +51,12 @@ async def lifespan(app: FastAPI):
                 print(f"[Startup] Warning: {error}")
     except Exception as e:
         print(f"[Startup] Failed to initialize ExpertRegistry: {e}")
+
+    try:
+        await orch.restore_scheduled_runs()
+        print("[Startup] Scheduled runs restored")
+    except Exception as e:
+        print(f"[Startup] Failed to restore scheduled runs: {e}")
     
     yield  # Application runs here
     

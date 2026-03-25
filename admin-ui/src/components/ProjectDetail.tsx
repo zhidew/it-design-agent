@@ -1,7 +1,7 @@
 ﻿import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { useParams, Link, useLocation } from 'react-router-dom';
 import { api } from '../api';
-import { ArrowLeft, Play, RefreshCw, Activity, Check, X, Upload, FileText, Database, Layers, Book, List, Trash2, ChevronLeft, ChevronRight, Settings2, FolderGit2, BookOpen, Bot, Cpu, Square } from 'lucide-react';
+import { ArrowLeft, Play, RefreshCw, Activity, Check, X, Upload, FileText, Database, Layers, Book, List, Trash2, ChevronLeft, ChevronRight, Settings2, FolderGit2, BookOpen, Bot, Cpu, Square, Clock3 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { TaskKanban } from './TaskKanban';
@@ -27,7 +27,7 @@ const AGENT_MAPPING: Record<string, string[]> = {
 };
 
 type StreamStatus = 'idle' | 'connecting' | 'connected' | 'error';
-type RunStatus = 'queued' | 'running' | 'waiting_human' | 'success' | 'failed';
+type RunStatus = 'scheduled' | 'queued' | 'running' | 'waiting_human' | 'success' | 'failed';
 type ArtifactStatus = 'created' | 'updated';
 
 interface InputFile {
@@ -51,6 +51,8 @@ interface EvidenceSummary {
 
 interface WorkflowState {
   run_id?: string | null;
+  schedule_id?: string | null;
+  scheduled_for?: string | null;
   task_queue: WorkflowTask[];
   history: string[];
   workflow_phase?: string;
@@ -224,6 +226,9 @@ export function ProjectDetail() {
   const [inputFiles, setInputFiles] = useState<InputFile[]>([]);
 
   const [loading, setLoading] = useState(false);
+  const [scheduleLoading, setScheduleLoading] = useState(false);
+  const [isScheduleDialogOpen, setIsScheduleDialogOpen] = useState(false);
+  const [scheduledAt, setScheduledAt] = useState('');
   const [_streamStatus, setStreamStatus] = useState<StreamStatus>('idle');
 
   const [nodeStatuses, setNodeStatuses] = useState<Record<string, NodeStatus>>({});
@@ -297,6 +302,21 @@ export function ProjectDetail() {
     return modelLabel;
   }, [formatProjectModelLabel, selectedProjectModel, workflowState]);
 
+  const getDefaultScheduledAt = () => {
+    const target = new Date(Date.now() + 30 * 60 * 1000);
+    target.setSeconds(0, 0);
+    return new Date(target.getTime() - target.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  };
+
+  const formatScheduledTime = (value?: string | null) => {
+    if (!value) return '';
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return value;
+    return parsed.toLocaleString();
+  };
+
+  const isSubmittingRun = loading || scheduleLoading;
+
   const resourceCopy = useMemo(() => {
     const isZh = i18n.language.toLowerCase().startsWith('zh');
     const fallback = {
@@ -350,6 +370,12 @@ export function ProjectDetail() {
   }, [id]);
 
   useEffect(() => {
+    if (isScheduleDialogOpen && !scheduledAt) {
+      setScheduledAt(getDefaultScheduledAt());
+    }
+  }, [isScheduleDialogOpen, scheduledAt]);
+
+  useEffect(() => {
     if (!id) return;
     void loadResourceSummary();
   }, [id]);
@@ -383,7 +409,7 @@ export function ProjectDetail() {
 
     const shouldPoll =
       Boolean(id && selectedVersion) &&
-      ['running', 'queued', 'waiting_human'].includes(workflowState?.run_status || '');
+      ['scheduled', 'running', 'queued', 'waiting_human'].includes(workflowState?.run_status || '');
 
     if (shouldPoll) {
       pollInterval.current = setInterval(() => {
@@ -754,6 +780,36 @@ export function ProjectDetail() {
     }
   };
 
+  const prepareVersionRunState = (version: string, streamStatus: StreamStatus) => {
+    selectedVersionRef.current = version;
+    setSelectedVersion(version);
+    setCurrentRunId(null);
+    setNodeStatuses({});
+    setArtifacts({});
+    setSelectedFile(null);
+    setWorkflowState(null);
+    setRunEvents([]);
+    latestFetchedStateAtRef.current = 0;
+    setReviewFeedback('');
+    setSelectedInterruptOption('');
+    seenEventIdsRef.current.clear();
+    setSelectedNode('planner');
+    setStreamStatus(streamStatus);
+  };
+
+  const uploadSelectedFiles = async (version: string) => {
+    if (!id || inputFiles.length === 0) return;
+    await api.uploadBaselineFiles(id, version, inputFiles.map((item) => item.file));
+  };
+
+  const finalizeNewVersionSubmission = async (version: string) => {
+    setRequirement('');
+    setInputFiles([]);
+    setSelectedInterruptOption('');
+    await loadVersions(page, pageSize, version);
+    void loadArtifacts(version);
+  };
+
   const handleRun = async () => {
     const hasIRFile = inputFiles.some(f => f.type === 'ir');
     if (!id || (!requirement.trim() && !hasIRFile)) return;
@@ -762,39 +818,45 @@ export function ProjectDetail() {
     setUiError(null);
     try {
       const timestampVersion = generateVersionId();
-      selectedVersionRef.current = timestampVersion;
-      setSelectedVersion(timestampVersion);
-      setCurrentRunId(null);
-      setNodeStatuses({});
-      setArtifacts({});
-      setSelectedFile(null);
-      setWorkflowState(null);
-      setRunEvents([]);
-      latestFetchedStateAtRef.current = 0;
-      setReviewFeedback('');
-      setSelectedInterruptOption('');
-      seenEventIdsRef.current.clear();
-      setSelectedNode('planner');
-      setStreamStatus('connecting');
-
-      if (inputFiles.length > 0) {
-        await api.uploadBaselineFiles(id, timestampVersion, inputFiles.map(f => f.file));
-      }
+      prepareVersionRunState(timestampVersion, 'connecting');
+      await uploadSelectedFiles(timestampVersion);
 
       const run = await api.runOrchestrator(id, timestampVersion, requirement, selectedModel);
       setCurrentRunId(run.job_id);
       void fetchState(timestampVersion);
-
-      setRequirement('');
-      setInputFiles([]);
-      setSelectedInterruptOption('');
-      void loadArtifacts(timestampVersion);
-      void loadVersions(page, pageSize, timestampVersion);
-    } catch {
-      setUiError(t('common.error'));
-      setLoading(false);
+      await finalizeNewVersionSubmission(timestampVersion);
+    } catch (err: any) {
+      setUiError(err?.response?.data?.detail || t('common.error'));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleScheduleRun = async () => {
+    const hasIRFile = inputFiles.some((f) => f.type === 'ir');
+    if (!id || (!requirement.trim() && !hasIRFile)) return;
+
+    const scheduledDate = new Date(scheduledAt);
+    if (!scheduledAt || Number.isNaN(scheduledDate.getTime()) || scheduledDate.getTime() <= Date.now()) {
+      setUiError(t('projectDetail.schedule.validation'));
+      return;
+    }
+
+    setScheduleLoading(true);
+    setUiError(null);
+    try {
+      const timestampVersion = generateVersionId();
+      prepareVersionRunState(timestampVersion, 'idle');
+      await uploadSelectedFiles(timestampVersion);
+      await api.scheduleOrchestrator(id, timestampVersion, requirement, scheduledDate.toISOString(), selectedModel);
+      await fetchState(timestampVersion);
+      await finalizeNewVersionSubmission(timestampVersion);
+      setIsScheduleDialogOpen(false);
+      setScheduledAt(getDefaultScheduledAt());
+    } catch (err: any) {
+      setUiError(err?.response?.data?.detail || t('common.error'));
+    } finally {
+      setScheduleLoading(false);
     }
   };
 
@@ -1343,6 +1405,12 @@ export function ProjectDetail() {
 
   const getVersionStatusMeta = (status?: RunStatus) => {
     switch (status) {
+      case 'scheduled':
+        return {
+          label: 'SCHEDULED',
+          dot: 'bg-cyan-500',
+          pill: 'bg-cyan-50 text-cyan-700 border-cyan-200',
+        };
       case 'running':
         return {
           label: 'RUNNING',
@@ -1532,7 +1600,7 @@ export function ProjectDetail() {
                       <select
                         value={selectedModel}
                         onChange={(e) => setSelectedModel(e.target.value)}
-                        disabled={loading}
+                        disabled={isSubmittingRun}
                         className="w-full bg-transparent border-none text-[10px] font-black text-gray-600 outline-none focus:ring-0 focus:ring-offset-0 cursor-pointer uppercase tracking-wide disabled:cursor-not-allowed"
                       >
                         {projectModels.map((model) => (
@@ -1546,15 +1614,27 @@ export function ProjectDetail() {
                 </div>
               )}
 
-              <button
-                onClick={handleRun}
-                disabled={loading || !isIRProvided}
-                className={`w-full py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 transition-all ${loading || !isIRProvided ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg shadow-indigo-200'
-                  }`}
-              >
-                {loading ? <RefreshCw size={16} className="animate-spin" /> : <Play size={16} fill="currentColor" />}
-                {loading ? t('projectDetail.running') : t('projectDetail.startDesign')}
-              </button>
+              <div className="flex items-stretch gap-3">
+                <button
+                  onClick={handleRun}
+                  disabled={isSubmittingRun || !isIRProvided}
+                  className={`flex-1 h-[56px] rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 transition-all ${isSubmittingRun || !isIRProvided ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg shadow-indigo-200'
+                    }`}
+                >
+                  {loading ? <RefreshCw size={16} className="animate-spin" /> : <Play size={16} fill="currentColor" />}
+                  {loading ? t('projectDetail.running') : t('projectDetail.startDesign')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsScheduleDialogOpen(true)}
+                  disabled={isSubmittingRun || !isIRProvided}
+                  className={`h-[56px] w-[56px] shrink-0 rounded-2xl border flex items-center justify-center transition-all ${isSubmittingRun || !isIRProvided ? 'border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed' : 'border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 hover:border-indigo-300 shadow-lg shadow-indigo-100/70'
+                    }`}
+                  title={t('projectDetail.schedule.open')}
+                >
+                  {scheduleLoading ? <RefreshCw size={18} className="animate-spin" /> : <Clock3 size={18} />}
+                </button>
+              </div>
             </div>
           </section>
 
@@ -1833,6 +1913,31 @@ export function ProjectDetail() {
             />
 
           </section>
+
+          {workflowState?.run_status === 'scheduled' && (
+            <section className="bg-cyan-50 rounded-3xl border border-cyan-200 shadow-sm p-6">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="space-y-2">
+                  <div className="inline-flex items-center rounded-full bg-cyan-100 px-3 py-1 text-[10px] font-black uppercase tracking-[0.2em] text-cyan-700">
+                    {t('projectDetail.schedule.badge')}
+                  </div>
+                  <h2 className="text-xl font-black tracking-tight text-cyan-950">
+                    {t('projectDetail.schedule.title')}
+                  </h2>
+                  <p className="text-sm font-medium text-cyan-900/80">
+                    {workflowState.scheduled_for
+                      ? t('projectDetail.schedule.summary', { time: formatScheduledTime(workflowState.scheduled_for) })
+                      : t('projectDetail.schedule.pending')}
+                  </p>
+                </div>
+                {workflowState.scheduled_for && (
+                  <div className="rounded-2xl border border-cyan-200 bg-white/70 px-4 py-3 text-sm font-bold text-cyan-700">
+                    {formatScheduledTime(workflowState.scheduled_for)}
+                  </div>
+                )}
+              </div>
+            </section>
+          )}
 
           {workflowState?.run_status === 'failed' && (
             <section className="bg-rose-50 rounded-3xl border border-rose-200 shadow-sm p-8 space-y-5">
@@ -2253,6 +2358,73 @@ export function ProjectDetail() {
           </section>
         </div>
       </main>
+
+      {isScheduleDialogOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl shadow-slate-900/15">
+            <div className="flex items-start justify-between gap-4">
+              <div className="space-y-2">
+                <div className="inline-flex items-center rounded-full bg-indigo-100 px-3 py-1 text-[10px] font-black uppercase tracking-[0.2em] text-indigo-700">
+                  {t('projectDetail.schedule.badge')}
+                </div>
+                <h2 className="text-xl font-black tracking-tight text-slate-900">
+                  {t('projectDetail.schedule.dialogTitle')}
+                </h2>
+                <p className="text-sm font-medium text-slate-600">
+                  {t('projectDetail.schedule.dialogDescription')}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsScheduleDialogOpen(false)}
+                disabled={scheduleLoading}
+                className="rounded-2xl border border-slate-200 p-2 text-slate-400 transition-colors hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="mt-6 space-y-4">
+              <div className="space-y-2">
+                <label className="text-[11px] font-black uppercase tracking-widest text-slate-500">
+                  {t('projectDetail.schedule.datetimeLabel')}
+                </label>
+                <input
+                  type="datetime-local"
+                  value={scheduledAt}
+                  min={getDefaultScheduledAt()}
+                  onChange={(e) => setScheduledAt(e.target.value)}
+                  disabled={scheduleLoading}
+                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700 outline-none transition-all focus:border-indigo-300 focus:ring-2 focus:ring-indigo-200 disabled:cursor-not-allowed disabled:opacity-60"
+                />
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs font-medium text-slate-600">
+                {t('projectDetail.schedule.filesNotice')}
+              </div>
+            </div>
+
+            <div className="mt-6 flex gap-3">
+              <button
+                type="button"
+                onClick={() => setIsScheduleDialogOpen(false)}
+                disabled={scheduleLoading}
+                className="flex-1 rounded-2xl border border-slate-200 px-4 py-3 text-sm font-black uppercase tracking-wider text-slate-600 transition-all hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                type="button"
+                onClick={handleScheduleRun}
+                disabled={scheduleLoading}
+                className="flex-1 rounded-2xl bg-indigo-600 px-4 py-3 text-sm font-black uppercase tracking-wider text-white transition-all hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-indigo-300"
+              >
+                {scheduleLoading ? t('projectDetail.schedule.scheduling') : t('projectDetail.schedule.confirm')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {uiError && (
         <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-50 animate-in slide-in-from-bottom duration-300">

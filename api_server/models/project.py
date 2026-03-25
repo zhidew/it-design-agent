@@ -28,10 +28,24 @@ class VersionRunRequest(BaseModel):
     requirement_text: str
     model: Optional[str] = None
 
+
+class ScheduleRunRequest(BaseModel):
+    requirement_text: str
+    scheduled_for: str
+    model: Optional[str] = None
+
+
 class JobResponse(BaseModel):
     job_id: str
     status: str
     message: str
+
+
+class ScheduleRunResponse(BaseModel):
+    schedule_id: str
+    status: str
+    message: str
+    scheduled_for: str
 
 
 class ResumeRequest(BaseModel):

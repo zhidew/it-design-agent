@@ -315,6 +315,25 @@ class MetadataDB:
                 """
             )
             conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS scheduled_runs (
+                    schedule_id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    version_id TEXT NOT NULL,
+                    requirement TEXT,
+                    model TEXT,
+                    scheduled_for TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    triggered_job_id TEXT,
+                    error TEXT,
+                    triggered_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (version_id, project_id) REFERENCES versions(version_id, project_id) ON DELETE CASCADE
+                )
+                """
+            )
+            conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_workflow_runs_status_updated ON workflow_runs(status, updated_at)"
             )
             conn.execute(
@@ -322,6 +341,12 @@ class MetadataDB:
             )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_workflow_task_events_run_created ON workflow_task_events(project_id, version_id, created_at)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_scheduled_runs_status_time ON scheduled_runs(status, scheduled_for)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_scheduled_runs_project_version ON scheduled_runs(project_id, version_id)"
             )
             self._ensure_column(conn, "project_model_configs", "headers", "TEXT")
             conn.commit()
@@ -644,10 +669,156 @@ class MetadataDB:
             ).fetchone()
         return dict(row) if row else None
 
+    def create_scheduled_run(
+        self,
+        *,
+        schedule_id: str,
+        project_id: str,
+        version_id: str,
+        requirement: str,
+        scheduled_for: str,
+        model: Optional[str] = None,
+        status: str = "scheduled",
+        error: Optional[str] = None,
+        triggered_job_id: Optional[str] = None,
+        triggered_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        now = self._utcnow()
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO scheduled_runs (
+                    schedule_id, project_id, version_id, requirement, model,
+                    scheduled_for, status, triggered_job_id, error, triggered_at,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    schedule_id,
+                    project_id,
+                    version_id,
+                    requirement,
+                    model,
+                    scheduled_for,
+                    status,
+                    triggered_job_id,
+                    error,
+                    triggered_at,
+                    now,
+                    now,
+                ),
+            )
+            conn.commit()
+        return self.get_scheduled_run(schedule_id) or {}
+
+    def update_scheduled_run(
+        self,
+        schedule_id: str,
+        *,
+        status: Optional[str] = None,
+        error: Optional[str] = None,
+        triggered_job_id: Optional[str] = None,
+        triggered_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        existing = self.get_scheduled_run(schedule_id)
+        if not existing:
+            return None
+
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                UPDATE scheduled_runs
+                SET status = ?, error = ?, triggered_job_id = ?, triggered_at = ?, updated_at = ?
+                WHERE schedule_id = ?
+                """,
+                (
+                    status or existing["status"],
+                    error,
+                    triggered_job_id if triggered_job_id is not None else existing.get("triggered_job_id"),
+                    triggered_at if triggered_at is not None else existing.get("triggered_at"),
+                    self._utcnow(),
+                    schedule_id,
+                ),
+            )
+            conn.commit()
+        return self.get_scheduled_run(schedule_id)
+
+    def get_scheduled_run(self, schedule_id: str) -> Optional[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM scheduled_runs WHERE schedule_id = ?",
+                (schedule_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def list_scheduled_runs_for_version(
+        self,
+        project_id: str,
+        version_id: str,
+        statuses: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        query = """
+            SELECT * FROM scheduled_runs
+            WHERE project_id = ? AND version_id = ?
+        """
+        params: List[Any] = [project_id, version_id]
+        if statuses:
+            placeholders = ", ".join("?" for _ in statuses)
+            query += f" AND status IN ({placeholders})"
+            params.extend(statuses)
+        query += " ORDER BY scheduled_for DESC, created_at DESC"
+        with self._get_connection() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_latest_scheduled_run_for_version(
+        self,
+        project_id: str,
+        version_id: str,
+        statuses: Optional[List[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        rows = self.list_scheduled_runs_for_version(project_id, version_id, statuses=statuses)
+        return rows[0] if rows else None
+
+    def list_pending_scheduled_runs(self) -> List[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM scheduled_runs
+                WHERE status = 'scheduled'
+                ORDER BY scheduled_for ASC, created_at ASC
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def cancel_scheduled_runs_for_version(
+        self,
+        project_id: str,
+        version_id: str,
+        *,
+        statuses: Optional[List[str]] = None,
+        error: Optional[str] = None,
+    ) -> int:
+        query = """
+            UPDATE scheduled_runs
+            SET status = 'cancelled', error = ?, updated_at = ?
+            WHERE project_id = ? AND version_id = ?
+        """
+        params: List[Any] = [error, self._utcnow(), project_id, version_id]
+        if statuses:
+            placeholders = ", ".join("?" for _ in statuses)
+            query += f" AND status IN ({placeholders})"
+            params.extend(statuses)
+        with self._get_connection() as conn:
+            cursor = conn.execute(query, params)
+            conn.commit()
+        return cursor.rowcount
+
     @staticmethod
     def _status_rank(status: Optional[str]) -> int:
         order = {
             "todo": 0,
+            "scheduled": 1,
             "queued": 1,
             "dispatched": 2,
             "running": 3,

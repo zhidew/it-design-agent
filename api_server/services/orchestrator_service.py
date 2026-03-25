@@ -29,11 +29,18 @@ RUN_STATUS_RUNNING = "running"
 RUN_STATUS_WAITING_HUMAN = "waiting_human"
 RUN_STATUS_SUCCESS = "success"
 RUN_STATUS_FAILED = "failed"
+RUN_STATUS_SCHEDULED = "scheduled"
 STALE_RUNNING_TIMEOUT_SECONDS = int(os.getenv("ORCHESTRATOR_STALE_TIMEOUT_SECONDS", "180"))
 
 jobs = {}
 runtime_registry = {}
 runtime_tasks = {}
+scheduled_runtime_tasks = {}
+RESERVED_PROJECT_DIR_NAMES = {"cloned_repos"}
+
+
+def _is_project_internal_dir_name(name: str) -> bool:
+    return name.startswith(".") or name in RESERVED_PROJECT_DIR_NAMES
 
 
 @contextmanager
@@ -382,6 +389,24 @@ def _parse_iso_timestamp(value: str | None) -> datetime.datetime | None:
         return None
 
 
+def _format_scheduled_waiting_reason(scheduled_for: str | None) -> str | None:
+    scheduled_at = _parse_iso_timestamp(scheduled_for)
+    if scheduled_at is None:
+        return None
+    return f"Scheduled to start at {scheduled_at.isoformat()}"
+
+
+def _cancel_scheduled_task(schedule_id: str) -> None:
+    task = scheduled_runtime_tasks.pop(schedule_id, None)
+    if task and not task.done():
+        task.cancel()
+
+
+def _cancel_scheduled_tasks_for_version(project_id: str, version: str) -> None:
+    for schedule in metadata_db.list_scheduled_runs_for_version(project_id, version, statuses=["scheduled"]):
+        _cancel_scheduled_task(schedule["schedule_id"])
+
+
 def _normalize_llm_log_node_id(node_id: str | None) -> str | None:
     if not node_id:
         return None
@@ -452,22 +477,38 @@ def _build_node_llm_map(project_id: str, version: str, state: dict, task_queue: 
 
 def _normalize_state(project_id: str, version: str, raw_state: dict | None, runtime: dict | None = None) -> dict | None:
     runtime = runtime if runtime is not None else runtime_registry.get(_thread_id(project_id, version), {})
-    if not raw_state and not runtime:
+    workflow_run = metadata_db.get_workflow_run(project_id, version) or {}
+    version_record = metadata_db.get_version(project_id, version) or {}
+    scheduled_run = metadata_db.get_latest_scheduled_run_for_version(
+        project_id,
+        version,
+        statuses=["scheduled"],
+    )
+    if not raw_state and not runtime and not workflow_run and not version_record and not scheduled_run:
         return None
 
     state = dict(raw_state or {})
-    workflow_run = metadata_db.get_workflow_run(project_id, version) or {}
     workflow_tasks = metadata_db.list_workflow_tasks(project_id, version)
+    initial_status = (
+        runtime.get("run_status")
+        or workflow_run.get("status")
+        or version_record.get("run_status")
+        or (RUN_STATUS_SCHEDULED if scheduled_run else None)
+    )
     task_queue = workflow_tasks or state.get("task_queue") or []
-    if not task_queue:
+    if not task_queue and initial_status != RUN_STATUS_SCHEDULED:
         task_queue = _build_legacy_task_queue(project_id, version)
     history = state.get("history") or []
     messages = state.get("messages") or []
     artifacts = merge_artifacts(_load_artifacts_from_disk(project_id, version), state.get("artifacts") or {})
     human_intervention_required = bool(state.get("human_intervention_required", False))
 
-    derived_run_status = _derive_run_status(task_queue, human_intervention_required)
-    run_status = runtime.get("run_status") or workflow_run.get("status") or derived_run_status
+    derived_run_status = (
+        RUN_STATUS_SCHEDULED
+        if initial_status == RUN_STATUS_SCHEDULED and not task_queue
+        else _derive_run_status(task_queue, human_intervention_required)
+    )
+    run_status = runtime.get("run_status") or workflow_run.get("status") or version_record.get("run_status") or derived_run_status
     current_node = runtime.get("current_node") or workflow_run.get("current_node")
 
     # When runtime is absent, prefer the task projection over a stale workflow_run row
@@ -484,12 +525,23 @@ def _normalize_state(project_id: str, version: str, raw_state: dict | None, runt
         waiting_reason = state.get("waiting_reason")
     if waiting_reason is None and run_status == RUN_STATUS_WAITING_HUMAN:
         waiting_reason = "human_intervention_required"
+    if waiting_reason is None and run_status == RUN_STATUS_SCHEDULED:
+        waiting_reason = _format_scheduled_waiting_reason(scheduled_run.get("scheduled_for") if scheduled_run else None)
 
     if run_status == RUN_STATUS_SUCCESS:
         current_node = None
         waiting_reason = None
+    elif run_status == RUN_STATUS_SCHEDULED:
+        current_node = None
 
-    normalized_updated_at = runtime.get("updated_at") or workflow_run.get("updated_at") or state.get("updated_at") or _latest_project_timestamp(project_id, version)
+    normalized_updated_at = (
+        runtime.get("updated_at")
+        or workflow_run.get("updated_at")
+        or version_record.get("updated_at")
+        or (scheduled_run.get("updated_at") if scheduled_run else None)
+        or state.get("updated_at")
+        or _latest_project_timestamp(project_id, version)
+    )
     stale_running_detected = False
     runtime_thread_id = _thread_id(project_id, version)
     runtime_missing_or_inactive = not runtime or not _has_active_runtime_task(runtime_thread_id)
@@ -524,7 +576,7 @@ def _normalize_state(project_id: str, version: str, raw_state: dict | None, runt
         can_resume = run_status in {RUN_STATUS_WAITING_HUMAN, RUN_STATUS_FAILED}
     
     # FORCE: If status is queued or running, it cannot be 'resumed' via the resume/answer API
-    if run_status in {RUN_STATUS_QUEUED, RUN_STATUS_RUNNING}:
+    if run_status in {RUN_STATUS_SCHEDULED, RUN_STATUS_QUEUED, RUN_STATUS_RUNNING}:
         can_resume = False
 
     node_llm_map = _build_node_llm_map(project_id, version, state, normalized_task_queue)
@@ -548,6 +600,8 @@ def _normalize_state(project_id: str, version: str, raw_state: dict | None, runt
         "updated_at": normalized_updated_at,
         "stale_execution_detected": stale_running_detected,
         "node_llm_map": node_llm_map,
+        "schedule_id": scheduled_run.get("schedule_id") if scheduled_run else None,
+        "scheduled_for": scheduled_run.get("scheduled_for") if scheduled_run else None,
     }
 
 
@@ -1279,14 +1333,16 @@ def get_workflow_state(project_id: str, version: str, include_runtime: bool = Tr
                 print(f"[Orchestrator] Error getting graph state for {project_id}/{version}: {e}")
 
         persisted_logs = get_run_log(project_id, version, BASE_DIR)
-        legacy_state = {
-            "project_id": project_id,
-            "version": version,
-            "workflow_phase": "ARCHIVED",
-            "task_queue": _build_legacy_task_queue(project_id, version),
-            "history": persisted_logs if persisted_logs else [],
-        }
-        return _normalize_state(project_id, version, legacy_state, runtime=runtime)
+        fallback_state = None
+        if persisted_logs:
+            fallback_state = {
+                "project_id": project_id,
+                "version": version,
+                "workflow_phase": "ARCHIVED",
+                "task_queue": _build_legacy_task_queue(project_id, version),
+                "history": persisted_logs,
+            }
+        return _normalize_state(project_id, version, fallback_state, runtime=runtime)
     except Exception as e:
         print(f"[Orchestrator] Critical error in get_workflow_state for {project_id}/{version}: {e}")
         return _normalize_state(project_id, version, None, runtime=runtime)
@@ -1633,12 +1689,168 @@ async def cancel_workflow(
     return True
 
 
+async def _scheduled_run_worker(schedule_id: str):
+    schedule = metadata_db.get_scheduled_run(schedule_id)
+    if not schedule or schedule.get("status") != "scheduled":
+        scheduled_runtime_tasks.pop(schedule_id, None)
+        return
+
+    try:
+        scheduled_at = _parse_iso_timestamp(schedule.get("scheduled_for"))
+        if scheduled_at is None:
+            raise ValueError("Invalid scheduled_for timestamp")
+
+        delay_seconds = (scheduled_at - datetime.datetime.now(datetime.timezone.utc)).total_seconds()
+        if delay_seconds > 0:
+            await asyncio.sleep(delay_seconds)
+
+        schedule = metadata_db.get_scheduled_run(schedule_id)
+        if not schedule or schedule.get("status") != "scheduled":
+            return
+
+        project_id = schedule["project_id"]
+        version = schedule["version_id"]
+        job_id = trigger_orchestrator(
+            project_id,
+            version,
+            schedule.get("requirement") or "",
+            schedule.get("model"),
+        )
+        metadata_db.update_scheduled_run(
+            schedule_id,
+            status="triggered",
+            error=None,
+            triggered_job_id=job_id,
+            triggered_at=_now_iso(),
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        schedule = metadata_db.get_scheduled_run(schedule_id)
+        metadata_db.update_scheduled_run(schedule_id, status="failed", error=str(exc))
+        if schedule:
+            metadata_db.upsert_version(
+                schedule["project_id"],
+                schedule["version_id"],
+                schedule.get("requirement") or "",
+                RUN_STATUS_FAILED,
+            )
+            metadata_db.upsert_workflow_run(
+                schedule["project_id"],
+                schedule["version_id"],
+                run_id=None,
+                status=RUN_STATUS_FAILED,
+                current_phase=None,
+                current_node=None,
+                waiting_reason=f"Scheduled run failed to start: {exc}",
+                started_at=None,
+                finished_at=_now_iso(),
+            )
+    finally:
+        scheduled_runtime_tasks.pop(schedule_id, None)
+
+
+def _schedule_pending_run(schedule: dict) -> None:
+    schedule_id = schedule.get("schedule_id")
+    if not schedule_id or schedule.get("status") != "scheduled":
+        return
+
+    existing_task = scheduled_runtime_tasks.get(schedule_id)
+    if existing_task and not existing_task.done():
+        return
+
+    task = asyncio.create_task(_scheduled_run_worker(schedule_id))
+    scheduled_runtime_tasks[schedule_id] = task
+
+    def _cleanup(completed_task):
+        if scheduled_runtime_tasks.get(schedule_id) is completed_task:
+            scheduled_runtime_tasks.pop(schedule_id, None)
+
+    task.add_done_callback(_cleanup)
+
+
+async def restore_scheduled_runs() -> None:
+    for schedule in metadata_db.list_pending_scheduled_runs():
+        _schedule_pending_run(schedule)
+
+
+async def schedule_orchestrator_run(
+    project_id: str,
+    version: str,
+    requirement_text: str,
+    scheduled_for: str,
+    model: str | None = None,
+) -> dict:
+    scheduled_at = _parse_iso_timestamp(scheduled_for)
+    if scheduled_at is None:
+        raise ValueError("Invalid scheduled time.")
+
+    if scheduled_at <= datetime.datetime.now(datetime.timezone.utc):
+        raise ValueError("Scheduled time must be in the future.")
+
+    project_root = PROJECTS_DIR / project_id / version
+    project_root.mkdir(parents=True, exist_ok=True)
+
+    existing_state = get_workflow_state(project_id, version)
+    if existing_state and existing_state.get("run_status") in {
+        RUN_STATUS_SCHEDULED,
+        RUN_STATUS_QUEUED,
+        RUN_STATUS_RUNNING,
+    }:
+        raise ValueError("This version already has an active or scheduled run.")
+
+    _cancel_scheduled_tasks_for_version(project_id, version)
+    metadata_db.cancel_scheduled_runs_for_version(
+        project_id,
+        version,
+        statuses=["scheduled"],
+        error="Superseded by a newer schedule.",
+    )
+
+    _delete_checkpoint_state(project_id, version)
+    metadata_db.replace_workflow_tasks(project_id, version, run_id=None, tasks=[])
+    runtime_registry.pop(_thread_id(project_id, version), None)
+
+    waiting_reason = _format_scheduled_waiting_reason(scheduled_for)
+    metadata_db.upsert_version(project_id, version, requirement_text, RUN_STATUS_SCHEDULED)
+    metadata_db.upsert_workflow_run(
+        project_id,
+        version,
+        run_id=None,
+        status=RUN_STATUS_SCHEDULED,
+        current_phase=None,
+        current_node=None,
+        waiting_reason=waiting_reason,
+        started_at=None,
+        finished_at=None,
+    )
+
+    schedule = metadata_db.create_scheduled_run(
+        schedule_id=str(uuid.uuid4()),
+        project_id=project_id,
+        version_id=version,
+        requirement=requirement_text,
+        scheduled_for=scheduled_at.isoformat(),
+        model=model,
+        status="scheduled",
+    )
+    _schedule_pending_run(schedule)
+    return schedule
+
+
 def trigger_orchestrator(
     project_id: str,
     version: str,
     requirement_text: str,
     model: str | None = None,
 ) -> str:
+    _cancel_scheduled_tasks_for_version(project_id, version)
+    metadata_db.cancel_scheduled_runs_for_version(
+        project_id,
+        version,
+        statuses=["scheduled"],
+        error="Triggered immediately before scheduled start.",
+    )
     job_id = str(uuid.uuid4())
     _ensure_job(job_id)
     jobs[job_id]["status"] = RUN_STATUS_QUEUED
@@ -1718,6 +1930,10 @@ def list_versions(project_id: str, page: int = 1, page_size: int = 10):
     if proj_dir.exists():
         for d in proj_dir.iterdir():
             if d.is_dir():
+                if _is_project_internal_dir_name(d.name):
+                    if metadata_db.get_version(project_id, d.name):
+                        metadata_db.delete_version(project_id, d.name)
+                    continue
                 # We only sync if not in DB to avoid overwriting with generic data
                 if not metadata_db.get_version(project_id, d.name):
                     metadata_db.upsert_version(project_id, d.name, "", "unknown")
@@ -1752,6 +1968,13 @@ def delete_version(project_id: str, version: str) -> bool:
 
     if state and state.get("run_id"):
         jobs.pop(state["run_id"], None)
+    _cancel_scheduled_tasks_for_version(project_id, version)
+    metadata_db.cancel_scheduled_runs_for_version(
+        project_id,
+        version,
+        statuses=["scheduled"],
+        error="Version deleted before scheduled start.",
+    )
     runtime_registry.pop(thread_id, None)
     runtime_tasks.pop(thread_id, None)
     _delete_checkpoint_state(project_id, version)
@@ -2265,7 +2488,7 @@ def get_project_assets_summary(project_id: str) -> dict:
 
     if project_dir.exists():
         for v_dir in project_dir.iterdir():
-            if v_dir.is_dir() and not v_dir.name.startswith("."):
+            if v_dir.is_dir() and not _is_project_internal_dir_name(v_dir.name):
                 v_files = 0
                 v_size = 0
                 for p in v_dir.rglob("*"):

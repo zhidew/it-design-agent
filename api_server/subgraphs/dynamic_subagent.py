@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from registry.agent_registry import AgentFullConfig
 
 
-MAX_REACT_STEPS = int(os.getenv("AGENT_MAX_REACT_STEPS", "16"))
+MAX_REACT_STEPS = int(os.getenv("AGENT_MAX_REACT_STEPS", "99"))
 MAX_ACTIONS_PER_STEP = int(os.getenv("AGENT_MAX_ACTIONS_PER_STEP", "2"))
 
 # Default tools available to all subagents
@@ -272,7 +272,7 @@ def _build_asset_tool_section(tools_allowed: List[str], configured_assets: Dict[
     asset_lines: List[str] = []
 
     if configured_assets.get("repositories") and _tool_is_available("clone_repository", tools_allowed):
-        asset_lines.append("- clone_repository (Clone or update a configured repository for grounded code inspection)")
+        asset_lines.append("- clone_repository (Clone or update a project-shared repository cache for grounded code inspection; reuse the returned `project_relative_path`/`search_hint` in later `repos_dir` lookups)")
     if configured_assets.get("databases") and _tool_is_available("query_database", tools_allowed):
         asset_lines.append("- query_database (Inspect configured database schemas or run read-only SQL)")
     if configured_assets.get("knowledge_bases") and _tool_is_available("query_knowledge_base", tools_allowed):
@@ -765,6 +765,7 @@ Rules:
 4. Candidate files in baseline/: {candidate_files}
 5. Only use asset-aware tools when the corresponding configured assets are present in the requirements payload.
 5a. For `clone_repository`, `query_database`, and most `query_knowledge_base` calls, prefer passing the concrete configured asset id shown above.
+5b. After `clone_repository`, prefer the returned `project_relative_path` or `search_hint` for later `repos_dir` parameters instead of guessing the cache directory name.
 6. By step 2, you should already have grounded yourself on the correct baseline requirement content.
 7. Do NOT write or patch the final expected artifact paths during ReAct. If you are ready to produce the final expected artifacts, return `done=true` instead.
 8. Only use `actions` for short read-only batches such as `read_file_chunk`, `extract_structure`, `grep_search`, or `extract_lookup_values`.

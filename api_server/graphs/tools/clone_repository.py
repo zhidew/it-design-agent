@@ -1,4 +1,5 @@
 import subprocess
+import re
 from pathlib import Path
 from typing import Any, Dict
 
@@ -7,6 +8,47 @@ from services.db_service import metadata_db
 
 BASE_DIR = Path(__file__).resolve().parents[3]
 PROJECTS_DIR = BASE_DIR / "projects"
+
+
+def _slugify_branch(branch: str) -> str:
+    normalized = re.sub(r"[^A-Za-z0-9._-]+", "-", branch.strip())
+    normalized = normalized.strip("-.")
+    return normalized or "default"
+
+
+def _resolve_repo_cache_dir(project_id: str, repo_id: str, branch: str) -> tuple[Path, str]:
+    repos_root = PROJECTS_DIR / project_id / "cloned_repos"
+    branch_dir = repos_root / f"{repo_id}--{_slugify_branch(branch)}"
+    legacy_dir = repos_root / repo_id
+
+    repos_root.mkdir(parents=True, exist_ok=True)
+    if branch_dir.exists():
+        return branch_dir, "branch_scoped"
+    if legacy_dir.exists():
+        try:
+            legacy_dir.rename(branch_dir)
+            return branch_dir, "migrated_legacy"
+        except OSError:
+            return legacy_dir, "legacy"
+    return branch_dir, "branch_scoped"
+
+
+def _checkout_and_update_branch(target_dir: Path, branch: str) -> None:
+    subprocess.run(["git", "-C", str(target_dir), "fetch", "origin", "--prune"], check=True, capture_output=True, text=True)
+    checkout = subprocess.run(
+        ["git", "-C", str(target_dir), "checkout", branch],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if checkout.returncode != 0:
+        subprocess.run(
+            ["git", "-C", str(target_dir), "checkout", "-B", branch, f"origin/{branch}"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    subprocess.run(["git", "-C", str(target_dir), "pull", "--ff-only", "origin", branch], check=True, capture_output=True, text=True)
 
 
 def _resolve_project_id(root_dir: Path, tool_input: Dict[str, Any]) -> str:
@@ -54,12 +96,9 @@ def clone_repository(root_dir: Path, tool_input: Dict[str, Any]) -> Dict[str, An
         if depth < 1:
             raise ValueError("`depth` must be >= 1.")
 
-    target_dir = PROJECTS_DIR / project_id / "cloned_repos" / repo_id
-    target_dir.parent.mkdir(parents=True, exist_ok=True)
+    target_dir, cache_mode = _resolve_repo_cache_dir(project_id, repo_id, branch)
     if target_dir.exists():
-        subprocess.run(["git", "-C", str(target_dir), "fetch", "--all", "--prune"], check=True, capture_output=True, text=True)
-        subprocess.run(["git", "-C", str(target_dir), "checkout", branch], check=True, capture_output=True, text=True)
-        subprocess.run(["git", "-C", str(target_dir), "pull", "--ff-only"], check=True, capture_output=True, text=True)
+        _checkout_and_update_branch(target_dir, branch)
     else:
         command = ["git", "clone", "--branch", branch]
         if depth:
@@ -80,6 +119,7 @@ def clone_repository(root_dir: Path, tool_input: Dict[str, Any]) -> Dict[str, An
     ).stdout.strip()
     file_count = sum(1 for path in target_dir.rglob("*") if path.is_file())
     local_path = str(target_dir)
+    project_relative_path = Path("cloned_repos") / target_dir.name
 
     if repo_config is not None and repo_config.get("local_path") != local_path:
         metadata_db.upsert_repository(
@@ -94,6 +134,10 @@ def clone_repository(root_dir: Path, tool_input: Dict[str, Any]) -> Dict[str, An
         "project_id": project_id,
         "repo_id": repo_id,
         "local_path": local_path,
+        "project_relative_path": project_relative_path.as_posix(),
+        "search_hint": project_relative_path.as_posix(),
+        "cache_scope": "project_shared",
+        "cache_mode": cache_mode,
         "branch": branch,
         "commit_hash": commit_hash,
         "file_count": file_count,

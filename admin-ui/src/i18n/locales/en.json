@@ -172,6 +172,20 @@
       "approving": "Approving...",
       "approveContinue": "Approve Continue",
       "reviseRetry": "Revise Retry"
+    },
+    "schedule": {
+      "open": "Schedule design start",
+      "badge": "Scheduled",
+      "title": "Design run scheduled",
+      "summary": "This version will start automatically at {{time}}.",
+      "pending": "This version is scheduled and waiting to start automatically.",
+      "dialogTitle": "Schedule design start",
+      "dialogDescription": "The system will create the version now, preserve the current inputs, and launch the design automatically at the scheduled time.",
+      "datetimeLabel": "Start time",
+      "filesNotice": "Selected files are uploaded immediately to the scheduled version so the browser-local inputs are not lost before launch time.",
+      "confirm": "Confirm schedule",
+      "scheduling": "Scheduling...",
+      "validation": "Choose a time later than now."
     }
   },
   "projectConfig": {

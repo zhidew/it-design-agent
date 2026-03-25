@@ -172,6 +172,20 @@
       "approving": "审批中...",
       "approveContinue": "批准继续",
       "reviseRetry": "修改后重试"
+    },
+    "schedule": {
+      "open": "预约启动设计",
+      "badge": "已预约",
+      "title": "设计任务已预约",
+      "summary": "该版本将于 {{time}} 自动启动设计。",
+      "pending": "该版本已预约，等待自动启动。",
+      "dialogTitle": "预约启动设计",
+      "dialogDescription": "系统会先创建版本并保存当前输入材料，到达预约时间后自动启动设计。",
+      "datetimeLabel": "启动时间",
+      "filesNotice": "当前已选择的文件会立即上传到该预约版本，避免到点时丢失浏览器中的本地文件。",
+      "confirm": "确认预约",
+      "scheduling": "预约中...",
+      "validation": "请选择一个晚于当前时间的预约时间。"
     }
   },
   "projectConfig": {
