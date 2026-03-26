@@ -1,4 +1,4 @@
-﻿name: Validation Expert
+name: Validation Expert
 capability: validator
 description: Validate the completeness and consistency of all design artifacts and generate validation reports.
 version: 0.1.1
@@ -8,6 +8,11 @@ scheduling:
   priority: 10
   dependencies:
     - design-assembler
+upstream_artifacts:
+  design-assembler:
+    - detailed-design.md
+    - traceability.json
+    - review-checklist.md
 policies:
   asset_baseline_required: true
   evidence_required: true
@@ -22,3 +27,9 @@ tools:
 outputs:
   expected:
     - validation-report.md
+metadata:
+  boundary_contract:
+    owns:
+      - validation findings, consistency checks, and gap reporting
+    excludes:
+      - generating replacement design content

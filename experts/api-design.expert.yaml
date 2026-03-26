@@ -10,6 +10,18 @@ scheduling:
     - architecture-mapping
     - data-design
     - ddd-structure
+upstream_artifacts:
+  architecture-mapping:
+    - architecture.md
+    - module-map.json
+  data-design:
+    - schema.sql
+    - er.md
+    - migration-plan.md
+  ddd-structure:
+    - class-diagram.md
+    - ddd-structure.md
+    - context-map.md
 tools:
   allowed:
     - clone_repository
@@ -21,6 +33,18 @@ outputs:
   expected:
     - api-design.md
     - errors-rfc9457.json
+metadata:
+  boundary_contract:
+    owns:
+      - synchronous API contracts and error models
+    excludes:
+      - detailed async event contracts
+      - schema/index redesign
+      - ops runbooks and test inventory
+    upstream_inputs:
+      - architecture-mapping
+      - data-design
+      - ddd-structure
 policies:
   asset_baseline_required: true
   evidence_required: true

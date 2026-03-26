@@ -184,6 +184,11 @@ def supervisor(state: DesignState) -> Dict[str, Any]:
 
     def build_dispatch(tasks: List[Task], phase: str) -> Dict[str, Any]:
         selected_tasks = tasks[:limit]
+        running_queue = _update_tasks_by_id(
+            queue,
+            [task["id"] for task in selected_tasks],
+            "running",
+        )
         dispatched_tasks = [{"id": task["id"], "agent_type": task["agent_type"]} for task in selected_tasks]
         if len(selected_tasks) == 1:
             task = selected_tasks[0]
@@ -191,6 +196,7 @@ def supervisor(state: DesignState) -> Dict[str, Any]:
                 "next": task["agent_type"],
                 "current_task_id": task["id"],
                 "current_node": task["agent_type"],
+                "task_queue": running_queue,
                 "dispatched_tasks": dispatched_tasks,
                 "workflow_phase": phase,
             }
@@ -198,6 +204,7 @@ def supervisor(state: DesignState) -> Dict[str, Any]:
             "next": [task["agent_type"] for task in selected_tasks],
             "current_task_ids": [task["id"] for task in selected_tasks],
             "current_node": selected_tasks[0]["agent_type"],
+            "task_queue": running_queue,
             "dispatched_tasks": dispatched_tasks,
             "workflow_phase": phase,
         }
@@ -213,8 +220,9 @@ def supervisor(state: DesignState) -> Dict[str, Any]:
 
     current_phase_ready = ready_tasks_for_phase(current_phase)
     if current_phase_ready:
-        # Do NOT update task_queue to 'running' here.
-        # Let the specific worker node do it when it actually starts.
+        # Mark dispatched tasks as running in the projected state so polling
+        # clients can see all parallel branches immediately, without waiting
+        # for each worker node to finish and emit its final update.
         return build_dispatch(current_phase_ready, current_phase)
 
     # If the current phase is blocked, advance to the earliest phase that still
@@ -262,6 +270,60 @@ def create_worker_node(agent_type: str):
         if current_task_id and not state.get("current_task_id"):
             state["current_task_id"] = current_task_id
 
+        def _execution_guard() -> Dict[str, Any] | None:
+            project_id = state.get("project_id")
+            version = state.get("version")
+            if not project_id or not version:
+                return None
+
+            try:
+                from services import orchestrator_service as orch
+            except Exception:
+                return None
+
+            thread_id = f"{project_id}_{version}"
+            runtime = orch.runtime_registry.get(thread_id, {})
+            active_job_id = runtime.get("job_id")
+            state_run_id = state.get("run_id")
+            if active_job_id and state_run_id and active_job_id != state_run_id:
+                return {
+                    "reason": f"workflow ownership moved to run {active_job_id}",
+                    "status": None,
+                    "failure_reason": "run_replaced",
+                }
+
+            runtime_status = runtime.get("run_status")
+            if runtime_status in {orch.RUN_STATUS_FAILED, orch.RUN_STATUS_SUCCESS}:
+                return {
+                    "reason": f"workflow already {runtime_status}",
+                    "status": None,
+                    "failure_reason": "workflow_inactive",
+                }
+
+            projected_task = metadata_db.get_workflow_task(project_id, version, agent_type) or {}
+            projected_status = projected_task.get("status")
+            if projected_status in {"success", "failed", "skipped"}:
+                return {
+                    "reason": f"task already {projected_status} in workflow projection",
+                    "status": None,
+                    "failure_reason": "task_already_terminal",
+                }
+
+            peer_failed = next(
+                (
+                    task for task in metadata_db.list_workflow_tasks(project_id, version)
+                    if task.get("node_type") != agent_type and task.get("status") == "failed"
+                ),
+                None,
+            )
+            if peer_failed:
+                return {
+                    "reason": f"peer expert {peer_failed.get('node_type')} already failed",
+                    "status": "skipped",
+                    "failure_reason": "peer_failed",
+                }
+            return None
+
         # =================================================================
         # Dynamic subagent execution (configuration-driven)
         # =================================================================
@@ -273,6 +335,7 @@ def create_worker_node(agent_type: str):
                 generate_with_llm_fn=generate_with_llm,
                 execute_tool_fn=execute_tool,
                 update_task_status_fn=_update_task_status,
+                execution_guard_fn=_execution_guard,
             )
             return result
         except Exception as e:

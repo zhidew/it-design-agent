@@ -1,4 +1,4 @@
-﻿name: Architecture Mapping Expert
+name: Architecture Mapping Expert
 capability: architecture-mapping
 description: Analyze business requirements and existing system structure, identify module boundaries and establish dependency relationship mappings.
 version: 0.1.1
@@ -19,3 +19,13 @@ tools:
   allowed: [clone_repository, query_database, query_knowledge_base, write_file, patch_file]
 outputs:
   expected: [architecture.md, module-map.json]
+metadata:
+  boundary_contract:
+    owns:
+      - system context and container decomposition
+      - module ownership and allowed dependencies
+    excludes:
+      - async event contract details
+      - detailed schema or index design
+      - config matrix, ops runbook, and test case design
+    upstream_inputs: []

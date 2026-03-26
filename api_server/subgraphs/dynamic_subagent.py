@@ -32,6 +32,98 @@ if TYPE_CHECKING:
 MAX_REACT_STEPS = int(os.getenv("AGENT_MAX_REACT_STEPS", "99"))
 MAX_ACTIONS_PER_STEP = int(os.getenv("AGENT_MAX_ACTIONS_PER_STEP", "2"))
 MAX_FINALIZATION_STEPS = int(os.getenv("AGENT_MAX_FINALIZATION_STEPS", "16"))
+REACT_PLATEAU_WINDOW = int(os.getenv("AGENT_REACT_PLATEAU_WINDOW", "4"))
+REACT_MIN_STEPS_BEFORE_PLATEAU = int(os.getenv("AGENT_REACT_MIN_STEPS_BEFORE_PLATEAU", "8"))
+PATH_NOT_FOUND_REPEAT_LIMIT = int(os.getenv("AGENT_PATH_NOT_FOUND_REPEAT_LIMIT", "2"))
+MARKDOWN_BUDGET_TRUNCATION_NOTE = "\n\n> [内容已按控制器字符预算截断；如需更多细节，请重试当前节点并补充范围。]\n"
+
+OUTPUT_CHAR_BUDGET_BY_SUFFIX = {
+    ".md": 18000,
+    ".json": 12000,
+    ".yaml": 14000,
+    ".yml": 14000,
+    ".sql": 18000,
+    ".mmd": 8000,
+}
+
+OUTPUT_CHAR_BUDGET_BY_FILE = {
+    ("architecture-mapping", "architecture.md"): 24000,
+    ("architecture-mapping", "module-map.json"): 12000,
+    ("integration-design", "integration.md"): 18000,
+    ("integration-design", "asyncapi.yaml"): 14000,
+}
+
+OUTPUT_MUST_COVER_LIMIT_BY_SUFFIX = {
+    ".md": 5,
+    ".json": 4,
+    ".yaml": 4,
+    ".yml": 4,
+    ".sql": 5,
+}
+
+OUTPUT_MUST_COVER_LIMIT_BY_FILE = {
+    ("architecture-mapping", "architecture.md"): 4,
+    ("architecture-mapping", "module-map.json"): 4,
+    ("integration-design", "integration.md"): 4,
+    ("integration-design", "asyncapi.yaml"): 4,
+}
+
+CAPABILITY_SCOPE_NOTES = {
+    "architecture-mapping": (
+        "Focus on system boundary, container decomposition, module ownership, and allowed dependencies only. "
+        "Do not absorb downstream experts' detailed integration protocols, event payloads, schema/index design, "
+        "configuration matrices, deployment/ops plans, or test cases."
+    ),
+    "data-design": (
+        "Own schema, ER relationships, indexes, and migration/rollback design. "
+        "Do not re-derive the full architecture narrative, REST/Async contracts, config matrices, ops runbooks, or test cases."
+    ),
+    "ddd-structure": (
+        "Own aggregates, bounded contexts, invariants, domain services, and context mapping. "
+        "Do not expand into full DDL, full API/interface payloads, deployment/runbook content, or test plans."
+    ),
+    "api-design": (
+        "Own request/response contracts, endpoint semantics, and error models for synchronous APIs. "
+        "Reference async integration behavior only briefly when necessary; do not duplicate AsyncAPI/event payload design, DDL, config matrices, or test plans."
+    ),
+    "integration-design": (
+        "Focus on cross-service and external integration contracts, async/sync interaction choices, idempotency, "
+        "retry, timeout, and compensation. Do not expand into full REST schema catalogs, full DDL, deployment/runbook details, or exhaustive test cases."
+    ),
+    "flow-design": (
+        "Own sequence and state/lifecycle views. "
+        "Do not restate full API schemas, AsyncAPI payload details, DDL/index design, config matrices, ops runbooks, or test inventories."
+    ),
+    "config-design": (
+        "Own configuration keys, environment differences, feature flags, and secret handling rules. "
+        "Do not redesign APIs, event contracts, schema structures, observability specs, or test plans."
+    ),
+    "ops-design": (
+        "Own SLOs, metrics, alerts, deployment checks, rollback triggers, and runbooks. "
+        "Reference config keys, APIs, and events only as operational dependencies; do not redefine their detailed designs."
+    ),
+    "test-design": (
+        "Own test inputs, coverage mapping, and verification scenarios. "
+        "Do not redesign architecture, domain models, API/event contracts, schema DDL, config matrices, or ops policies."
+    ),
+    "design-assembler": (
+        "Own synthesis, cross-artifact alignment, and traceability only. "
+        "Do not invent new detailed designs that were not produced by upstream experts except for minimal consistency stitching."
+    ),
+    "validator": (
+        "Own validation findings only. "
+        "Do not create replacement designs; report gaps, conflicts, and missing evidence instead."
+    ),
+}
+
+ARCHITECTURE_SCOPE_EXCLUSION_RE = re.compile(
+    r"(asyncapi|event\s+contract|event\s+payload|message\s+payload|topic|idempoten|retry\s+policy|"
+    r"compensation|sql|ddl|schema|table|index|migration|字段|索引|表结构|迁移|"
+    r"config\s+matrix|env\s+var|feature\s+flag|配置矩阵|环境变量|"
+    r"deployment|runbook|monitor|alert|sla|部署|运维|监控|告警|"
+    r"test\s+case|coverage|chaos|压测|测试用例|覆盖率|混沌)",
+    re.IGNORECASE,
+)
 
 # Default tools available to all subagents
 DEFAULT_READ_TOOLS = {"list_files", "extract_structure", "grep_search", "read_file_chunk", "extract_lookup_values"}
@@ -56,6 +148,58 @@ def _coerce_positive_int(value: Any) -> Optional[int]:
 
 def _normalize_relative_path(raw_path: str) -> str:
     return raw_path.strip().replace("\\", "/").lstrip("./")
+
+
+def _normalize_signature_text(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    text = re.sub(r"`[^`]+`", "<ref>", text)
+    text = re.sub(r"[^a-z0-9\u4e00-\u9fff]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _decision_focus_signature(decision: Dict[str, Any]) -> str:
+    thought = _normalize_signature_text(decision.get("thought"))
+    note = _normalize_signature_text(decision.get("evidence_note"))
+    return " | ".join(part for part in [thought, note] if part)
+
+
+def _compact_tool_signature_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        compact: Dict[str, Any] = {}
+        for key in sorted(value.keys()):
+            if key in {"root_dir", "content"}:
+                continue
+            compact[key] = _compact_tool_signature_value(value[key])
+        return compact
+    if isinstance(value, list):
+        return [_compact_tool_signature_value(item) for item in value[:4]]
+    if isinstance(value, str):
+        return value[:160]
+    return value
+
+
+def _tool_execution_signature(
+    tool_name: str,
+    tool_input: Dict[str, Any],
+    tool_result: Dict[str, Any],
+) -> str:
+    output = dict(tool_result.get("output") or {})
+    compact_output = {
+        "status": tool_result.get("status"),
+        "error_code": tool_result.get("error_code"),
+        "path": output.get("path"),
+        "project_relative_path": output.get("project_relative_path"),
+        "search_hint": output.get("search_hint"),
+        "match_count": len(output.get("matches") or []) if isinstance(output.get("matches"), list) else None,
+        "files_count": len(output.get("files") or []) if isinstance(output.get("files"), list) else None,
+        "error": _compact_tool_signature_value(output.get("error") or {}),
+    }
+    payload = {
+        "tool_name": tool_name,
+        "tool_input": _compact_tool_signature_value(tool_input),
+        "tool_result": _compact_tool_signature_value(compact_output),
+    }
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
 
 def _dedupe_preserve_order(items: List[str]) -> List[str]:
@@ -128,6 +272,93 @@ def _default_output_plan(
         "evidence_focus": [],
         "planning_notes": "",
     }
+
+
+def _resolve_output_char_budget(
+    state: Dict[str, Any],
+    capability: str,
+    target_file: str,
+) -> int:
+    orchestrator_config = ((state.get("design_context") or {}).get("orchestrator") or {})
+    overrides = orchestrator_config.get("output_char_budgets") or {}
+    normalized_target = _normalize_relative_path(target_file)
+    basename = Path(normalized_target).name
+    if isinstance(overrides, dict):
+        for key in (normalized_target, basename):
+            explicit = _coerce_positive_int(overrides.get(key))
+            if explicit is not None:
+                return explicit
+
+    explicit = OUTPUT_CHAR_BUDGET_BY_FILE.get((capability, basename))
+    if explicit is not None:
+        return explicit
+    return OUTPUT_CHAR_BUDGET_BY_SUFFIX.get(Path(normalized_target).suffix.lower(), 12000)
+
+
+def _resolve_must_cover_limit(capability: str, target_file: str) -> int:
+    normalized_target = _normalize_relative_path(target_file)
+    basename = Path(normalized_target).name
+    explicit = OUTPUT_MUST_COVER_LIMIT_BY_FILE.get((capability, basename))
+    if explicit is not None:
+        return explicit
+    return OUTPUT_MUST_COVER_LIMIT_BY_SUFFIX.get(Path(normalized_target).suffix.lower(), 4)
+
+
+def _scope_boundary_note(capability: str) -> str:
+    return CAPABILITY_SCOPE_NOTES.get(
+        capability,
+        "Keep each artifact concise and limited to this expert's primary responsibility.",
+    )
+
+
+def _filter_scope_items_for_capability(capability: str, items: List[str]) -> List[str]:
+    normalized_items = [str(item).strip() for item in items if str(item).strip()]
+    if capability != "architecture-mapping":
+        return normalized_items
+
+    filtered = [item for item in normalized_items if not ARCHITECTURE_SCOPE_EXCLUSION_RE.search(item)]
+    return filtered if filtered else normalized_items
+
+
+def _constrain_output_plan(capability: str, output_plan: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = dict(output_plan)
+    selected_outputs = _normalize_output_candidate_list(normalized.get("selected_outputs") or [])
+    must_cover_by_file = dict(normalized.get("must_cover_by_file") or {})
+    constrained_must_cover: Dict[str, List[str]] = {}
+    for target_file in selected_outputs:
+        items = _filter_scope_items_for_capability(capability, must_cover_by_file.get(target_file) or [])
+        constrained_must_cover[target_file] = items[: _resolve_must_cover_limit(capability, target_file)]
+
+    evidence_focus = _filter_scope_items_for_capability(
+        capability,
+        list(normalized.get("evidence_focus") or []),
+    )[:6]
+
+    planning_notes = str(normalized.get("planning_notes") or "").strip()
+    boundary_note = _scope_boundary_note(capability)
+    if boundary_note not in planning_notes:
+        planning_notes = f"{planning_notes} {boundary_note}".strip()
+
+    normalized["selected_outputs"] = selected_outputs
+    normalized["file_order"] = [item for item in (normalized.get("file_order") or []) if item in set(selected_outputs)] or list(selected_outputs)
+    normalized["must_cover_by_file"] = constrained_must_cover
+    normalized["evidence_focus"] = evidence_focus
+    normalized["planning_notes"] = planning_notes
+    return normalized
+
+
+def _enforce_markdown_budget(content: str, total_budget: int) -> tuple[str, bool]:
+    if total_budget <= 0 or len(content) <= total_budget:
+        return content, False
+
+    note = MARKDOWN_BUDGET_TRUNCATION_NOTE
+    base_content = content
+    if base_content.endswith(note):
+        base_content = base_content[: -len(note)].rstrip()
+
+    allowed = max(200, total_budget - len(note))
+    trimmed = base_content[:allowed].rstrip()
+    return f"{trimmed}{note}", True
 
 
 def _normalize_output_plan(
@@ -203,7 +434,7 @@ def _normalize_output_plan(
     if isinstance(raw_focus, list):
         evidence_focus = [str(item).strip() for item in raw_focus if str(item).strip()][:16]
 
-    return {
+    normalized = {
         "capability": capability,
         "candidate_outputs": list(candidate_outputs),
         "selected_outputs": selected_outputs,
@@ -216,6 +447,7 @@ def _normalize_output_plan(
         "evidence_focus": evidence_focus,
         "planning_notes": str(raw_plan.get("planning_notes") or "").strip(),
     }
+    return _constrain_output_plan(capability, normalized)
 
 
 def _normalize_react_action(action: Any) -> Optional[Dict[str, Any]]:
@@ -1675,7 +1907,10 @@ def build_output_planning_prompt(
     prompt_instructions: str,
     candidate_outputs: List[str],
 ) -> str:
-    candidate_block = "\n".join(f"- {path}" for path in candidate_outputs) or "- (none)"
+    candidate_block = "\n".join(
+        f"- {path} (target <= {_resolve_output_char_budget({}, capability, path)} chars)"
+        for path in candidate_outputs
+    ) or "- (none)"
     custom_section = ""
     if prompt_instructions:
         custom_section = f"""
@@ -1698,6 +1933,8 @@ Rules:
 3. Every selected file must have a clear purpose and must-cover points.
 4. Skipped files need a short reason.
 5. The downstream ReAct loop will gather evidence around the selected outputs, so make the plan concrete.
+6. Keep each file concise and scoped to this expert's responsibility; avoid absorbing downstream experts' detailed design work.
+7. Respect the approximate per-file char budgets shown above when choosing scope and must-cover items.
 
 Return JSON in artifacts.output_plan:
 {{
@@ -2013,10 +2250,12 @@ def build_targeted_artifact_prompt(
     section_focus: Optional[List[str]] = None,
     batch_index: int = 1,
     batch_total: int = 1,
+    total_char_budget: int = 12000,
 ) -> str:
     must_cover = section_focus or (output_plan.get("must_cover_by_file", {}).get(target_file) or [])
     evidence_focus = output_plan.get("evidence_focus") or []
     skipped_outputs = output_plan.get("skipped_outputs") or []
+    batch_char_budget = total_char_budget if batch_total <= 1 else max(800, total_char_budget // max(1, batch_total))
     custom_section = ""
     if prompt_instructions:
         custom_section = f"""
@@ -2066,9 +2305,11 @@ Rules:
 1. Use only the grounded context provided in the user prompt.
 2. If information is already covered by code/KB/DB evidence, reference it inside this file instead of inventing extra artifacts.
 3. Produce deliverable-ready content, not meta commentary.
-4. Return only the fragment content for `{target_file}` in the artifact payload.
-5. Do not attempt to cover sections outside the current batch focus.
-6. If this is not the first batch, continue the same file naturally and avoid repeating sections already covered in the current artifact.
+4. Keep this batch within about {batch_char_budget} characters, and keep the full `{target_file}` within about {total_char_budget} characters.
+5. {_scope_boundary_note(capability)}
+6. Return only the fragment content for `{target_file}` in the artifact payload.
+7. Do not attempt to cover sections outside the current batch focus.
+8. If this is not the first batch, continue the same file naturally and avoid repeating sections already covered in the current artifact.
 """.strip()
 
 
@@ -2092,6 +2333,11 @@ def default_generate_artifact_for_output(
     prompt_instructions = ""
     if agent_config:
         prompt_instructions = agent_config.prompt_instructions or ""
+    total_char_budget = _resolve_output_char_budget(
+        {"design_context": payload.get("design_context") or {}},
+        capability,
+        target_file,
+    )
 
     requirement_digest = _read_workspace_text(artifacts_dir / workspace_paths["requirement_digest"])
     coverage_brief = _read_workspace_json(artifacts_dir / workspace_paths["coverage_brief"])
@@ -2136,6 +2382,7 @@ def default_generate_artifact_for_output(
             section_focus=section_focus,
             batch_index=batch_index,
             batch_total=batch_total,
+            total_char_budget=total_char_budget,
         ),
         user_prompt,
         [target_file],
@@ -2246,6 +2493,9 @@ Choose one next action at a time to ground design artifacts.
 {asset_tool_section}
 {asset_examples_section}
 {output_plan_section}
+Scope boundary:
+- {_scope_boundary_note(capability)}
+
 {workflow_section}{memory_section}
 Strategy:
 1. Ground quickly: Anchor on the candidate baseline file immediately instead of searching for it by filename.
@@ -2787,6 +3037,7 @@ async def run_dynamic_subagent(
     expected_files_fn: Optional[Callable] = None,
     candidate_files_fn: Optional[Callable] = None,
     plan_outputs_fn: Optional[Callable] = None,
+    execution_guard_fn: Optional[Callable[[], Optional[Dict[str, Any]]]] = None,
 ) -> Dict[str, Any]:
     """
     Execute a subagent dynamically based on its configuration.
@@ -2811,6 +3062,8 @@ async def run_dynamic_subagent(
         expected_files_fn: Override for expected files function
         candidate_files_fn: Override for candidate files function
         plan_outputs_fn: Override for output planning function
+        execution_guard_fn: Optional callback that can abort execution when the
+            owning workflow run is no longer active or a sibling branch failed
         
     Returns:
         Updated state dictionary with execution results
@@ -2857,6 +3110,12 @@ async def run_dynamic_subagent(
     history_updates = []
     runtime_llm_settings = resolve_runtime_llm_settings(state.get("design_context"))
     configured_assets = payload.get("configured_assets") if isinstance(payload.get("configured_assets"), dict) else None
+    execution_signatures_seen: set[str] = set()
+    unavailable_read_paths: set[str] = set()
+    path_not_found_counts: Dict[str, int] = {}
+    repeated_action_steps = 0
+    repeated_focus_steps = 0
+    previous_focus_signature = ""
 
     def _generate_with_selected_llm(*args: Any, **kwargs: Any) -> SubagentOutput:
         if runtime_llm_settings and "llm_settings" not in kwargs:
@@ -2954,6 +3213,47 @@ async def run_dynamic_subagent(
     observations: List[Dict[str, Any]] = []
     react_exhausted = False
 
+    def _build_abort_result(abort_info: Dict[str, Any]) -> Dict[str, Any]:
+        reason = str(abort_info.get("reason") or "execution aborted").strip()
+        status_override = abort_info.get("status")
+        failure_reason = str(abort_info.get("failure_reason") or "execution_aborted").strip()
+        history_updates.append(f"[{capability}] [SYSTEM] Execution stopped: {reason}")
+        reasoning_sections = [entry.get("reasoning", "") for entry in react_trace if entry.get("reasoning")]
+        reasoning_sections.append(f"Execution aborted: {reason}.")
+        (logs_dir / f"{capability}-reasoning.md").write_text(
+            "\n\n".join(section for section in reasoning_sections if section),
+            encoding="utf-8",
+        )
+        evidence = default_build_evidence(
+            capability,
+            payload,
+            {},
+            observations,
+            react_trace,
+            tool_results,
+            expected_files,
+            candidate_output_files,
+            output_plan,
+        )
+        evidence.setdefault("react_trace", react_trace)
+        evidence["failure_reason"] = failure_reason
+        evidence["abort_reason"] = reason
+        (evidence_dir / f"{capability}.json").write_text(
+            json.dumps(evidence, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        next_queue = state["task_queue"]
+        if isinstance(status_override, str) and status_override:
+            next_queue = update_task_status_fn(state["task_queue"], capability, status_override)
+        history_updates.append(f"[{capability}] Completed with status: {status_override or 'aborted'}")
+        return {
+            "history": history_updates,
+            "task_queue": next_queue,
+            "human_intervention_required": False,
+            "last_worker": capability,
+            "tool_results": tool_results,
+        }
+
     # Permission-aware tool executor
     def _execute_tool_with_permission(tool_name: str, tool_input: Dict[str, Any] | None) -> Dict[str, Any]:
         if enable_permission_check:
@@ -2965,6 +3265,10 @@ async def run_dynamic_subagent(
 
     try:
         for step in range(1, max_react_steps + 1):
+            if execution_guard_fn:
+                abort_info = execution_guard_fn()
+                if abort_info:
+                    return _build_abort_result(abort_info)
             # Use custom or default decision function
             if next_decision_fn:
                 decision = await asyncio.to_thread(
@@ -3013,6 +3317,12 @@ async def run_dynamic_subagent(
                 decision["coerced_done_from_final_artifact_write"] = final_artifact_target
             
             react_trace.append({"step": step, **decision})
+            focus_signature = _decision_focus_signature(decision)
+            if focus_signature and focus_signature == previous_focus_signature:
+                repeated_focus_steps += 1
+            else:
+                repeated_focus_steps = 0
+            previous_focus_signature = focus_signature
             thought = decision.get("thought", "")
             if thought:
                 history_updates.append(f"[{capability}] ReAct step {step}: {thought}")
@@ -3038,7 +3348,12 @@ async def run_dynamic_subagent(
                 break
 
             executed_action_summaries: List[Dict[str, Any]] = []
+            step_signatures: List[str] = []
             for action_index, action in enumerate(decision.get("actions") or [], start=1):
+                if execution_guard_fn:
+                    abort_info = execution_guard_fn()
+                    if abort_info:
+                        return _build_abort_result(abort_info)
                 tool_name = action.get("tool_name") or "none"
                 tool_input = dict(action.get("tool_input") or {})
 
@@ -3091,7 +3406,27 @@ async def run_dynamic_subagent(
                     # Read tools can access project root for cross-agent memory
                     tool_input["root_dir"] = str(project_path)
 
-                tool_result = await asyncio.to_thread(_execute_tool_with_permission, tool_name, tool_input)
+                normalized_path = ""
+                if tool_name == "read_file_chunk":
+                    normalized_path = _normalize_relative_path(str(tool_input.get("path") or ""))
+                    if normalized_path and normalized_path in unavailable_read_paths:
+                        tool_result = {
+                            "tool_name": tool_name,
+                            "status": "error",
+                            "error_code": "KNOWN_PATH_UNAVAILABLE",
+                            "duration_ms": 0,
+                            "input": dict(tool_input or {}),
+                            "output": {
+                                "error": {
+                                    "code": "KNOWN_PATH_UNAVAILABLE",
+                                    "message": f"Previously confirmed missing path: {normalized_path}",
+                                }
+                            },
+                        }
+                    else:
+                        tool_result = await asyncio.to_thread(_execute_tool_with_permission, tool_name, tool_input)
+                else:
+                    tool_result = await asyncio.to_thread(_execute_tool_with_permission, tool_name, tool_input)
                 tool_results.append(tool_result)
                 executed_action_summaries.append(
                     {
@@ -3102,6 +3437,16 @@ async def run_dynamic_subagent(
                         "duration_ms": tool_result.get("duration_ms"),
                     }
                 )
+
+                if (
+                    tool_name == "read_file_chunk"
+                    and tool_result.get("status") != "success"
+                    and tool_result.get("error_code") == "PATH_NOT_FOUND"
+                    and normalized_path
+                ):
+                    path_not_found_counts[normalized_path] = path_not_found_counts.get(normalized_path, 0) + 1
+                    if path_not_found_counts[normalized_path] >= PATH_NOT_FOUND_REPEAT_LIMIT:
+                        unavailable_read_paths.add(normalized_path)
 
                 history_updates.extend(default_tool_history_entries(tool_name, tool_result))
                 observations.append(
@@ -3114,9 +3459,36 @@ async def run_dynamic_subagent(
                         "evidence_note": decision.get("evidence_note", ""),
                     }
                 )
+                step_signatures.append(_tool_execution_signature(tool_name, tool_input, tool_result))
 
             if executed_action_summaries:
                 react_trace[-1]["tool_results"] = executed_action_summaries
+                if step_signatures and all(signature in execution_signatures_seen for signature in step_signatures):
+                    repeated_action_steps += 1
+                else:
+                    repeated_action_steps = 0
+                execution_signatures_seen.update(step_signatures)
+                highest_path_not_found_repeat = max(path_not_found_counts.values(), default=0)
+                if (
+                    step >= REACT_MIN_STEPS_BEFORE_PLATEAU
+                    and (
+                        repeated_action_steps >= REACT_PLATEAU_WINDOW
+                        or (
+                            repeated_focus_steps >= REACT_PLATEAU_WINDOW
+                            and highest_path_not_found_repeat >= PATH_NOT_FOUND_REPEAT_LIMIT
+                        )
+                    )
+                ):
+                    plateau_reason = (
+                        f"repeated_action_steps={repeated_action_steps}, "
+                        f"repeated_focus_steps={repeated_focus_steps}, "
+                        f"path_not_found_repeat={highest_path_not_found_repeat}"
+                    )
+                    react_trace[-1]["controller_forced_done"] = plateau_reason
+                    history_updates.append(
+                        f"[{capability}] ReAct step {step}: controller detected repeated evidence plateau ({plateau_reason}); moving to final generation."
+                    )
+                    break
         else:
             react_exhausted = True
             history_updates.append(
@@ -3193,6 +3565,12 @@ async def run_dynamic_subagent(
 
         artifacts_output: Dict[str, str] = {}
         final_reasoning_sections: List[str] = []
+        timeout_fallback_records: List[Dict[str, Any]] = []
+
+        if execution_guard_fn:
+            abort_info = execution_guard_fn()
+            if abort_info:
+                return _build_abort_result(abort_info)
 
         if generate_final_artifacts_fn:
             llm_output = await asyncio.to_thread(
@@ -3213,10 +3591,21 @@ async def run_dynamic_subagent(
             final_reasoning_sections.append(llm_output.reasoning)
 
             for artifact_name in expected_files:
-                (artifacts_dir / artifact_name).write_text(
-                    artifacts_output.get(artifact_name, ""),
-                    encoding="utf-8",
-                )
+                artifact_content = artifacts_output.get(artifact_name, "")
+                if Path(artifact_name).suffix.lower() == ".md":
+                    artifact_content, was_trimmed = _enforce_markdown_budget(
+                        artifact_content,
+                        _resolve_output_char_budget(state, capability, artifact_name),
+                    )
+                    if was_trimmed:
+                        history_updates.append(
+                            f"[{capability}] Final artifact `{artifact_name}` exceeded the markdown size budget and was truncated by the controller."
+                        )
+                        final_reasoning_sections.append(
+                            f"Controller truncated `{artifact_name}` to the configured markdown size budget."
+                        )
+                artifacts_output[artifact_name] = artifact_content
+                (artifacts_dir / artifact_name).write_text(artifact_content, encoding="utf-8")
         else:
             finalization_budget = _estimate_finalization_budget(
                 state=state,
@@ -3254,6 +3643,7 @@ async def run_dynamic_subagent(
                     )
                     artifact_status = _collect_artifact_status(artifacts_dir, expected_files)
                     coverage_brief_for_batch = _read_workspace_json(artifacts_dir / workspace_paths["coverage_brief"])
+                    artifact_char_budget = _resolve_output_char_budget(state, capability, target_file)
                     generation_exception: Optional[Exception] = None
                     try:
                         llm_output = await asyncio.to_thread(
@@ -3291,6 +3681,14 @@ async def run_dynamic_subagent(
                             final_reasoning_sections.append(
                                 f"Timeout fallback used for {target_file} batch {batch.get('batch_index')}/{batch.get('batch_total')}: {exc}"
                             )
+                            timeout_fallback_records.append(
+                                {
+                                    "target_file": target_file,
+                                    "batch_index": int(batch.get("batch_index") or 1),
+                                    "batch_total": int(batch.get("batch_total") or 1),
+                                    "error": str(exc),
+                                }
+                            )
                             history_updates.append(
                                 f"[{capability}] Finalization step {step}: LLM timeout while generating `{target_file}` batch {batch.get('batch_index')}/{batch.get('batch_total')}`; writing controller fallback fragment instead."
                             )
@@ -3310,6 +3708,12 @@ async def run_dynamic_subagent(
                     is_append_batch = bool(current_content) and int(batch.get("batch_total") or 1) > 1 and int(batch.get("batch_index") or 1) > 1
                     if is_append_batch:
                         new_content = f"{current_content.rstrip()}\n\n{generated_content.lstrip()}"
+                        if Path(target_file).suffix.lower() == ".md":
+                            new_content, was_trimmed = _enforce_markdown_budget(new_content, artifact_char_budget)
+                            if was_trimmed:
+                                history_updates.append(
+                                    f"[{capability}] Finalization step {step}: controller truncated `{target_file}` to the markdown size budget."
+                                )
                         tool_name = "patch_file"
                         tool_input = {
                             "path": target_file,
@@ -3323,6 +3727,12 @@ async def run_dynamic_subagent(
                             "new_content_summary": f"<omitted {len(new_content)} chars>",
                         }
                     elif target_path.exists():
+                        if Path(target_file).suffix.lower() == ".md":
+                            generated_content, was_trimmed = _enforce_markdown_budget(generated_content, artifact_char_budget)
+                            if was_trimmed:
+                                history_updates.append(
+                                    f"[{capability}] Finalization step {step}: controller truncated `{target_file}` to the markdown size budget."
+                                )
                         tool_name = "patch_file"
                         tool_input = {
                             "path": target_file,
@@ -3336,6 +3746,12 @@ async def run_dynamic_subagent(
                             "new_content_summary": f"<omitted {len(generated_content)} chars>",
                         }
                     else:
+                        if Path(target_file).suffix.lower() == ".md":
+                            generated_content, was_trimmed = _enforce_markdown_budget(generated_content, artifact_char_budget)
+                            if was_trimmed:
+                                history_updates.append(
+                                    f"[{capability}] Finalization step {step}: controller truncated `{target_file}` to the markdown size budget."
+                                )
                         tool_name = "write_file"
                         tool_input = {
                             "path": target_file,
@@ -3550,15 +3966,19 @@ async def run_dynamic_subagent(
         evidence["react_trace"] = react_trace
         evidence["finalization_trace"] = final_trace
         evidence["workspace_paths"] = workspace_paths
+        if timeout_fallback_records:
+            evidence["failure_reason"] = "finalization_timeout_fallback"
+            evidence["timeout_fallbacks"] = timeout_fallback_records
         (evidence_dir / f"{capability}.json").write_text(
             json.dumps(evidence, ensure_ascii=False, indent=2),
             encoding="utf-8"
         )
 
-        history_updates.append(f"[{capability}] Completed with status: success")
+        final_status = "failed" if timeout_fallback_records else "success"
+        history_updates.append(f"[{capability}] Completed with status: {final_status}")
         return {
             "history": history_updates,
-            "task_queue": update_task_status_fn(state["task_queue"], capability, "success"),
+            "task_queue": update_task_status_fn(state["task_queue"], capability, final_status),
             "human_intervention_required": False,
             "last_worker": capability,
             "tool_results": tool_results,
@@ -3608,24 +4028,37 @@ def _load_templates_for_capability(
 # Defines which upstream artifacts each agent should read for cross-agent memory
 # Note: This is a fallback when registry is not available; prefer registry configuration
 UPSTREAM_ARTIFACT_MAPPING_FALLBACK: Dict[str, Dict[str, List[str]]] = {
-    "api-design": {
-        "data-design": ["schema.sql", "er.md"],
-        "ddd-structure": ["ddd-structure.md", "class-domain.md"],
+    "config-design": {
+        "architecture-mapping": ["architecture.md", "module-map.json"],
     },
-    "integration-design": {
-        "api-design": ["api-internal.yaml", "api-public.yaml"],
-        "data-design": ["schema.sql"],
-    },
-    "test-design": {
-        "flow-design": ["sequence-example.md", "state-example.md"],
-        "api-design": ["api-internal.yaml"],
-    },
-    "ops-design": {
-        "config-design": ["config-catalog.yaml"],
-        "flow-design": ["sequence-example.md"],
+    "data-design": {
+        "architecture-mapping": ["architecture.md", "module-map.json"],
     },
     "ddd-structure": {
-        "data-design": ["schema.sql", "er.md"],
+        "data-design": ["schema.sql", "er.md", "migration-plan.md"],
+    },
+    "api-design": {
+        "architecture-mapping": ["architecture.md", "module-map.json"],
+        "data-design": ["schema.sql", "er.md", "migration-plan.md"],
+        "ddd-structure": ["class-diagram.md", "ddd-structure.md", "context-map.md"],
+    },
+    "flow-design": {
+        "architecture-mapping": ["architecture.md", "module-map.json"],
+    },
+    "integration-design": {
+        "architecture-mapping": ["architecture.md", "module-map.json"],
+    },
+    "ops-design": {
+        "config-design": ["config-catalog.yaml", "config-matrix.md"],
+    },
+    "test-design": {
+        "flow-design": ["sequence.md", "state.md"],
+        "api-design": ["api-design.md", "errors-rfc9457.json"],
+        "integration-design": ["integration.md", "asyncapi.yaml"],
+        "ops-design": ["slo.yaml", "observability-spec.yaml", "deployment-runbook.md"],
+    },
+    "validator": {
+        "design-assembler": ["detailed-design.md", "traceability.json", "review-checklist.md"],
     },
 }
 
@@ -3655,16 +4088,8 @@ def _get_upstream_artifact_mapping() -> Dict[str, Dict[str, List[str]]]:
         registry = ExpertRegistry.get_instance()
         result: Dict[str, Dict[str, List[str]]] = {}
         for manifest in registry.get_all_manifests():
-            if manifest.expert_yaml_path:
-                import yaml
-                try:
-                    with open(manifest.expert_yaml_path, "r", encoding="utf-8") as f:
-                        data = yaml.safe_load(f) or {}
-                    upstream = data.get("upstream_artifacts", {})
-                    if upstream:
-                        result[manifest.capability] = upstream
-                except Exception:
-                    pass
+            if manifest.upstream_artifacts:
+                result[manifest.capability] = manifest.upstream_artifacts
         return result if result else UPSTREAM_ARTIFACT_MAPPING_FALLBACK
     except RuntimeError:
         return UPSTREAM_ARTIFACT_MAPPING_FALLBACK

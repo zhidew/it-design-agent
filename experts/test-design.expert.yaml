@@ -1,4 +1,4 @@
-﻿name: Test Design Expert
+name: Test Design Expert
 capability: test-design
 description: Extract test input conditions and generate coverage mapping matrices.
 version: 0.1.1
@@ -11,6 +11,20 @@ scheduling:
     - api-design
     - integration-design
     - ops-design
+upstream_artifacts:
+  flow-design:
+    - sequence.md
+    - state.md
+  api-design:
+    - api-design.md
+    - errors-rfc9457.json
+  integration-design:
+    - integration.md
+    - asyncapi.yaml
+  ops-design:
+    - slo.yaml
+    - observability-spec.yaml
+    - deployment-runbook.md
 policies:
   asset_baseline_required: true
   evidence_required: true
@@ -23,3 +37,14 @@ tools:
   allowed: [clone_repository, query_database, query_knowledge_base, write_file, patch_file]
 outputs:
   expected: [test-inputs.md, coverage-map.json]
+metadata:
+  boundary_contract:
+    owns:
+      - test inputs, coverage mapping, and verification scenarios
+    excludes:
+      - redesign of architecture, domain, API, integration, data, config, or ops artifacts
+    upstream_inputs:
+      - flow-design
+      - api-design
+      - integration-design
+      - ops-design

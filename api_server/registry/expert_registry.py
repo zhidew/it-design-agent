@@ -10,12 +10,35 @@ import asyncio
 import threading
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 import yaml
 
 from .errors import AgentNotFoundError, ConfigLoadError, ValidationError
 from .skill_parser import SkillParser
+
+
+def _ensure_list(value: Any) -> List[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str):
+        stripped = value.strip()
+        return [stripped] if stripped else []
+    return [str(value).strip()] if str(value).strip() else []
+
+
+def _normalize_artifact_mapping(value: Any) -> Dict[str, List[str]]:
+    if not isinstance(value, dict):
+        return {}
+    normalized: Dict[str, List[str]] = {}
+    for upstream, outputs in value.items():
+        upstream_id = str(upstream).strip()
+        if not upstream_id:
+            continue
+        normalized[upstream_id] = _ensure_list(outputs)
+    return normalized
 
 
 @dataclass
@@ -32,6 +55,8 @@ class ExpertProfile:
     skill_md_path: Optional[str] = None
     # Hot-pluggable task scheduling configuration
     dependencies: List[str] = field(default_factory=list)
+    upstream_artifacts: Dict[str, List[str]] = field(default_factory=dict)
+    boundary_upstream_inputs: List[str] = field(default_factory=list)
     priority: int = 50
 
     @property
@@ -232,19 +257,25 @@ class ExpertRegistry:
 
         # Parse hot-pluggable scheduling configuration
         scheduling = data.get("scheduling", {})
-        dependencies = scheduling.get("dependencies", [])
+        dependencies = _ensure_list(scheduling.get("dependencies", []))
         priority = scheduling.get("priority", 50)
+        upstream_artifacts = _normalize_artifact_mapping(data.get("upstream_artifacts", {}))
+        boundary_upstream_inputs = _ensure_list(
+            data.get("metadata", {}).get("boundary_contract", {}).get("upstream_inputs", [])
+        )
 
         return ExpertProfile(
             capability=capability,
             name=name,
             description=description,
             keywords=list(keywords),
-            required_inputs=data.get("inputs", {}).get("required", []),
-            expected_outputs=data.get("outputs", {}).get("expected", []),
+            required_inputs=_ensure_list(data.get("inputs", {}).get("required", [])),
+            expected_outputs=_ensure_list(data.get("outputs", {}).get("expected", [])),
             expert_yaml_path=str(expert_file),
             skill_md_path=str(skill_path) if skill_path.exists() else None,
             dependencies=list(dependencies),
+            upstream_artifacts=upstream_artifacts,
+            boundary_upstream_inputs=boundary_upstream_inputs,
             priority=int(priority),
         )
 
@@ -313,6 +344,7 @@ class ExpertRegistry:
                 **expert_data.get("metadata", {}),
                 "execution": expert_data.get("execution", {}),
                 "expected_outputs": manifest.expected_outputs,
+                "upstream_artifacts": manifest.upstream_artifacts,
             },
         )
         self._configs[capability] = config
@@ -351,6 +383,225 @@ class ExpertRegistry:
             "cached_configs": len(self._configs),
             "load_errors": list(self._load_errors),
             "capabilities": self.get_capabilities(),
+        }
+
+    def validate_dependency_graph(self) -> Dict[str, Any]:
+        manifests = {
+            manifest.capability: manifest
+            for manifest in sorted(self._manifests.values(), key=lambda item: item.capability)
+        }
+        findings: List[Dict[str, Any]] = []
+
+        def add_finding(
+            severity: str,
+            code: str,
+            message: str,
+            *,
+            expert_id: Optional[str] = None,
+            related_expert_id: Optional[str] = None,
+            details: Optional[Dict[str, Any]] = None,
+        ) -> None:
+            findings.append(
+                {
+                    "severity": severity,
+                    "code": code,
+                    "message": message,
+                    "expert_id": expert_id,
+                    "related_expert_id": related_expert_id,
+                    "details": details or {},
+                }
+            )
+
+        dependency_edges = 0
+        output_owners: Dict[str, List[str]] = {}
+
+        for manifest in manifests.values():
+            dependency_edges += len(manifest.dependencies)
+
+            if (
+                manifest.boundary_upstream_inputs
+                and set(manifest.boundary_upstream_inputs) != set(manifest.dependencies)
+            ):
+                add_finding(
+                    "warning",
+                    "BOUNDARY_INPUT_MISMATCH",
+                    "Boundary-contract upstream inputs do not match scheduling dependencies.",
+                    expert_id=manifest.capability,
+                    details={
+                        "dependencies": manifest.dependencies,
+                        "boundary_upstream_inputs": manifest.boundary_upstream_inputs,
+                    },
+                )
+
+            for dependency in manifest.dependencies:
+                if dependency == manifest.capability:
+                    add_finding(
+                        "error",
+                        "SELF_DEPENDENCY",
+                        "Expert cannot depend on itself.",
+                        expert_id=manifest.capability,
+                    )
+                    continue
+                if dependency not in manifests:
+                    add_finding(
+                        "error",
+                        "MISSING_DEPENDENCY",
+                        "Dependency points to an expert that does not exist.",
+                        expert_id=manifest.capability,
+                        related_expert_id=dependency,
+                    )
+
+            if manifest.dependencies and not manifest.upstream_artifacts:
+                add_finding(
+                    "warning",
+                    "MISSING_UPSTREAM_ARTIFACT_MAPPING",
+                    "Expert has dependencies but does not declare any upstream artifact mapping.",
+                    expert_id=manifest.capability,
+                    details={"dependencies": manifest.dependencies},
+                )
+
+            for upstream_id, artifact_names in manifest.upstream_artifacts.items():
+                if upstream_id == manifest.capability:
+                    add_finding(
+                        "error",
+                        "SELF_UPSTREAM_ARTIFACT",
+                        "Expert cannot consume its own artifacts as an upstream source.",
+                        expert_id=manifest.capability,
+                    )
+                    continue
+                if upstream_id not in manifests:
+                    add_finding(
+                        "error",
+                        "UNKNOWN_UPSTREAM_EXPERT",
+                        "Upstream artifact mapping references an unknown expert.",
+                        expert_id=manifest.capability,
+                        related_expert_id=upstream_id,
+                    )
+                    continue
+                if upstream_id not in manifest.dependencies:
+                    add_finding(
+                        "warning",
+                        "UPSTREAM_NOT_IN_DEPENDENCIES",
+                        "Upstream artifact mapping references an expert that is not declared as a dependency.",
+                        expert_id=manifest.capability,
+                        related_expert_id=upstream_id,
+                    )
+                if not artifact_names:
+                    add_finding(
+                        "warning",
+                        "EMPTY_UPSTREAM_ARTIFACT_MAPPING",
+                        "Upstream artifact mapping exists but does not list any artifacts.",
+                        expert_id=manifest.capability,
+                        related_expert_id=upstream_id,
+                    )
+                    continue
+
+                available_outputs = set(manifests[upstream_id].expected_outputs)
+                if not available_outputs:
+                    add_finding(
+                        "warning",
+                        "UPSTREAM_HAS_NO_EXPECTED_OUTPUTS",
+                        "Upstream expert declares no expected outputs, so artifact lookup may stay empty.",
+                        expert_id=manifest.capability,
+                        related_expert_id=upstream_id,
+                    )
+                    continue
+
+                unknown_outputs = [name for name in artifact_names if name not in available_outputs]
+                if unknown_outputs:
+                    add_finding(
+                        "error",
+                        "UNKNOWN_UPSTREAM_ARTIFACT",
+                        "Upstream artifact mapping references files that the upstream expert does not produce.",
+                        expert_id=manifest.capability,
+                        related_expert_id=upstream_id,
+                        details={"artifacts": unknown_outputs},
+                    )
+
+            for dependency in manifest.dependencies:
+                upstream_outputs = manifests.get(dependency).expected_outputs if dependency in manifests else []
+                if upstream_outputs and dependency not in manifest.upstream_artifacts:
+                    add_finding(
+                        "warning",
+                        "DEPENDENCY_WITHOUT_ARTIFACT_MAPPING",
+                        "Dependency exists but no upstream artifacts are declared for it.",
+                        expert_id=manifest.capability,
+                        related_expert_id=dependency,
+                        details={"available_outputs": upstream_outputs},
+                    )
+
+            for output_name in manifest.expected_outputs:
+                output_owners.setdefault(output_name, []).append(manifest.capability)
+
+        graph = {
+            capability: [
+                dependency
+                for dependency in manifest.dependencies
+                if dependency in manifests and dependency != capability
+            ]
+            for capability, manifest in manifests.items()
+        }
+        cycle_signatures: Set[str] = set()
+        visit_state: Dict[str, int] = {}
+        stack: List[str] = []
+
+        def walk(node: str) -> None:
+            visit_state[node] = 1
+            stack.append(node)
+            for neighbor in graph.get(node, []):
+                state = visit_state.get(neighbor, 0)
+                if state == 0:
+                    walk(neighbor)
+                elif state == 1:
+                    cycle = stack[stack.index(neighbor):] + [neighbor]
+                    signature = " -> ".join(cycle)
+                    if signature not in cycle_signatures:
+                        cycle_signatures.add(signature)
+                        add_finding(
+                            "error",
+                            "DEPENDENCY_CYCLE",
+                            "Dependency cycle detected in expert graph.",
+                            expert_id=node,
+                            related_expert_id=neighbor,
+                            details={"cycle": cycle},
+                        )
+            stack.pop()
+            visit_state[node] = 2
+
+        for capability in graph:
+            if visit_state.get(capability, 0) == 0:
+                walk(capability)
+
+        for output_name, owners in sorted(output_owners.items()):
+            if len(owners) > 1:
+                add_finding(
+                    "warning",
+                    "DUPLICATE_EXPECTED_OUTPUT",
+                    "Multiple experts declare the same expected output file name.",
+                    details={"output": output_name, "owners": owners},
+                )
+
+        severity_rank = {"error": 0, "warning": 1, "info": 2}
+        findings.sort(
+            key=lambda item: (
+                severity_rank.get(item["severity"], 99),
+                item.get("expert_id") or "",
+                item.get("related_expert_id") or "",
+                item["code"],
+            )
+        )
+
+        summary = {
+            "errors": sum(1 for item in findings if item["severity"] == "error"),
+            "warnings": sum(1 for item in findings if item["severity"] == "warning"),
+            "infos": sum(1 for item in findings if item["severity"] == "info"),
+        }
+        return {
+            "ok": summary["errors"] == 0,
+            "expert_count": len(manifests),
+            "dependency_edges": dependency_edges,
+            "summary": summary,
+            "findings": findings,
         }
 
 

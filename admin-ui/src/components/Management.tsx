@@ -1,14 +1,18 @@
 ﻿import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
+  AlertTriangle,
   ArrowLeft,
   BookOpen,
   Bot,
   Braces,
+  CheckCircle2,
   Code2,
   FileCode,
+  Network,
   Loader as LucideLoader,
   Plus,
+  RefreshCw,
   Save,
   ScrollText,
   Trash2,
@@ -66,6 +70,27 @@ interface ToolInfo {
   script_path?: string;
 }
 
+interface DependencyFinding {
+  severity: 'error' | 'warning' | 'info';
+  code: string;
+  message: string;
+  expert_id?: string | null;
+  related_expert_id?: string | null;
+  details: Record<string, any>;
+}
+
+interface DependencyValidationReport {
+  ok: boolean;
+  expert_count: number;
+  dependency_edges: number;
+  summary: {
+    errors: number;
+    warnings: number;
+    infos: number;
+  };
+  findings: DependencyFinding[];
+}
+
 interface WorkbenchSection {
   tab: WorkbenchTab;
   title: string;
@@ -108,6 +133,8 @@ export function ExpertCenter() {
   const [selectedTool, setSelectedTool] = useState<ToolInfo | null>(null);
   const [toolCode, setToolCode] = useState<string>('');
   const [loadingTools, setLoadingTools] = useState(false);
+  const [validationReport, setValidationReport] = useState<DependencyValidationReport | null>(null);
+  const [validatingDependencies, setValidatingDependencies] = useState(false);
 
   const GENERATION_STEPS = [
     t('management.generationSteps.0'),
@@ -151,10 +178,35 @@ export function ExpertCenter() {
         setSelectedExpertId(nextExperts[0].id);
         setActiveTab('profile');
       }
+      void loadDependencyValidation(true);
     } catch {
       setMessage({ type: 'error', text: t('management.loadError') });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadDependencyValidation = async (silent = false) => {
+    if (!silent) {
+      setValidatingDependencies(true);
+    }
+    try {
+      const response = await axios.get(`${API_BASE_URL}/experts/validate-dependencies`);
+      setValidationReport(response.data as DependencyValidationReport);
+      if (!silent) {
+        setMessage({
+          type: response.data.ok ? 'success' : 'error',
+          text: response.data.ok ? t('management.validationSuccess') : t('management.validationIssuesFound'),
+        });
+      }
+    } catch {
+      if (!silent) {
+        setMessage({ type: 'error', text: t('management.validationLoadError') });
+      }
+    } finally {
+      if (!silent) {
+        setValidatingDependencies(false);
+      }
     }
   };
   
@@ -234,6 +286,18 @@ export function ExpertCenter() {
     () => experts.find((expert) => expert.id === selectedExpertId) ?? null,
     [experts, selectedExpertId],
   );
+
+  const visibleDependencyFindings = useMemo(() => {
+    if (!validationReport) {
+      return [];
+    }
+    if (!selectedExpertId) {
+      return validationReport.findings;
+    }
+    return validationReport.findings.filter(
+      (finding) => finding.expert_id === selectedExpertId || finding.related_expert_id === selectedExpertId,
+    );
+  }, [validationReport, selectedExpertId]);
 
   const fileNamesByPath = useMemo(() => {
     const entries: Record<string, string> = {};
@@ -691,16 +755,122 @@ export function ExpertCenter() {
                   {translateExpertDescription(selectedExpert)}
                 </div>
               </div>
-              {selectedExpert && !isSystemExpert && (
+              <div className="flex flex-wrap items-center gap-3">
                 <button
                   type="button"
-                  onClick={handleDeleteExpert}
-                  disabled={deleting}
-                  className="inline-flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-xs font-black uppercase text-rose-600 hover:bg-rose-100 disabled:opacity-50 transition-all"
+                  onClick={() => void loadDependencyValidation()}
+                  disabled={validatingDependencies}
+                  className="inline-flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-xs font-black uppercase text-indigo-700 hover:bg-indigo-100 disabled:opacity-50 transition-all"
                 >
-                  {deleting ? <LucideLoader size={14} className="animate-spin" /> : <Trash2 size={14} />}
-                  {t('management.deleteExpert')}
+                  {validatingDependencies ? <LucideLoader size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                  {t('management.validateDependencies')}
                 </button>
+                {selectedExpert && !isSystemExpert && (
+                  <button
+                    type="button"
+                    onClick={handleDeleteExpert}
+                    disabled={deleting}
+                    className="inline-flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-xs font-black uppercase text-rose-600 hover:bg-rose-100 disabled:opacity-50 transition-all"
+                  >
+                    {deleting ? <LucideLoader size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                    {t('management.deleteExpert')}
+                  </button>
+                )}
+              </div>
+            </div>
+          </section>
+
+          <section className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
+            <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+              <div>
+                <div className="text-[10px] font-black text-indigo-500 uppercase tracking-widest">{t('management.validationEyebrow')}</div>
+                <div className="text-lg font-black text-gray-900 mt-1">{t('management.validationTitle')}</div>
+                <div className="text-sm text-gray-500 mt-2 max-w-3xl">
+                  {selectedExpertId
+                    ? t('management.validationDescriptionSelected', { expert: translateExpertName(selectedExpert) })
+                    : t('management.validationDescription')}
+                </div>
+              </div>
+              <div className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-xs font-black uppercase ${
+                validationReport?.ok
+                  ? 'bg-emerald-50 text-emerald-700'
+                  : 'bg-amber-50 text-amber-700'
+              }`}>
+                {validationReport?.ok ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />}
+                {validationReport?.ok ? t('management.validationHealthy') : t('management.validationAttention')}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-6">
+              <div className="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-4">
+                <div className="text-[10px] font-black uppercase tracking-widest text-gray-400">{t('management.validationExperts')}</div>
+                <div className="text-2xl font-black text-gray-900 mt-2">{validationReport?.expert_count ?? experts.length}</div>
+              </div>
+              <div className="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-4">
+                <div className="text-[10px] font-black uppercase tracking-widest text-gray-400">{t('management.validationDependenciesCount')}</div>
+                <div className="text-2xl font-black text-gray-900 mt-2">{validationReport?.dependency_edges ?? 0}</div>
+              </div>
+              <div className="rounded-2xl border border-rose-100 bg-rose-50 px-4 py-4">
+                <div className="text-[10px] font-black uppercase tracking-widest text-rose-400">{t('management.validationErrors')}</div>
+                <div className="text-2xl font-black text-rose-700 mt-2">{validationReport?.summary.errors ?? 0}</div>
+              </div>
+              <div className="rounded-2xl border border-amber-100 bg-amber-50 px-4 py-4">
+                <div className="text-[10px] font-black uppercase tracking-widest text-amber-500">{t('management.validationWarnings')}</div>
+                <div className="text-2xl font-black text-amber-700 mt-2">{validationReport?.summary.warnings ?? 0}</div>
+              </div>
+            </div>
+
+            <div className="mt-6">
+              {!validationReport ? (
+                <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 px-5 py-8 text-sm text-gray-400 text-center">
+                  {t('management.validationEmpty')}
+                </div>
+              ) : visibleDependencyFindings.length === 0 ? (
+                <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-5 py-8 text-sm text-emerald-700 flex items-center justify-center gap-2">
+                  <CheckCircle2 size={16} />
+                  {t('management.validationNoFindings')}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {visibleDependencyFindings.map((finding, index) => {
+                    const severityClasses = finding.severity === 'error'
+                      ? 'border-rose-200 bg-rose-50 text-rose-700'
+                      : finding.severity === 'warning'
+                        ? 'border-amber-200 bg-amber-50 text-amber-700'
+                        : 'border-sky-200 bg-sky-50 text-sky-700';
+                    return (
+                      <div key={`${finding.code}-${finding.expert_id ?? 'global'}-${finding.related_expert_id ?? 'none'}-${index}`} className={`rounded-2xl border p-4 ${severityClasses}`}>
+                        <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
+                          <div className="space-y-2 min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="inline-flex items-center gap-1 rounded-full bg-white/80 px-2.5 py-1 text-[10px] font-black uppercase tracking-widest">
+                                {finding.severity}
+                              </span>
+                              <span className="inline-flex items-center gap-1 rounded-full bg-white/80 px-2.5 py-1 text-[10px] font-black uppercase tracking-widest">
+                                <Network size={12} />
+                                {finding.code}
+                              </span>
+                            </div>
+                            <div className="text-sm font-semibold leading-relaxed">{finding.message}</div>
+                            <div className="flex flex-wrap gap-2 text-[11px] font-medium">
+                              {finding.expert_id ? (
+                                <span className="rounded-full bg-white/80 px-2.5 py-1">{t('management.validationSource')}: {finding.expert_id}</span>
+                              ) : null}
+                              {finding.related_expert_id ? (
+                                <span className="rounded-full bg-white/80 px-2.5 py-1">{t('management.validationTarget')}: {finding.related_expert_id}</span>
+                              ) : null}
+                            </div>
+                          </div>
+                          {Object.keys(finding.details ?? {}).length > 0 ? (
+                            <pre className="max-w-xl overflow-x-auto rounded-xl bg-white/80 p-3 text-[11px] text-gray-700">
+                              {JSON.stringify(finding.details, null, 2)}
+                            </pre>
+                          ) : null}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               )}
             </div>
           </section>

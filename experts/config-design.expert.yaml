@@ -1,4 +1,4 @@
-﻿name: Configuration Design Expert
+name: Configuration Design Expert
 capability: config-design
 description: Plan multi-environment configurations, feature flags, and secret management policies.
 version: 0.1.1
@@ -8,6 +8,10 @@ scheduling:
   priority: 65
   dependencies:
     - architecture-mapping
+upstream_artifacts:
+  architecture-mapping:
+    - architecture.md
+    - module-map.json
 policies:
   asset_baseline_required: true
   evidence_required: true
@@ -20,3 +24,13 @@ tools:
   allowed: [clone_repository, query_database, query_knowledge_base, write_file, patch_file]
 outputs:
   expected: [config-catalog.yaml, config-matrix.md]
+metadata:
+  boundary_contract:
+    owns:
+      - config keys, feature flags, secrets, and environment matrix
+    excludes:
+      - API/event contract redesign
+      - schema/index design
+      - observability runbooks and test plans
+    upstream_inputs:
+      - architecture-mapping

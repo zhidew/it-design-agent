@@ -34,3 +34,5 @@ description: Assemble all structured design artifacts into the final detailed de
 - Preserve cross-artifact consistency and terminology.
 - The traceability output must map requirements to the generated design decisions.
 - Use the templates under `assets/templates/` as style references.
+- Boundary: assemble and align upstream artifacts only. Do not invent a brand-new detailed design that bypasses or overwrites upstream expert outputs.
+- Dependency handling: when two upstream artifacts conflict, surface the conflict, choose the smallest necessary normalization, and keep the original source references traceable.

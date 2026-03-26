@@ -171,6 +171,26 @@ class SupervisorGuardTests(unittest.TestCase):
         self.assertEqual(decision["workflow_phase"], "INTERFACE")
         self.assertEqual(decision["current_task_id"], "5")
 
+    def test_supervisor_marks_parallel_dispatch_tasks_running_in_projection(self) -> None:
+        state = {
+            "workflow_phase": "INTERFACE",
+            "task_queue": [
+                {"id": "0", "agent_type": "planner", "status": "success", "dependencies": [], "priority": 100},
+                {"id": "5", "agent_type": "api-design", "status": "todo", "dependencies": ["0"], "priority": 70, "phase": "INTERFACE"},
+                {"id": "6", "agent_type": "config-design", "status": "todo", "dependencies": ["0"], "priority": 65, "phase": "INTERFACE"},
+                {"id": "7", "agent_type": "flow-design", "status": "todo", "dependencies": ["0", "5"], "priority": 60, "phase": "INTERFACE"},
+            ],
+            "design_context": {"orchestrator": {"max_parallel_tasks": 2}},
+        }
+
+        decision = supervisor(state)
+        projected_by_id = {task["id"]: task for task in decision["task_queue"]}
+
+        self.assertEqual(decision["next"], ["api-design", "config-design"])
+        self.assertEqual(projected_by_id["5"]["status"], "running")
+        self.assertEqual(projected_by_id["6"]["status"], "running")
+        self.assertEqual(projected_by_id["7"]["status"], "todo")
+
 
 class NormalizeStateGuardTests(unittest.TestCase):
     def test_missing_runtime_prefers_queued_projection_over_stale_running_row(self) -> None:
@@ -190,6 +210,12 @@ class NormalizeStateGuardTests(unittest.TestCase):
                         "current_phase": "ARCHITECTURE",
                         "updated_at": "2026-03-24T13:42:23.307451+00:00",
                     }
+
+                def get_version(self, project_id, version):
+                    return {}
+
+                def get_latest_scheduled_run_for_version(self, project_id, version, statuses=None):
+                    return None
 
                 def list_workflow_tasks(self, project_id, version):
                     return [

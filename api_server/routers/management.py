@@ -4,6 +4,7 @@ from typing import List
 
 import services.orchestrator_service as orch
 from models.management import (
+    ExpertDependencyValidationResponse,
     ExpertCenterFileNode,
     ExpertMetadata,
     FileContentResponse,
@@ -91,6 +92,11 @@ async def update_template(skill_id: str, template_name: str, req: TemplateUpdate
 @expert_center_router.get("/experts", response_model=List[ExpertMetadata])
 async def list_experts():
     return orch.list_experts()
+
+
+@expert_center_router.get("/experts/validate-dependencies", response_model=ExpertDependencyValidationResponse)
+async def validate_expert_dependencies():
+    return orch.validate_expert_dependencies()
 
 
 @expert_center_router.post("/experts", response_model=ExpertMetadata)

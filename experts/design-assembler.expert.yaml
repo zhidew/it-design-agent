@@ -1,4 +1,4 @@
-﻿name: Design Assembly Expert
+name: Design Assembly Expert
 capability: design-assembler
 description: Assemble all structured design artifacts into a cohesive final design document and requirements traceability matrix.
 version: 0.1.1
@@ -24,3 +24,9 @@ outputs:
     - detailed-design.md
     - traceability.json
     - review-checklist.md
+metadata:
+  boundary_contract:
+    owns:
+      - synthesis, cross-artifact alignment, and traceability
+    excludes:
+      - invention of new detailed designs beyond upstream artifacts

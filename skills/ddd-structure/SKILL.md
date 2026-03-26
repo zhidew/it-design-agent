@@ -35,3 +35,5 @@ description: Build a grounded domain model, DDD structure description, and conte
 - Keep aggregate boundaries and invariants explicit.
 - Use terminology consistent with requirements, schema, and API design.
 - Use the templates under `assets/templates/` as style references.
+- Boundary: own aggregates, entities, value objects, domain services, and context mapping only. Do not expand into full DDL, full request/response or event payload catalogs, deployment/runbook detail, or test plans.
+- Dependency handling: consume upstream architecture and data artifacts as inputs. If an upstream artifact already settled a naming or ownership boundary, reference it instead of redefining it here.

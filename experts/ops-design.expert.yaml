@@ -1,4 +1,4 @@
-﻿name: Ops Design Expert
+name: Ops Design Expert
 capability: ops-design
 description: Design SLOs, alerting rules, monitoring metrics, and deployment/rollback runbooks.
 version: 0.1.1
@@ -8,6 +8,10 @@ scheduling:
   priority: 45
   dependencies:
     - config-design
+upstream_artifacts:
+  config-design:
+    - config-catalog.yaml
+    - config-matrix.md
 policies:
   asset_baseline_required: true
   evidence_required: true
@@ -20,3 +24,13 @@ tools:
   allowed: [clone_repository, query_database, query_knowledge_base, write_file, patch_file]
 outputs:
   expected: [slo.yaml, observability-spec.yaml, deployment-runbook.md]
+metadata:
+  boundary_contract:
+    owns:
+      - SLOs, alerts, observability spec, deployment and rollback runbooks
+    excludes:
+      - config matrix redesign
+      - API/event/schema redesign
+      - detailed test case design
+    upstream_inputs:
+      - config-design

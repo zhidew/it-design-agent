@@ -32,3 +32,5 @@ description: Generate grounded sequence and state-flow artifacts for the core bu
 - Cover both mainline and exception behavior.
 - Keep participant naming consistent with architecture and API artifacts.
 - Use Mermaid output compatible with the flow templates under `assets/templates/`.
+- Boundary: own sequence and lifecycle/state views only. Do not restate full API schemas, AsyncAPI payload details, DDL/index design, config matrices, ops runbooks, or test inventories.
+- Dependency handling: use upstream architecture/API/integration naming directly. When an interaction depends on another expert's detailed contract, reference the artifact and keep only the flow-level abstraction here.

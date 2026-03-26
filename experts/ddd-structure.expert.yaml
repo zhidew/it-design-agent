@@ -8,6 +8,11 @@ scheduling:
   priority: 75
   dependencies:
     - data-design
+upstream_artifacts:
+  data-design:
+    - schema.sql
+    - er.md
+    - migration-plan.md
 tools:
   allowed:
     - clone_repository
@@ -20,6 +25,16 @@ outputs:
     - class-diagram.md
     - ddd-structure.md
     - context-map.md
+metadata:
+  boundary_contract:
+    owns:
+      - aggregates, bounded contexts, invariants, and context mapping
+    excludes:
+      - full DDL and migration detail
+      - detailed API or async payload design
+      - ops and test design
+    upstream_inputs:
+      - data-design
 policies:
   asset_baseline_required: true
   evidence_required: true

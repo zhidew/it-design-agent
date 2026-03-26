@@ -33,3 +33,5 @@ description: Design service-to-service and external integration contracts, inclu
 - Make idempotency keys, retry policy, timeout policy, circuit breaking, and compensation flow explicit.
 - Keep every statement grounded in the requirement text or upstream artifacts.
 - Use the templates under `assets/templates/` as style references.
+- Boundary: own cross-service/external integration contracts, async events, retries, idempotency, timeout, and compensation only. Do not duplicate full REST schema catalogs, full DDL/index design, config matrices, ops runbooks, or test plans.
+- Dependency handling: treat upstream architecture and API/data outputs as constraints. Reuse their names and boundaries; if they are insufficient, record a targeted assumption instead of redefining their artifacts here.

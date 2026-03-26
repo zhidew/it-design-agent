@@ -31,3 +31,5 @@ description: Validate completeness and consistency of the generated design packa
 - Validation should surface actionable issues without inventing missing evidence.
 - Distinguish failures, warnings, and passes clearly in the report.
 - Prefer deterministic checks for machine-readable artifacts.
+- Boundary: validate and report only. Do not generate replacement design content or silently "fix" missing upstream decisions inside the validation report.
+- Dependency handling: when a finding points to an upstream artifact, cite that artifact and explain the inconsistency scope instead of proposing an ungrounded redesign.

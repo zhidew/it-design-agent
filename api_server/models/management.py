@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List, Optional, Dict
+from typing import Any, List, Optional, Dict
 
 class AgentVersion(BaseModel):
     version_id: str
@@ -76,6 +76,23 @@ class FileContentResponse(BaseModel):
     name: str
     content: str
     versions: List[FileContentVersion] = []
+
+
+class ExpertDependencyFinding(BaseModel):
+    severity: str
+    code: str
+    message: str
+    expert_id: Optional[str] = None
+    related_expert_id: Optional[str] = None
+    details: Dict[str, Any] = {}
+
+
+class ExpertDependencyValidationResponse(BaseModel):
+    ok: bool
+    expert_count: int
+    dependency_edges: int
+    summary: Dict[str, int]
+    findings: List[ExpertDependencyFinding] = []
 
 
 ExpertCenterFileNode.model_rebuild()

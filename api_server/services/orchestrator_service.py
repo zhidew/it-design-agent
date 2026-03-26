@@ -2095,6 +2095,14 @@ def list_experts():
     return experts
 
 
+def validate_expert_dependencies():
+    try:
+        registry = ExpertRegistry.get_instance()
+    except RuntimeError:
+        registry = ExpertRegistry.initialize(BASE_DIR)
+    return registry.validate_dependency_graph()
+
+
 def get_expert(expert_id: str):
     profile_path = _resolve_expert_profile_path(expert_id)
     if not profile_path.exists():
