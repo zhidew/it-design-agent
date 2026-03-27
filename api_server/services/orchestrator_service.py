@@ -63,21 +63,17 @@ async def _graph_for_run():
     CHECKPOINTS_DIR.mkdir(parents=True, exist_ok=True)
     try:
         from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+        saver_cm = AsyncSqliteSaver.from_conn_string(str(CHECKPOINT_DB_PATH))
+        checkpointer = await saver_cm.__aenter__()
+    except Exception:
+        from langgraph.checkpoint.memory import MemorySaver
+        yield create_design_graph(checkpointer=MemorySaver())
+        return
 
-        async with AsyncSqliteSaver.from_conn_string(str(CHECKPOINT_DB_PATH)) as checkpointer:
-            graph = create_design_graph(checkpointer=checkpointer)
-            try:
-                yield graph
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                raise
-    except Exception as e:
-        if "generator didn't stop" in str(e):
-            pass
-        else:
-            from langgraph.checkpoint.memory import MemorySaver
-            yield create_design_graph(checkpointer=MemorySaver())
+    try:
+        yield create_design_graph(checkpointer=checkpointer)
+    finally:
+        await saver_cm.__aexit__(None, None, None)
 
 
 def _now_iso() -> str:

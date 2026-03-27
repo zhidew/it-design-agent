@@ -55,22 +55,71 @@ def create_design_graph(checkpointer=None):
         return "supervisor"
 
     def route_supervisor(state: DesignState):
-        decision = supervisor(state)
-        next_step = decision["next"]
-
-        if isinstance(next_step, list):
-            return next_step if next_step else END
-        if next_step in {"END", "human_review"}:
-            return END
-        if next_step == "supervisor_advance":
-            return "supervisor"
-        return next_step
+        return resolve_supervisor_route(state)
 
     workflow.add_conditional_edges("bootstrap", route_bootstrap)
     workflow.add_conditional_edges("planner", route_planner)
     workflow.add_conditional_edges("supervisor", route_supervisor)
 
     for agent in agents:
-        workflow.add_edge(agent, "supervisor")
+        workflow.add_conditional_edges(agent, resolve_worker_completion_route)
 
     return workflow.compile(checkpointer=checkpointer)
+
+
+def resolve_supervisor_route(state: DesignState):
+    dispatched = state.get("dispatched_tasks") or []
+    if state.get("last_worker") == "supervisor" and dispatched:
+        agent_names = [task.get("agent_type") for task in dispatched if task.get("agent_type")]
+        if not agent_names:
+            return END
+        return agent_names if len(agent_names) > 1 else agent_names[0]
+
+    if state.get("last_worker") == "supervisor" and state.get("current_task_ids"):
+        current_ids = state.get("current_task_ids") or []
+        running_lookup = {
+            task.get("id"): task.get("agent_type")
+            for task in state.get("task_queue", [])
+            if task.get("status") == "running" and task.get("agent_type")
+        }
+        agent_names = [running_lookup[task_id] for task_id in current_ids if task_id in running_lookup]
+        if agent_names:
+            return agent_names if len(agent_names) > 1 else agent_names[0]
+
+    if state.get("last_worker") == "supervisor" and state.get("current_task_id") and state.get("current_node"):
+        running_task = next(
+            (
+                task
+                for task in state.get("task_queue", [])
+                if task.get("id") == state.get("current_task_id") and task.get("status") == "running"
+            ),
+            None,
+        )
+        if running_task:
+            return state["current_node"]
+
+    decision = supervisor(state)
+    next_step = decision["next"]
+
+    if isinstance(next_step, list):
+        return next_step if next_step else END
+    if next_step in {"END", "human_review"}:
+        return END
+    if next_step == "supervisor_advance":
+        return "supervisor"
+    return next_step
+
+
+def resolve_worker_completion_route(state: DesignState):
+    last_worker = state.get("last_worker")
+    if last_worker in {None, "", "bootstrap", "planner", "supervisor"}:
+        return "supervisor"
+
+    running_peers = [
+        task
+        for task in state.get("task_queue", [])
+        if task.get("status") == "running" and task.get("agent_type") != last_worker
+    ]
+    if running_peers:
+        return END
+    return "supervisor"

@@ -93,6 +93,29 @@ def merge_optional_str(current: Optional[str], incoming: Optional[str]) -> Optio
     return incoming or current
 
 
+def merge_optional_task_id(current: Optional[str], incoming: Optional[str]) -> Optional[str]:
+    if incoming is None:
+        return None
+    if incoming == "":
+        return None
+    return incoming
+
+
+def merge_task_id_list(current: Optional[List[str]], incoming: Optional[List[str]]) -> List[str]:
+    if incoming is None:
+        return list(current or [])
+    return list(incoming)
+
+
+def merge_dispatch_list(
+    current: Optional[List[Dict[str, Any]]],
+    incoming: Optional[List[Dict[str, Any]]],
+) -> List[Dict[str, Any]]:
+    if incoming is None:
+        return list(current or [])
+    return [dict(item) for item in incoming]
+
+
 def merge_run_status(current: RunStatus, incoming: RunStatus) -> RunStatus:
     # Logic: failed > waiting_human > running > queued > success
     severity = {"failed": 4, "waiting_human": 3, "running": 2, "queued": 1, "success": 0}
@@ -132,6 +155,9 @@ class DesignState(TypedDict, total=False):
     human_answers: Dict[str, List[Dict[str, Any]]]
     pending_interrupt: Dict[str, Any] | None
     resume_target_node: str | None
+    current_task_id: Annotated[Optional[str], merge_optional_task_id]
+    current_task_ids: Annotated[List[str], merge_task_id_list]
+    dispatched_tasks: Annotated[List[Dict[str, Any]], merge_dispatch_list]
     updated_at: Annotated[str, merge_optional_str]
     project_id: str
     version: str

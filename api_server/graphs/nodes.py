@@ -164,26 +164,35 @@ def _should_use_dynamic_subagent(agent_type: str) -> bool:
 def supervisor(state: DesignState) -> Dict[str, Any]:
     queue = state.get("task_queue", [])
     workflow_phase = state.get("workflow_phase", "INIT")
+    cleared_routing = {
+        "last_worker": "supervisor",
+        "dispatched_tasks": [],
+        "current_task_id": None,
+        "current_task_ids": [],
+    }
 
     if state.get("human_intervention_required"):
-        return {"next": "END"}
+        return {"next": "END", **cleared_routing}
 
     # Check for actually running tasks based on state
     running_tasks = [task for task in queue if task["status"] == "running"]
     if running_tasks:
         # If tasks are already running (e.g. in parallel branch), we wait for them to re-enter supervisor
-        return {"next": "END"}
+        return {"next": "END", **cleared_routing}
 
     executable_tasks = [task for task in queue if task.get("agent_type") != "planner"]
     unfinished_tasks = [task for task in executable_tasks if task.get("status") not in {"success", "skipped"}]
     if not unfinished_tasks:
-        return {"next": "END", "workflow_phase": "DONE", "current_node": None}
+        return {"next": "END", "workflow_phase": "DONE", "current_node": None, **cleared_routing}
 
     current_phase = _resolve_active_phase(workflow_phase, unfinished_tasks)
     limit = _resolve_parallel_limit(state)
 
     def build_dispatch(tasks: List[Task], phase: str) -> Dict[str, Any]:
-        selected_tasks = tasks[:limit]
+        # Dynamic fan-out currently lacks a reliable barrier before the next
+        # supervisor turn. Dispatching a single task at a time avoids the graph
+        # ending early while later tasks in the same phase are still waiting.
+        selected_tasks = tasks[:1] if tasks else []
         running_queue = _update_tasks_by_id(
             queue,
             [task["id"] for task in selected_tasks],
@@ -199,6 +208,8 @@ def supervisor(state: DesignState) -> Dict[str, Any]:
                 "task_queue": running_queue,
                 "dispatched_tasks": dispatched_tasks,
                 "workflow_phase": phase,
+                "last_worker": "supervisor",
+                "current_task_ids": [],
             }
         return {
             "next": [task["agent_type"] for task in selected_tasks],
@@ -207,6 +218,8 @@ def supervisor(state: DesignState) -> Dict[str, Any]:
             "task_queue": running_queue,
             "dispatched_tasks": dispatched_tasks,
             "workflow_phase": phase,
+            "last_worker": "supervisor",
+            "current_task_id": None,
         }
 
     def ready_tasks_for_phase(phase: str) -> List[Task]:
@@ -246,6 +259,7 @@ def supervisor(state: DesignState) -> Dict[str, Any]:
         "workflow_phase": current_phase,
         "current_node": "supervisor",
         "waiting_reason": waiting_reason,
+        **cleared_routing,
     }
 
 
@@ -337,9 +351,17 @@ def create_worker_node(agent_type: str):
                 update_task_status_fn=_update_task_status,
                 execution_guard_fn=_execution_guard,
             )
+            result.setdefault("dispatched_tasks", [])
+            result.setdefault("current_task_ids", [])
+            result.setdefault("current_task_id", None)
             return result
         except Exception as e:
-            return {"history": [f"[ERROR] Failed to run dynamic subagent {agent_type}: {e}"]}
+            return {
+                "history": [f"[ERROR] Failed to run dynamic subagent {agent_type}: {e}"],
+                "dispatched_tasks": [],
+                "current_task_ids": [],
+                "current_task_id": None,
+            }
 
     return worker_node
 
