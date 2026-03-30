@@ -933,6 +933,15 @@ def _run_run_command(tool_input: Dict[str, Any]) -> Dict[str, Any]:
         raise _build_wrapped_error("run_command", tool_input, exc) from exc
 
 
+def _run_validate_artifacts(tool_input: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        from .validate_artifacts import validate_artifacts
+
+        return validate_artifacts(_require_root_dir(tool_input), tool_input)
+    except (ValueError, FileNotFoundError, RuntimeError) as exc:
+        raise _build_wrapped_error("validate_artifacts", tool_input, exc) from exc
+
+
 _TOOL_REGISTRY: Dict[str, Callable[[Dict[str, Any]], Dict[str, Any]]] = {
     "list_files": _run_list_files,
     "clone_repository": _run_clone_repository,
@@ -945,6 +954,7 @@ _TOOL_REGISTRY: Dict[str, Callable[[Dict[str, Any]], Dict[str, Any]]] = {
     "write_file": _run_write_file,
     "patch_file": _run_patch_file,
     "run_command": _run_run_command,
+    "validate_artifacts": _run_validate_artifacts,
 }
 
 
@@ -1063,5 +1073,16 @@ _TOOL_SCHEMAS: Dict[str, ToolSchema] = {
             "timeout": ToolParamSpec("int", default=30),
         },
         retry_policy=RetryPolicy(max_retry_attempts=2),
+    ),
+    "validate_artifacts": ToolSchema(
+        parameters={
+            "root_dir": ToolParamSpec("path", required=True, path_mode="root_dir"),
+            "target_files": ToolParamSpec(
+                "path_list",
+                path_mode="within_root",
+                expected_kind="file",
+                allow_scalar_list=True,
+            ),
+        }
     ),
 }

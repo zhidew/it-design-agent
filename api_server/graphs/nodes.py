@@ -12,7 +12,7 @@ from services.llm_service import SubagentOutput, generate_with_llm, resolve_runt
 from .state import DesignState, Task
 from .tools import execute_tool
 from services.db_service import metadata_db
-from subgraphs.dynamic_subagent import run_dynamic_subagent
+from subgraphs.dynamic_subagent import build_default_topic_ownership, run_dynamic_subagent
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
@@ -680,6 +680,10 @@ def _normalize_active_agents(active_agents: set[str]) -> set[str]:
     return normalized
 
 
+def _build_topic_ownership_payload(active_agents: set[str]) -> Dict[str, Any]:
+    return build_default_topic_ownership(sorted(active_agents))
+
+
 def _build_pending_interrupt(
     *,
     node_id: str,
@@ -1028,6 +1032,7 @@ Output JSON format:
         ]
         reasoning_content = "\n".join(reasoning_sections)
         (project_path / "logs" / "planner-reasoning.md").write_text(reasoning_content, encoding="utf-8")
+        topic_ownership = _build_topic_ownership_payload(set())
         
         baseline_payload = {
             "project_name": project_id,
@@ -1044,6 +1049,7 @@ Output JSON format:
             },
             "tool_context": tool_context_payload,
             "active_agents": [],  # Not decided yet
+            "topic_ownership": topic_ownership,
             "domain_name": "Domain",
             "aggregate_root": "Entity",
             "provider": "ExternalSystem",
@@ -1102,6 +1108,7 @@ Output JSON format:
     # Build task queue only when we have a clear pipeline
     tasks = _build_task_queue(active_agents)
     print(f"[DEBUG] Planner: task_queue built with {len(tasks)} tasks: {[t['agent_type'] for t in tasks]}")
+    topic_ownership = _build_topic_ownership_payload(active_agents)
 
     execution_topology = _format_execution_topology(tasks)
     reasoning_sections = [
@@ -1131,6 +1138,7 @@ Output JSON format:
         },
         "tool_context": tool_context_payload,
         "active_agents": list(active_agents),
+        "topic_ownership": topic_ownership,
         "domain_name": "Domain",
         "aggregate_root": "Entity",
         "provider": "ExternalSystem",

@@ -2476,6 +2476,28 @@ def list_system_tools() -> list:
             script_file = tools_dir / f"{tool_name}.py"
             if script_file.exists():
                 tool["script_path"] = f"api_server/graphs/tools/{tool_name}.py"
+
+        if not any((tool or {}).get("name") == "validate_artifacts" for tool in tools):
+            fallback_tool = {
+                "name": "validate_artifacts",
+                "category": "validation",
+                "description_zh": "校验本次运行产物的完整性、Markdown 结构、Mermaid 烟测和结构化文件合法性",
+                "description_en": "Validate generated artifacts for completeness, markdown structure, Mermaid smoke checks, and structured file validity",
+                "input_schema": {
+                    "root_dir": {"type": "string", "required": True},
+                    "target_files": {"type": "array", "required": False},
+                },
+                "output_schema": {
+                    "findings_path": {"type": "string"},
+                    "summary": {"type": "object"},
+                    "findings": {"type": "array"},
+                },
+                "recommended_for": ["validator"],
+            }
+            script_file = tools_dir / "validate_artifacts.py"
+            if script_file.exists():
+                fallback_tool["script_path"] = "api_server/graphs/tools/validate_artifacts.py"
+            tools.append(fallback_tool)
         
         return tools
     except Exception as e:

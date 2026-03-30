@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
@@ -116,6 +117,44 @@ CAPABILITY_SCOPE_NOTES = {
     ),
 }
 
+SHARED_CONTEXT_OWNER_CAPABILITIES = {"architecture-mapping", "design-assembler"}
+GENERIC_SHARED_CONTEXT_HEADING_MARKERS = (
+    "背景",
+    "概述",
+    "概要",
+    "目标",
+    "范围",
+    "总体",
+    "综述",
+    "overview",
+    "summary",
+    "scope",
+)
+GENERIC_SHARED_CONTEXT_SECTION_EXAMPLES = (
+    "项目背景 / 需求背景 / 建设目标 / 范围说明 / 总体方案 / 需求概述"
+)
+DEFAULT_SHARED_CONTEXT_TOPICS = [
+    "project_background",
+    "requirement_overview",
+    "scope",
+    "global_goals",
+    "cross_cutting_constraints",
+    "target_outcomes",
+]
+DEFAULT_CAPABILITY_TOPICS = {
+    "architecture-mapping": ["shared_context", "system_boundary", "container_decomposition", "module_ownership", "reuse_points"],
+    "data-design": ["schema", "entity_relationships", "indexes", "migration", "rollback"],
+    "ddd-structure": ["aggregates", "entities", "value_objects", "bounded_contexts", "domain_commands"],
+    "api-design": ["endpoint_contracts", "request_response_models", "error_model", "query_and_recalc_interfaces"],
+    "integration-design": ["external_integrations", "async_contracts", "idempotency", "timeout_retry_compensation"],
+    "flow-design": ["main_flow", "recalculation_flow", "exception_flow", "state_transitions"],
+    "config-design": ["feature_flags", "rules_binding", "environment_matrix", "permissions", "rollback_switches"],
+    "ops-design": ["observability", "alerts", "audit_visibility", "failure_recovery", "batch_operations"],
+    "test-design": ["coverage_matrix", "boundary_cases", "retro_and_segment_regression", "acceptance_criteria"],
+    "validator": ["consistency_checks", "gap_analysis", "residual_risks"],
+    "design-assembler": ["shared_context", "cross_artifact_alignment", "traceability", "final_package"],
+}
+
 ARCHITECTURE_SCOPE_EXCLUSION_RE = re.compile(
     r"(asyncapi|event\s+contract|event\s+payload|message\s+payload|topic|idempoten|retry\s+policy|"
     r"compensation|sql|ddl|schema|table|index|migration|字段|索引|表结构|迁移|"
@@ -124,6 +163,141 @@ ARCHITECTURE_SCOPE_EXCLUSION_RE = re.compile(
     r"test\s+case|coverage|chaos|压测|测试用例|覆盖率|混沌)",
     re.IGNORECASE,
 )
+
+
+def build_default_topic_ownership(active_agents: List[str]) -> Dict[str, Any]:
+    normalized_agents = _dedupe_preserve_order(
+        [str(agent).strip() for agent in active_agents if str(agent).strip()]
+    )
+    shared_context_owners = [
+        capability for capability in normalized_agents if capability in SHARED_CONTEXT_OWNER_CAPABILITIES
+    ]
+    if not shared_context_owners:
+        if normalized_agents:
+            shared_context_owners = [normalized_agents[0]]
+        else:
+            shared_context_owners = sorted(SHARED_CONTEXT_OWNER_CAPABILITIES)
+
+    capability_topics = {
+        capability: list(DEFAULT_CAPABILITY_TOPICS.get(capability, [capability.replace("-", "_")]))
+        for capability in normalized_agents
+    }
+
+    return {
+        "shared_context_owner_capabilities": shared_context_owners,
+        "shared_context_topics": list(DEFAULT_SHARED_CONTEXT_TOPICS),
+        "capability_topics": capability_topics,
+        "generic_shared_context_section_examples": GENERIC_SHARED_CONTEXT_SECTION_EXAMPLES,
+    }
+
+
+def _resolve_topic_ownership(topic_ownership: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not isinstance(topic_ownership, dict):
+        return build_default_topic_ownership([])
+
+    shared_context_owners = _dedupe_preserve_order(
+        [str(item).strip() for item in topic_ownership.get("shared_context_owner_capabilities") or [] if str(item).strip()]
+    )
+    if not shared_context_owners:
+        shared_context_owners = build_default_topic_ownership([])["shared_context_owner_capabilities"]
+
+    shared_context_topics = _dedupe_preserve_order(
+        [str(item).strip() for item in topic_ownership.get("shared_context_topics") or [] if str(item).strip()]
+    ) or list(DEFAULT_SHARED_CONTEXT_TOPICS)
+
+    raw_capability_topics = topic_ownership.get("capability_topics") or {}
+    capability_topics: Dict[str, List[str]] = {}
+    if isinstance(raw_capability_topics, dict):
+        for capability, topics in raw_capability_topics.items():
+            normalized_capability = str(capability).strip()
+            if not normalized_capability:
+                continue
+            capability_topics[normalized_capability] = _dedupe_preserve_order(
+                [str(item).strip() for item in topics or [] if str(item).strip()]
+            )
+
+    return {
+        "shared_context_owner_capabilities": shared_context_owners,
+        "shared_context_topics": shared_context_topics,
+        "capability_topics": capability_topics,
+        "generic_shared_context_section_examples": str(
+            topic_ownership.get("generic_shared_context_section_examples") or GENERIC_SHARED_CONTEXT_SECTION_EXAMPLES
+        ).strip(),
+    }
+
+
+def _owns_shared_context(capability: str, topic_ownership: Optional[Dict[str, Any]] = None) -> bool:
+    ownership = _resolve_topic_ownership(topic_ownership)
+    return capability in set(ownership["shared_context_owner_capabilities"])
+
+
+def _shared_context_owner_text(topic_ownership: Optional[Dict[str, Any]] = None) -> str:
+    ownership = _resolve_topic_ownership(topic_ownership)
+    return ", ".join(ownership["shared_context_owner_capabilities"])
+
+
+def _capability_topic_text(capability: str, topic_ownership: Optional[Dict[str, Any]] = None) -> str:
+    ownership = _resolve_topic_ownership(topic_ownership)
+    capability_topics = ownership.get("capability_topics") or {}
+    topics = capability_topics.get(capability) or DEFAULT_CAPABILITY_TOPICS.get(capability) or []
+    if not topics:
+        return ""
+    return ", ".join(topics)
+
+
+def _is_generic_shared_context_heading(heading: str) -> bool:
+    normalized = str(heading or "").strip().lower()
+    if not normalized:
+        return False
+    return any(marker in normalized for marker in GENERIC_SHARED_CONTEXT_HEADING_MARKERS)
+
+
+def _build_shared_context_prompt_block(capability: str, topic_ownership: Optional[Dict[str, Any]] = None) -> str:
+    owners = _shared_context_owner_text(topic_ownership)
+    owned_topics = _capability_topic_text(capability, topic_ownership)
+    owned_topics_line = f"\n- Your owned topics: {owned_topics}." if owned_topics else ""
+    if _owns_shared_context(capability, topic_ownership):
+        return (
+            "Shared Context Ownership:\n"
+            f"- You are one of the shared-context owners ({owners}).\n"
+            "- Keep shared background, scope, and overall narrative concise.\n"
+            "- Write shared context only when it directly helps the current file, and avoid repeating the same background in multiple sections."
+            f"{owned_topics_line}"
+        )
+
+    generic_examples = _resolve_topic_ownership(topic_ownership)["generic_shared_context_section_examples"]
+    return (
+        "Shared Context Ownership:\n"
+        f"- Shared background, scope, overall requirement overview, and cross-cutting narrative are owned by {owners}.\n"
+        "- Your job is to write only the expert-specific delta, decision, contract, constraint, or verification content.\n"
+        f"- Do not create standalone sections such as {generic_examples} unless this file explicitly owns them.\n"
+        "- If shared context is needed, compress it into one or two bullets and cite the upstream artifact or requirement section instead of restating it.\n"
+        "- Do not restate the requirement digest, coverage brief, or upstream artifact text verbatim."
+        f"{owned_topics_line}"
+    )
+
+
+def _build_shared_context_digest_section(capability: str, topic_ownership: Optional[Dict[str, Any]] = None) -> List[str]:
+    owners = _shared_context_owner_text(topic_ownership)
+    owned_topics = _capability_topic_text(capability, topic_ownership)
+    owned_topics_line = f"- Owned topics: {owned_topics}." if owned_topics else None
+    if _owns_shared_context(capability, topic_ownership):
+        return [
+            "## Shared Context Handling",
+            f"- This capability is allowed to own shared context together with {owners}.",
+            "- Keep project background, scope, and overall narrative concise, and avoid repeating them across multiple sections or files.",
+            *([owned_topics_line] if owned_topics_line else []),
+        ]
+
+    generic_examples = _resolve_topic_ownership(topic_ownership)["generic_shared_context_section_examples"]
+    return [
+        "## Shared Context Handling",
+        f"- Shared background, scope, and overall narrative are owned by {owners}.",
+        "- This brief is intentionally trimmed to the expert-specific delta.",
+        f"- Do not create standalone sections such as {generic_examples}.",
+        "- If you need more context, cite upstream artifacts or read the baseline files directly instead of rewriting the full requirement summary.",
+        *([owned_topics_line] if owned_topics_line else []),
+    ]
 
 # Default tools available to all subagents
 DEFAULT_READ_TOOLS = {"list_files", "extract_structure", "grep_search", "read_file_chunk", "extract_lookup_values"}
@@ -359,6 +533,166 @@ def _enforce_markdown_budget(content: str, total_budget: int) -> tuple[str, bool
     allowed = max(200, total_budget - len(note))
     trimmed = base_content[:allowed].rstrip()
     return f"{trimmed}{note}", True
+
+
+def _normalize_markdown_heading_key(heading: str) -> str:
+    text = str(heading or "").strip().lower()
+    text = re.sub(r"`[^`]+`", " ", text)
+    text = re.sub(r"[^a-z0-9\u4e00-\u9fff]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _extract_markdown_heading_titles(content: str) -> List[str]:
+    titles: List[str] = []
+    for raw_line in str(content or "").splitlines():
+        match = re.match(r"^\s*#{1,6}\s+(.+?)\s*$", raw_line)
+        if match:
+            title = match.group(1).strip()
+            if title:
+                titles.append(title)
+    return titles
+
+
+def _normalize_markdown_section_body_text(section_lines: List[str]) -> str:
+    if not section_lines:
+        return ""
+    body_text = "\n".join(section_lines[1:] if len(section_lines) > 1 else section_lines)
+    body_text = re.sub(r"^\s*[-*]\s+", "", body_text, flags=re.MULTILINE)
+    body_text = re.sub(r"^\s*\d+[.)]\s*", "", body_text, flags=re.MULTILINE)
+    body_text = re.sub(r"`[^`]+`", " ", body_text)
+    body_text = re.sub(r"[^a-zA-Z0-9\u4e00-\u9fff]+", " ", body_text)
+    return re.sub(r"\s+", " ", body_text).strip().lower()
+
+
+def _markdown_similarity_ratio(text_a: str, text_b: str) -> float:
+    normalized_a = str(text_a or "").strip()
+    normalized_b = str(text_b or "").strip()
+    if not normalized_a or not normalized_b:
+        return 0.0
+    if normalized_a == normalized_b:
+        return 1.0
+    shorter_length = min(len(normalized_a), len(normalized_b))
+    if shorter_length >= 80 and (normalized_a in normalized_b or normalized_b in normalized_a):
+        return 0.99
+    return SequenceMatcher(None, normalized_a[:4000], normalized_b[:4000]).ratio()
+
+
+def _summarize_markdown_sections_for_prompt(content: str, limit: int = 8) -> List[Dict[str, Any]]:
+    section_summaries: List[Dict[str, Any]] = []
+    current_heading: Optional[str] = None
+    current_lines: List[str] = []
+
+    for raw_line in str(content or "").splitlines():
+        match = re.match(r"^\s*#{1,6}\s+(.+?)\s*$", raw_line)
+        if match:
+            if current_heading is not None:
+                body = _normalize_markdown_section_body_text([f"## {current_heading}", *current_lines])
+                section_summaries.append(
+                    {
+                        "heading": current_heading,
+                        "body_summary": _summarize_value_for_prompt(body, max_string=160),
+                    }
+                )
+            current_heading = match.group(1).strip()
+            current_lines = []
+            continue
+        if current_heading is not None:
+            current_lines.append(raw_line)
+
+    if current_heading is not None:
+        body = _normalize_markdown_section_body_text([f"## {current_heading}", *current_lines])
+        section_summaries.append(
+            {
+                "heading": current_heading,
+                "body_summary": _summarize_value_for_prompt(body, max_string=160),
+            }
+        )
+
+    return section_summaries[:limit]
+
+
+def _dedupe_markdown_sections(content: str, existing_content: str = "") -> tuple[str, int]:
+    raw_content = str(content or "")
+    if not raw_content.strip():
+        return raw_content, 0
+
+    lines = raw_content.splitlines()
+    preamble: List[str] = []
+    sections: List[List[str]] = []
+    current_section: List[str] = []
+    in_section = False
+
+    for line in lines:
+        if re.match(r"^\s*#{1,6}\s+.+$", line):
+            if current_section:
+                sections.append(current_section)
+            current_section = [line]
+            in_section = True
+            continue
+        if in_section:
+            current_section.append(line)
+        else:
+            preamble.append(line)
+
+    if current_section:
+        sections.append(current_section)
+
+    if not sections:
+        return raw_content, 0
+
+    seen_heading_keys = {_normalize_markdown_heading_key(title) for title in _extract_markdown_heading_titles(existing_content)}
+    seen_section_bodies: List[str] = []
+    current_section_lines: List[str] = []
+    for line in str(existing_content or "").splitlines():
+        if re.match(r"^\s*#{1,6}\s+.+$", line):
+            if current_section_lines:
+                body_text = _normalize_markdown_section_body_text(current_section_lines)
+                if body_text:
+                    seen_section_bodies.append(body_text)
+            current_section_lines = [line]
+            continue
+        if current_section_lines:
+            current_section_lines.append(line)
+    if current_section_lines:
+        body_text = _normalize_markdown_section_body_text(current_section_lines)
+        if body_text:
+            seen_section_bodies.append(body_text)
+
+    kept_sections: List[List[str]] = []
+    removed_count = 0
+
+    for section_lines in sections:
+        match = re.match(r"^\s*#{1,6}\s+(.+?)\s*$", section_lines[0])
+        heading_key = _normalize_markdown_heading_key(match.group(1) if match else "")
+        body_text = _normalize_markdown_section_body_text(section_lines)
+        is_duplicate_heading = bool(heading_key and heading_key in seen_heading_keys)
+        is_near_duplicate_body = any(
+            _markdown_similarity_ratio(body_text, existing_body) >= 0.9
+            for existing_body in seen_section_bodies
+            if body_text and existing_body
+        )
+        if is_duplicate_heading or is_near_duplicate_body:
+            removed_count += 1
+            continue
+        if heading_key:
+            seen_heading_keys.add(heading_key)
+        if body_text:
+            seen_section_bodies.append(body_text)
+        kept_sections.append(section_lines)
+
+    rebuilt: List[str] = []
+    if preamble and not existing_content.strip():
+        rebuilt.extend(preamble)
+
+    for section_lines in kept_sections:
+        if rebuilt and rebuilt[-1].strip():
+            rebuilt.append("")
+        rebuilt.extend(section_lines)
+
+    rebuilt_text = "\n".join(rebuilt).strip()
+    if rebuilt_text:
+        rebuilt_text += "\n"
+    return rebuilt_text, removed_count
 
 
 def _normalize_output_plan(
@@ -737,6 +1071,7 @@ def _score_section_for_capability(
     section: Dict[str, Any],
     capability: str,
     expected_files: List[str],
+    topic_ownership: Optional[Dict[str, Any]] = None,
 ) -> int:
     heading = str(section.get("heading") or "")
     body = str(section.get("body") or "")
@@ -747,6 +1082,9 @@ def _score_section_for_capability(
     for marker in priority_headings:
         if marker in heading:
             score += 4
+
+    if not _owns_shared_context(capability, topic_ownership) and _is_generic_shared_context_heading(heading):
+        score -= 3
 
     for keyword in _capability_keywords(capability):
         if keyword and keyword.lower() in combined.lower():
@@ -766,6 +1104,7 @@ def _select_focus_sections(
     expected_files: List[str],
     *,
     max_sections: int = 6,
+    topic_ownership: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     sections = _extract_markdown_sections(requirement_text)
     if not sections:
@@ -775,7 +1114,7 @@ def _select_focus_sections(
         (
             {
                 **section,
-                "score": _score_section_for_capability(section, capability, expected_files),
+                "score": _score_section_for_capability(section, capability, expected_files, topic_ownership),
             }
             for section in sections
         ),
@@ -979,7 +1318,13 @@ def _build_coverage_brief(
     output_plan: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     requirement_text = str(payload.get("requirement") or "").strip()
-    focus_sections = _select_focus_sections(requirement_text, capability, expected_files)
+    topic_ownership = payload.get("topic_ownership") if isinstance(payload.get("topic_ownership"), dict) else None
+    focus_sections = _select_focus_sections(
+        requirement_text,
+        capability,
+        expected_files,
+        topic_ownership=topic_ownership,
+    )
     candidate_output_files = _normalize_output_candidate_list(candidate_output_files or expected_files)
     output_plan = output_plan or _default_output_plan(
         capability,
@@ -1034,6 +1379,8 @@ def _build_requirement_digest(
     output_plan: Optional[Dict[str, Any]] = None,
 ) -> str:
     requirement_text = str(payload.get("requirement") or "").strip()
+    topic_ownership = payload.get("topic_ownership") if isinstance(payload.get("topic_ownership"), dict) else None
+    is_shared_context_owner = _owns_shared_context(capability, topic_ownership)
     coverage_brief = _build_coverage_brief(
         payload,
         capability,
@@ -1052,7 +1399,7 @@ def _build_requirement_digest(
                 headings.append(heading.strip())
 
     lines = [
-        "# Requirement Digest",
+        "# Requirement Digest" if is_shared_context_owner else "# Expert Delta Brief",
         "",
         f"- Project: {payload.get('project_id') or payload.get('project_name') or 'unknown'}",
         f"- Version: {payload.get('version') or 'unknown'}",
@@ -1068,6 +1415,8 @@ def _build_requirement_digest(
         lines.append(f"- Candidate outputs: {', '.join(candidate_output_files)}")
     if expected_files:
         lines.append(f"- Selected outputs: {', '.join(expected_files)}")
+
+    lines.extend(["", *_build_shared_context_digest_section(capability, topic_ownership)])
 
     skipped_outputs = coverage_brief.get("skipped_outputs") or []
     if skipped_outputs:
@@ -1126,7 +1475,7 @@ def _build_requirement_digest(
                 lines.append(f"### {file_name}")
                 lines.extend(f"- {item}" for item in items[:8])
 
-    if headings:
+    if headings and is_shared_context_owner:
         lines.extend(
             [
                 "",
@@ -1137,7 +1486,7 @@ def _build_requirement_digest(
         if len(headings) > 25:
             lines.append(f"- ... ({len(headings) - 25} more headings omitted)")
 
-    focus_sections = coverage_brief.get("focus_sections") or []
+    focus_sections = (coverage_brief.get("focus_sections") or [])[: (6 if is_shared_context_owner else 3)]
     if focus_sections:
         lines.extend(["", "## Must-Cover Sections"])
         for section in focus_sections:
@@ -1147,7 +1496,7 @@ def _build_requirement_digest(
             if points:
                 lines.extend(f"- {point}" for point in points)
             excerpt = str(section.get("excerpt") or "").strip()
-            if excerpt:
+            if excerpt and is_shared_context_owner:
                 lines.append(excerpt)
 
     for title, key in (
@@ -1160,7 +1509,7 @@ def _build_requirement_digest(
         if items:
             lines.extend(["", f"## {title}", *[f"- {item}" for item in items]])
 
-    if requirement_text:
+    if requirement_text and is_shared_context_owner:
         excerpt_limit = 2400
         excerpt = requirement_text[:excerpt_limit]
         if len(requirement_text) > excerpt_limit:
@@ -1172,7 +1521,7 @@ def _build_requirement_digest(
                 excerpt,
             ]
         )
-    else:
+    elif is_shared_context_owner:
         lines.extend(
             [
                 "",
@@ -1935,6 +2284,7 @@ Rules:
 5. The downstream ReAct loop will gather evidence around the selected outputs, so make the plan concrete.
 6. Keep each file concise and scoped to this expert's responsibility; avoid absorbing downstream experts' detailed design work.
 7. Respect the approximate per-file char budgets shown above when choosing scope and must-cover items.
+8. Avoid planning files that would all need the same background, scope, or generic requirement-overview sections; shared context should live in one concise place, not every deliverable.
 
 Return JSON in artifacts.output_plan:
 {{
@@ -2255,6 +2605,13 @@ def build_targeted_artifact_prompt(
     must_cover = section_focus or (output_plan.get("must_cover_by_file", {}).get(target_file) or [])
     evidence_focus = output_plan.get("evidence_focus") or []
     skipped_outputs = output_plan.get("skipped_outputs") or []
+    topic_ownership = output_plan.get("topic_ownership") if isinstance(output_plan.get("topic_ownership"), dict) else None
+    shared_context_block = _build_shared_context_prompt_block(capability, topic_ownership)
+    opening_guardrail = (
+        "If you include shared context, write it once and keep it short."
+        if _owns_shared_context(capability, topic_ownership)
+        else "Start directly with expert-specific sections. Do not open with a long project background or requirement overview."
+    )
     batch_char_budget = total_char_budget if batch_total <= 1 else max(800, total_char_budget // max(1, batch_total))
     custom_section = ""
     if prompt_instructions:
@@ -2299,6 +2656,8 @@ This file must cover:
 Evidence focus for the expert:
 {evidence_focus_block}
 
+{shared_context_block}
+
 {template_section}
 {custom_section}
 Rules:
@@ -2307,9 +2666,14 @@ Rules:
 3. Produce deliverable-ready content, not meta commentary.
 4. Keep this batch within about {batch_char_budget} characters, and keep the full `{target_file}` within about {total_char_budget} characters.
 5. {_scope_boundary_note(capability)}
-6. Return only the fragment content for `{target_file}` in the artifact payload.
-7. Do not attempt to cover sections outside the current batch focus.
-8. If this is not the first batch, continue the same file naturally and avoid repeating sections already covered in the current artifact.
+6. {opening_guardrail}
+7. Do not restate the requirement digest, coverage brief, or upstream artifacts verbatim. Convert them into expert-specific deltas and cite the source briefly when needed.
+8. If shared context is needed, keep it to at most two bullets before moving to expert-specific design.
+9. Return only the fragment content for `{target_file}` in the artifact payload.
+10. Do not attempt to cover sections outside the current batch focus.
+11. If this is not the first batch, continue the same file naturally and avoid repeating sections already covered in the current artifact.
+12. Do not emit a markdown heading that already exists in `current_artifact_headings` unless you are intentionally refining that exact section in place.
+13. Also avoid creating a new section whose body is semantically very close to any item in `current_artifact_section_summaries`, even if you change the heading wording.
 """.strip()
 
 
@@ -2344,6 +2708,8 @@ def default_generate_artifact_for_output(
     observations_summary = _read_workspace_json(artifacts_dir / workspace_paths["grounded_observations_summary"])
     current_artifact_path = artifacts_dir / target_file
     current_artifact = current_artifact_path.read_text(encoding="utf-8") if current_artifact_path.exists() else ""
+    current_artifact_headings = _extract_markdown_heading_titles(current_artifact)[:16]
+    current_artifact_section_summaries = _summarize_markdown_sections_for_prompt(current_artifact, limit=8)
     compact_output_plan = _compact_output_plan_for_target_file(output_plan, target_file)
     compact_coverage_brief = _compact_coverage_brief_for_target_file(coverage_brief, target_file)
 
@@ -2367,6 +2733,8 @@ def default_generate_artifact_for_output(
             ),
             "coverage_brief": compact_coverage_brief,
             "grounded_observations_summary": _compact_grounded_observations_summary_for_final_prompt(observations_summary),
+            "current_artifact_headings": current_artifact_headings,
+            "current_artifact_section_summaries": current_artifact_section_summaries,
             "current_artifact": _summarize_value_for_prompt(current_artifact, max_string=1600) if current_artifact else "",
         },
         ensure_ascii=False,
@@ -2421,6 +2789,8 @@ def build_react_system_prompt(
     """
     selected_outputs = _normalize_output_candidate_list(selected_outputs or [])
     output_plan = output_plan or {}
+    topic_ownership = output_plan.get("topic_ownership") if isinstance(output_plan.get("topic_ownership"), dict) else None
+    shared_context_block = _build_shared_context_prompt_block(capability, topic_ownership)
     tool_contract_section = _build_tool_contract_section(tools_allowed, candidate_files)
     tools_section = f"""
 Available tools:
@@ -2496,6 +2866,8 @@ Choose one next action at a time to ground design artifacts.
 Scope boundary:
 - {_scope_boundary_note(capability)}
 
+{shared_context_block}
+
 {workflow_section}{memory_section}
 Strategy:
 1. Ground quickly: Anchor on the candidate baseline file immediately instead of searching for it by filename.
@@ -2518,6 +2890,8 @@ Rules:
 8. Only use `actions` for short read-only batches such as `read_file_chunk`, `extract_structure`, `grep_search`, or `extract_lookup_values`.
 9. Never batch `write_file`, `patch_file`, `run_command`, `clone_repository`, `query_database`, or `query_knowledge_base`; those must be emitted as a single action step.
 10. Later actions in the same batch cannot see outputs from earlier actions in that batch, so only batch independent or low-risk steps.
+11. Do not gather evidence merely to recreate generic shared-context sections such as {GENERIC_SHARED_CONTEXT_SECTION_EXAMPLES} when they are already owned upstream.
+12. When reading upstream artifacts, extract only the expert-specific delta you need for the selected outputs instead of planning to restate large blocks verbatim.
 
 Return JSON in artifacts.decision:
 {{
@@ -2541,6 +2915,7 @@ def build_final_artifacts_prompt(
     prompt_instructions: str,
     expected_files: List[str],
     templates: Dict[str, str],
+    topic_ownership: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
     Build the final artifacts generation prompt.
@@ -2570,16 +2945,27 @@ def build_final_artifacts_prompt(
 Additional Guidelines:
 {prompt_instructions[:1000]}
 """
+    shared_context_block = _build_shared_context_prompt_block(capability, topic_ownership)
+    opening_guardrail = (
+        "If you include shared context, write it once and keep it short."
+        if _owns_shared_context(capability, topic_ownership)
+        else "Start directly with expert-specific sections. Do not prepend a generic project background, goal, or scope section."
+    )
     
     system_prompt = f"""
 You are a senior designer for {capability}.
 Generate {', '.join(expected_files)} only from grounded evidence collected during the ReAct loop.
+
+{shared_context_block}
 
 Requirements:
 1. Reflect only content supported by the observations.
 2. Use consistent naming conventions.
 3. Include enough structure for downstream consumers.
 4. Use the templates as style references.
+5. {_scope_boundary_note(capability)}
+6. {opening_guardrail}
+7. Do not restate shared context or upstream artifacts verbatim; synthesize them and cite briefly when needed.
 
 {templates_block}
 {custom_section}
@@ -2594,9 +2980,11 @@ def build_finalization_system_prompt(
     expected_files: List[str],
     candidate_files: List[str],
     workspace_paths: Dict[str, str],
+    topic_ownership: Optional[Dict[str, Any]] = None,
 ) -> str:
     tool_contract_section = _build_tool_contract_section(["write_file", "patch_file"], candidate_files)
     expected_block = "\n".join(f"- {file_name}" for file_name in expected_files)
+    shared_context_block = _build_shared_context_prompt_block(capability, topic_ownership)
     workspace_block = "\n".join(
         [
             f"- workspace index: artifacts/{workspace_paths['workspace_index']}",
@@ -2626,6 +3014,8 @@ Expected artifacts:
 Workspace files you should use first:
 {workspace_block}
 
+{shared_context_block}
+
 {custom_section}
 Available tools:
 - list_files / read_file_chunk / grep_search / extract_structure (read project files and workspace files)
@@ -2640,7 +3030,9 @@ Rules:
 4. You may patch an existing final artifact when refining it.
 5. Use `write_file` for new files and `patch_file` for targeted corrections.
 6. Batch only read-only actions. Never batch `write_file` or `patch_file`.
-7. Set `done=true` only when every expected artifact exists under `artifacts/` and is materially complete.
+7. For non-owner artifacts, start directly with expert-specific sections. Do not recreate generic background, scope, or goal sections from the digest.
+8. Do not copy large blocks from the requirement digest or upstream artifacts. Synthesize and cite them briefly.
+9. Set `done=true` only when every expected artifact exists under `artifacts/` and is materially complete.
 
 Return JSON in artifacts.decision:
 {{
@@ -2681,6 +3073,7 @@ def default_next_finalization_decision(
         expected_files=expected_files,
         candidate_files=candidate_files,
         workspace_paths=workspace_paths,
+        topic_ownership=payload.get("topic_ownership") if isinstance(payload.get("topic_ownership"), dict) else None,
     )
 
     payload_summary = _compact_payload_for_finalization_prompt(payload, expected_files)
@@ -2855,6 +3248,7 @@ def default_generate_final_artifacts(
         prompt_instructions=prompt_instructions,
         expected_files=expected_files,
         templates=templates,
+        topic_ownership=payload.get("topic_ownership") if isinstance(payload.get("topic_ownership"), dict) else None,
     )
     
     project_root = _get_runtime_project_root(payload)
@@ -3097,6 +3491,11 @@ async def run_dynamic_subagent(
 
     payload = json.loads(baseline_path.read_text(encoding="utf-8-sig"))
     payload["candidate_files"] = _resolve_candidate_files(payload)
+    payload["topic_ownership"] = _resolve_topic_ownership(
+        payload.get("topic_ownership")
+        if isinstance(payload.get("topic_ownership"), dict)
+        else build_default_topic_ownership(payload.get("active_agents") or [])
+    )
     payload.setdefault(
         "project_layout",
         {
@@ -3163,6 +3562,9 @@ async def run_dynamic_subagent(
         output_plan,
         capability=capability,
         candidate_outputs=candidate_output_files,
+    )
+    output_plan["topic_ownership"] = payload.get("topic_ownership") or build_default_topic_ownership(
+        payload.get("active_agents") or []
     )
     expected_files = _normalize_output_candidate_list(output_plan.get("selected_outputs") or [])
     payload["candidate_output_files"] = candidate_output_files
@@ -3593,6 +3995,11 @@ async def run_dynamic_subagent(
             for artifact_name in expected_files:
                 artifact_content = artifacts_output.get(artifact_name, "")
                 if Path(artifact_name).suffix.lower() == ".md":
+                    artifact_content, removed_sections = _dedupe_markdown_sections(artifact_content)
+                    if removed_sections:
+                        history_updates.append(
+                            f"[{capability}] Final artifact `{artifact_name}` removed {removed_sections} duplicate markdown section(s) before persistence."
+                        )
                     artifact_content, was_trimmed = _enforce_markdown_budget(
                         artifact_content,
                         _resolve_output_char_budget(state, capability, artifact_name),
@@ -3705,10 +4112,29 @@ async def run_dynamic_subagent(
                             final_reasoning_sections.append(fallback_output.reasoning)
 
                     current_content = target_path.read_text(encoding="utf-8") if target_path.exists() else ""
+                    if Path(target_file).suffix.lower() == ".md":
+                        generated_content, removed_sections = _dedupe_markdown_sections(
+                            generated_content,
+                            current_content,
+                        )
+                        if removed_sections:
+                            history_updates.append(
+                                f"[{capability}] Finalization step {step}: removed {removed_sections} duplicate markdown section(s) from `{target_file}` batch {batch.get('batch_index')}/{batch.get('batch_total')}."
+                            )
+                        if not generated_content.strip() and current_content:
+                            history_updates.append(
+                                f"[{capability}] Finalization step {step}: skipped `{target_file}` batch {batch.get('batch_index')}/{batch.get('batch_total')}` because it only repeated existing sections."
+                            )
+                            continue
                     is_append_batch = bool(current_content) and int(batch.get("batch_total") or 1) > 1 and int(batch.get("batch_index") or 1) > 1
                     if is_append_batch:
                         new_content = f"{current_content.rstrip()}\n\n{generated_content.lstrip()}"
                         if Path(target_file).suffix.lower() == ".md":
+                            new_content, removed_sections = _dedupe_markdown_sections(new_content)
+                            if removed_sections:
+                                history_updates.append(
+                                    f"[{capability}] Finalization step {step}: removed {removed_sections} duplicate markdown section(s) after merging `{target_file}`."
+                                )
                             new_content, was_trimmed = _enforce_markdown_budget(new_content, artifact_char_budget)
                             if was_trimmed:
                                 history_updates.append(

@@ -24,6 +24,7 @@ error_handling:
 tools:
   allowed:
     - run_command
+    - validate_artifacts
 outputs:
   expected:
     - validation-report.md
