@@ -2211,6 +2211,24 @@ def _compact_payload_for_prompt(payload: Dict[str, Any], capability: str, stage:
             max_dict_items=min(profile["max_dict_items"], 8),
         )
 
+    if payload.get("human_answers"):
+        compact["human_answers"] = _summarize_value_for_prompt(
+            payload["human_answers"],
+            max_depth=min(profile["max_depth"], 3),
+            max_string=min(profile["max_string"], 500),
+            max_list_items=min(profile["max_list_items"], 6),
+            max_dict_items=min(profile["max_dict_items"], 8),
+        )
+
+    if payload.get("asset_insights"):
+        compact["asset_insights"] = _summarize_value_for_prompt(
+            payload["asset_insights"],
+            max_depth=min(profile["max_depth"], 2),
+            max_string=min(profile["max_string"], 150),
+            max_list_items=min(profile["max_list_items"], 3),
+            max_dict_items=min(profile["max_dict_items"], 6),
+        )
+
     if payload.get("output_plan"):
         compact["output_plan"] = _summarize_value_for_prompt(
             payload["output_plan"],
@@ -2647,21 +2665,10 @@ def _build_generation_batches(target_file: str, output_plan: Dict[str, Any]) -> 
 
 
 def _compact_template_hint_for_prompt(template_hint: str) -> str:
+    """Return template hint as-is; templates carry structural meaning and must not be truncated."""
     if not template_hint.strip():
         return ""
-    lines: List[str] = []
-    for raw_line in template_hint.splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("```") or line.startswith("%%"):
-            continue
-        if line.startswith("#") or line.startswith("##") or line.startswith("###"):
-            lines.append(line)
-        if len(lines) >= 8:
-            break
-    if not lines:
-        compact = _summarize_value_for_prompt(template_hint, max_string=280)
-        return str(compact)
-    return "\n".join(lines)
+    return template_hint
 
 
 def _is_timeout_exception(exc: Exception) -> bool:
@@ -3023,8 +3030,18 @@ Return JSON in artifacts.decision:
     {{"tool_name": "read_file_chunk", "tool_input": {{"path": "{candidate_files[0] if candidate_files else 'baseline/original-requirements.md'}", "start_line": 1, "end_line": 120}}}},
     {{"tool_name": "extract_structure", "tool_input": {{"files": ["{candidate_files[0] if candidate_files else 'baseline/original-requirements.md'}"]}}}}
   ],
-  "evidence_note": "what this step should confirm or produce"
+  "evidence_note": "what this step should confirm or produce",
+  "needs_human": false,
+  "human_question": "",
+  "human_context": {{}}
 }}
+
+Human-in-the-loop:
+- If you encounter a critical information gap or ambiguity in the requirement that would materially affect design quality, set needs_human=true.
+- Provide a focused human_question (one question at a time) and optional human_context with suggested options.
+- Only use this when the gap cannot be resolved by reading available files or querying configured assets.
+- Do NOT set needs_human for minor uncertainties or nice-to-have details.
+- When needs_human is true, set done=true as well since execution must pause.
 """.strip()
     
     return system_prompt
@@ -3053,9 +3070,7 @@ def build_final_artifacts_prompt(
     for file_name in expected_files:
         template_content = templates.get(file_name, "")
         if template_content:
-            # Truncate long templates
-            preview = template_content[:800] if len(template_content) > 800 else template_content
-            template_sections.append(f"[{file_name}]\n{preview}")
+            template_sections.append(f"[{file_name}]\n{template_content}")
     
     templates_block = "\n\n".join(template_sections)
     
@@ -3063,7 +3078,7 @@ def build_final_artifacts_prompt(
     if prompt_instructions:
         custom_section = f"""
 Additional Guidelines:
-{prompt_instructions[:1000]}
+{prompt_instructions}
 """
     shared_context_block = _build_shared_context_prompt_block(capability, topic_ownership)
     opening_guardrail = (
@@ -3299,11 +3314,11 @@ def default_next_react_decision(
         output_plan=output_plan,
     )
     
-    # Build template hints
+    # Build template hints — pass full content to preserve structural meaning
     template_hints = {}
     for name, content in templates.items():
         if content:
-            template_hints[name.replace(".", "_")] = content[:400]
+            template_hints[name.replace(".", "_")] = content
     
     user_prompt = json.dumps(
         {
@@ -3641,6 +3656,19 @@ async def run_dynamic_subagent(
         },
     )
     payload["_runtime_project_root"] = str(project_path)
+
+    # Inject human answers for this capability (from human-in-the-loop resumption)
+    human_answers = state.get("human_answers") or {}
+    capability_answers = human_answers.get(capability) or []
+    if capability_answers:
+        from graphs.nodes import _summarize_human_inputs
+        payload["human_answers"] = _summarize_human_inputs(capability_answers)
+        print(f"[DEBUG] {capability}: injected {len(capability_answers)} human answer(s) into payload")
+    # Also inject human_feedback if present
+    human_feedback = state.get("human_feedback", "")
+    if human_feedback and capability_answers:
+        payload["human_feedback"] = human_feedback
+
     history_updates = []
     runtime_llm_settings = resolve_runtime_llm_settings(state.get("design_context"))
     configured_assets = payload.get("configured_assets") if isinstance(payload.get("configured_assets"), dict) else None
@@ -3879,6 +3907,42 @@ async def run_dynamic_subagent(
                     f"[{capability}] ReAct step {step}: attempted to write final artifact `{final_artifact_target}` during ReAct; switching to final generation."
                 )
 
+            # Human-in-the-loop: detect needs_human from LLM decision
+            expert_needs_human = bool(decision.get("needs_human"))
+            expert_question = str(decision.get("human_question") or "").strip()
+            expert_context = decision.get("human_context") if isinstance(decision.get("human_context"), dict) else {}
+            if expert_needs_human and not expert_question:
+                expert_question = (
+                    f"[{capability}] encountered an information gap during design that requires human clarification "
+                    f"before proceeding. Please review the current evidence and provide guidance."
+                )
+            if expert_needs_human and expert_question:
+                history_updates.append(
+                    f"[{capability}] ReAct step {step}: requesting human clarification - {expert_question[:200]}"
+                )
+                # Normalize the human_context for the interrupt
+                from graphs.nodes import _normalize_interrupt_context
+                normalized_ctx = _normalize_interrupt_context(expert_context)
+                from graphs.nodes import _build_pending_interrupt
+                pending_interrupt = _build_pending_interrupt(
+                    node_id=state.get("current_task_id") or capability,
+                    node_type=capability,
+                    question=expert_question,
+                    context=normalized_ctx,
+                    resume_target=capability,
+                    interrupt_kind="ask_human",
+                )
+                return {
+                    "history": history_updates,
+                    "task_queue": update_task_status_fn(state["task_queue"], capability, "waiting_human"),
+                    "human_intervention_required": True,
+                    "waiting_reason": expert_question,
+                    "pending_interrupt": pending_interrupt,
+                    "run_status": "waiting_human",
+                    "last_worker": capability,
+                    "current_node": capability,
+                    "tool_results": tool_results,
+                }
 
             if decision.get("done"):
                 history_updates.append(f"[{capability}] ReAct step {step}: evidence is sufficient, moving to final generation.")

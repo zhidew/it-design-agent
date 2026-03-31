@@ -87,6 +87,195 @@ def _build_project_asset_context(project_id: str) -> Dict[str, Any]:
     return asset_context
 
 
+def _query_asset_insights(project_id: str, requirement_text: str) -> Dict[str, Any]:
+    """Actively query three repositories (database, code repo, knowledge base) to gather
+    content insights during the Planner phase. Results are shared with downstream experts
+    via baseline/requirements.json.
+
+    This bridges the gap where the original system only injected asset *metadata* (names,
+    types) but never probed the actual content to inform planning decisions.
+
+    Returns a dict with:
+      - database_insights / knowledge_base_insights / repository_insights: actual query results (only when queries succeed)
+      - query_status: per-asset-type status ("skipped", "success", "partial_failure", "failed")
+      - query_errors: list of error messages for downstream awareness
+    """
+    insights: Dict[str, Any] = {
+        "query_status": {},  # {"database": "skipped"|"success"|"partial_failure"|"failed", ...}
+        "query_errors": [],
+    }
+    root_dir = BASE_DIR / "projects" / project_id / "_planner_probe"
+    root_dir.mkdir(parents=True, exist_ok=True)
+
+    # --- 1. Database: probe table lists ---
+    try:
+        databases = metadata_db.list_databases(project_id)
+        if not databases:
+            insights["query_status"]["database"] = "skipped"
+            insights["query_errors"].append("database: no databases configured for this project")
+        else:
+            db_summaries = []
+            error_count = 0
+            for db in databases[:5]:
+                db_id = db["id"]
+                try:
+                    from graphs.tools.query_database import query_database as qdb
+                    result = qdb(
+                        root_dir,
+                        {"project_id": project_id, "db_id": db_id, "query_type": "list_tables"},
+                    )
+                    tables = result.get("tables") or []
+                    db_summaries.append({
+                        "id": db_id,
+                        "name": db.get("name"),
+                        "type": db.get("type"),
+                        "table_count": len(tables),
+                        "table_names": [t.get("table_name") or t.get("name") for t in tables[:20]],
+                    })
+                except Exception as exc:
+                    error_count += 1
+                    insights["query_errors"].append(f"database:{db_id} ({db.get('name')}): {exc}")
+            if db_summaries:
+                insights["database_insights"] = db_summaries
+            if error_count == 0:
+                insights["query_status"]["database"] = "success"
+            elif error_count == len(databases[:5]):
+                insights["query_status"]["database"] = "failed"
+            else:
+                insights["query_status"]["database"] = "partial_failure"
+    except Exception as exc:
+        insights["query_status"]["database"] = "failed"
+        insights["query_errors"].append(f"database_overview: {exc}")
+
+    # --- 2. Knowledge Base: search for requirement-relevant terms ---
+    try:
+        knowledge_bases = metadata_db.list_knowledge_bases(project_id)
+        if not knowledge_bases:
+            insights["query_status"]["knowledge_base"] = "skipped"
+            insights["query_errors"].append("knowledge_base: no knowledge bases configured for this project")
+        else:
+            kb_summaries = []
+            # Extract meaningful keywords from requirement for KB search
+            import re
+            keywords = re.findall(r'[\u4e00-\u9fff]{2,}|[a-zA-Z][a-zA-Z0-9_\-]{2,}', requirement_text)
+            search_keywords = keywords[:5] if keywords else ["设计"]
+            error_count = 0
+            for kb in knowledge_bases[:3]:
+                kb_id = kb["id"]
+                try:
+                    from graphs.tools.query_knowledge_base import query_knowledge_base as qkb
+                    for kw in search_keywords[:3]:
+                        result = qkb(
+                            root_dir,
+                            {
+                                "project_id": project_id,
+                                "kb_id": kb_id,
+                                "query_type": "search_design_docs",
+                                "keyword": kw,
+                                "limit": 3,
+                            },
+                        )
+                        matches = result.get("knowledge_bases") or []
+                        for kb_result in matches:
+                            kb_matches = kb_result.get("matches") or []
+                            if kb_matches:
+                                kb_summaries.append({
+                                    "kb_id": kb_id,
+                                    "kb_name": kb_result.get("kb_name"),
+                                    "search_keyword": kw,
+                                    "match_count": len(kb_matches),
+                                    "top_matches": [
+                                        {
+                                            "title": m.get("title") or m.get("name"),
+                                            "type": m.get("type"),
+                                            "feature_id": m.get("feature_id"),
+                                        }
+                                        for m in kb_matches[:3]
+                                    ],
+                                })
+                                break  # One hit per KB is enough for planner context
+                except Exception as exc:
+                    error_count += 1
+                    insights["query_errors"].append(f"knowledge_base:{kb_id} ({kb.get('name')}): {exc}")
+            if kb_summaries:
+                insights["knowledge_base_insights"] = kb_summaries
+            if error_count == 0:
+                insights["query_status"]["knowledge_base"] = "success"
+            elif error_count == len(knowledge_bases[:3]):
+                insights["query_status"]["knowledge_base"] = "failed"
+            else:
+                insights["query_status"]["knowledge_base"] = "partial_failure"
+    except Exception as exc:
+        insights["query_status"]["knowledge_base"] = "failed"
+        insights["query_errors"].append(f"knowledge_base_overview: {exc}")
+
+    # --- 3. Code Repository: list repo structure hints ---
+    try:
+        repositories = metadata_db.list_repositories(project_id)
+        if not repositories:
+            insights["query_status"]["repository"] = "skipped"
+            insights["query_errors"].append("repository: no repositories configured for this project")
+        else:
+            repo_summaries = []
+            error_count = 0
+            for repo in repositories[:3]:
+                repo_id = repo["id"]
+                try:
+                    from graphs.tools.clone_repository import clone_repository as cr
+                    result = cr(
+                        root_dir,
+                        {"project_id": project_id, "repo_id": repo_id},
+                    )
+                    cloned_path = result.get("project_relative_path") or result.get("repo_path")
+                    if cloned_path:
+                        repo_abs = (BASE_DIR / "projects" / project_id / cloned_path).resolve()
+                        if repo_abs.exists():
+                            top_dirs = sorted(
+                                [d.name for d in repo_abs.iterdir() if d.is_dir() and not d.name.startswith(".")]
+                            )[:15]
+                            repo_summaries.append({
+                                "id": repo_id,
+                                "name": repo.get("name"),
+                                "branch": repo.get("branch"),
+                                "top_level_dirs": top_dirs,
+                            })
+                        else:
+                            error_count += 1
+                            insights["query_errors"].append(
+                                f"repository:{repo_id} ({repo.get('name')}): cloned path does not exist: {cloned_path}"
+                            )
+                    else:
+                        error_count += 1
+                        insights["query_errors"].append(
+                            f"repository:{repo_id} ({repo.get('name')}): clone returned no path"
+                        )
+                except Exception as exc:
+                    # Clone may fail due to auth, network, etc. - record but don't crash
+                    error_count += 1
+                    insights["query_errors"].append(f"repository:{repo_id} ({repo.get('name')}): {exc}")
+            if repo_summaries:
+                insights["repository_insights"] = repo_summaries
+            if error_count == 0:
+                insights["query_status"]["repository"] = "success"
+            elif error_count == len(repositories[:3]):
+                insights["query_status"]["repository"] = "failed"
+            else:
+                insights["query_status"]["repository"] = "partial_failure"
+    except Exception as exc:
+        insights["query_status"]["repository"] = "failed"
+        insights["query_errors"].append(f"repository_overview: {exc}")
+
+    # Clean up probe directory
+    try:
+        import shutil
+        if root_dir.exists():
+            shutil.rmtree(root_dir, ignore_errors=True)
+    except Exception:
+        pass
+
+    return insights
+
+
 def _get_supported_agent_ids() -> set:
     """Get supported agent IDs from AgentRegistry (dynamic).
     
@@ -897,6 +1086,13 @@ async def planner_node(state: DesignState) -> Dict[str, Any]:
     human_inputs = _summarize_human_inputs(planner_answers, human_feedback)
     asset_context = _build_project_asset_context(project_id)
 
+    # Actively query three repositories for content insights
+    asset_insights = _query_asset_insights(project_id, requirement_text)
+    if asset_insights.get("query_errors"):
+        for err in asset_insights["query_errors"][:5]:
+            print(f"[DEBUG] Planner asset insight error: {err}")
+    print(f"[DEBUG] Planner asset insights keys: {list(asset_insights.keys())}")
+
     # Get dynamic agent descriptions from AgentRegistry, filtered by project configuration
     from registry.agent_registry import AgentRegistry
     from services.db_service import metadata_db
@@ -956,6 +1152,57 @@ Output JSON format:
     )
     if asset_context:
         user_prompt += f"\nConfigured Assets: {json.dumps(asset_context, ensure_ascii=False)}"
+    # Inject three-repository content insights for deeper analysis
+    insight_sections = []
+    query_status = asset_insights.get("query_status", {})
+    query_errors = asset_insights.get("query_errors", [])
+
+    # Summarize which assets were queried and their statuses
+    status_summary = []
+    asset_label = {"database": "Database", "knowledge_base": "Knowledge Base", "repository": "Code Repository"}
+    for asset_key, label in asset_label.items():
+        st = query_status.get(asset_key, "skipped")
+        if st == "skipped":
+            status_summary.append(f"  - {label}: NOT CONFIGURED (no {asset_key.replace('_', ' ')} set up for this project)")
+        elif st == "success":
+            status_summary.append(f"  - {label}: queried successfully")
+        elif st == "partial_failure":
+            status_summary.append(f"  - {label}: PARTIAL FAILURE (some queries succeeded, some failed)")
+        elif st == "failed":
+            status_summary.append(f"  - {label}: QUERY FAILED (all queries errored, do NOT waste effort retrying)")
+    if status_summary:
+        insight_sections.append("Three-Repository Query Status:")
+        insight_sections.extend(status_summary)
+
+    if asset_insights.get("database_insights"):
+        insight_sections.append("Database Insights (queried table structures):")
+        for db in asset_insights["database_insights"]:
+            insight_sections.append(
+                f"  - DB '{db['name']}' ({db['type']}): {db['table_count']} tables: {', '.join(db['table_names'][:10])}"
+            )
+    if asset_insights.get("knowledge_base_insights"):
+        insight_sections.append("Knowledge Base Insights (searched for requirement-relevant content):")
+        for kb in asset_insights["knowledge_base_insights"]:
+            matches_summary = ", ".join(
+                m.get("title") or m.get("feature_id") or ""
+                for m in kb.get("top_matches", [])
+            )[:200]
+            insight_sections.append(
+                f"  - KB '{kb['kb_name']}' (keyword '{kb['search_keyword']}'): {kb['match_count']} matches. Top: {matches_summary}"
+            )
+    if asset_insights.get("repository_insights"):
+        insight_sections.append("Code Repository Insights (top-level structure):")
+        for repo in asset_insights["repository_insights"]:
+            insight_sections.append(
+                f"  - Repo '{repo['name']}' (branch {repo['branch']}): dirs: {', '.join(repo['top_level_dirs'][:10])}"
+            )
+    # Append query errors so experts know which resources are unavailable
+    if query_errors:
+        insight_sections.append("Query Errors (experts should avoid retrying these):")
+        for err_msg in query_errors[:6]:
+            insight_sections.append(f"  - {err_msg}")
+    if insight_sections:
+        user_prompt += "\n\n### Three-Repository Content Insights\n" + "\n".join(insight_sections)
     if human_feedback:
         user_prompt += f"\nHuman Revision Feedback: {human_feedback}"
     if human_inputs:
@@ -1057,6 +1304,12 @@ Output JSON format:
         }
         if asset_context:
             baseline_payload["configured_assets"] = asset_context
+        if asset_insights and any(k.endswith("_insights") for k in asset_insights):
+            # Only pass down insights and query metadata, omit raw errors from payload
+            payload_insights = {k: v for k, v in asset_insights.items() if k.endswith("_insights")}
+            payload_insights["query_status"] = asset_insights.get("query_status", {})
+            payload_insights["query_errors"] = asset_insights.get("query_errors", [])
+            baseline_payload["asset_insights"] = payload_insights
         if human_inputs:
             baseline_payload["human_inputs"] = human_inputs
         (baseline_dir / "requirements.json").write_text(
@@ -1146,6 +1399,12 @@ Output JSON format:
     }
     if asset_context:
         baseline_payload["configured_assets"] = asset_context
+    if asset_insights and any(k.endswith("_insights") for k in asset_insights):
+        # Only pass down insights and query metadata, omit raw errors from payload
+        payload_insights = {k: v for k, v in asset_insights.items() if k.endswith("_insights")}
+        payload_insights["query_status"] = asset_insights.get("query_status", {})
+        payload_insights["query_errors"] = asset_insights.get("query_errors", [])
+        baseline_payload["asset_insights"] = payload_insights
     if human_inputs:
         baseline_payload["human_inputs"] = human_inputs
     (baseline_dir / "requirements.json").write_text(

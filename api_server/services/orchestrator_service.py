@@ -16,6 +16,7 @@ from graphs.state import merge_artifacts
 from models.events import dump_event, validate_event_payload
 from services.log_service import get_run_log, save_run_log
 from services.db_service import metadata_db
+from registry.expert_registry import ExpertRegistry
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 PROJECTS_DIR = BASE_DIR / "projects"
