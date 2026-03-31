@@ -55,6 +55,7 @@ class ExpertProfile:
     expert_yaml_path: Optional[str] = None
     skill_md_path: Optional[str] = None
     # Hot-pluggable task scheduling configuration
+    has_scheduling: bool = False
     dependencies: List[str] = field(default_factory=list)
     upstream_artifacts: Dict[str, List[str]] = field(default_factory=dict)
     boundary_upstream_inputs: List[str] = field(default_factory=list)
@@ -253,7 +254,10 @@ class ExpertRegistry:
             keywords = [item.strip() for item in keywords.split(",")]
 
         # Parse hot-pluggable scheduling configuration
-        scheduling = data.get("scheduling", {})
+        scheduling = data.get("scheduling")
+        has_scheduling = scheduling is not None
+        if not has_scheduling:
+            scheduling = {}
         dependencies = _ensure_list(scheduling.get("dependencies", []))
         priority = scheduling.get("priority", 50)
         upstream_artifacts = _normalize_artifact_mapping(data.get("upstream_artifacts", {}))
@@ -270,6 +274,7 @@ class ExpertRegistry:
             expected_outputs=_ensure_list(data.get("outputs", {}).get("expected", [])),
             expert_yaml_path=str(expert_file),
             skill_md_path=str(skill_path) if skill_path.exists() else None,
+            has_scheduling=has_scheduling,
             dependencies=list(dependencies),
             upstream_artifacts=upstream_artifacts,
             boundary_upstream_inputs=boundary_upstream_inputs,
@@ -410,9 +415,13 @@ class ExpertRegistry:
             )
 
         dependency_edges = 0
+        schedulable_count = 0
         output_owners: Dict[str, List[str]] = {}
 
         for manifest in manifests.values():
+            if not manifest.has_scheduling:
+                continue
+            schedulable_count += 1
             dependency_edges += len(manifest.dependencies)
 
             if (
@@ -595,7 +604,7 @@ class ExpertRegistry:
         }
         return {
             "ok": summary["errors"] == 0,
-            "expert_count": len(manifests),
+            "expert_count": schedulable_count,
             "dependency_edges": dependency_edges,
             "summary": summary,
             "findings": findings,

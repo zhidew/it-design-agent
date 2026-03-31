@@ -152,8 +152,7 @@ export function ProjectList() {
             disabled={isCreating || !newProjectName.trim()}
             className="bg-indigo-600 text-white px-6 py-3 rounded-xl font-bold text-xs uppercase hover:bg-indigo-700 disabled:opacity-50 shadow-lg shadow-indigo-100 transition-all flex items-center justify-center gap-2"
           >
-            {isCreating ? <RefreshCw size={18} className="animate-spin" /> : <Plus size={18} />}
-            {isCreating ? t('projectList.creating') : t('projectList.createBtn')}
+            {t('projectList.createBtn')}
           </button>
         </form>
       </div>

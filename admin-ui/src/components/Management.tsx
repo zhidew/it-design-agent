@@ -19,11 +19,9 @@ import {
   Search,
   X,
 } from 'lucide-react';
-import axios from 'axios';
+import { apiClient } from '../api';
 import { useTranslation } from 'react-i18next';
 import { LanguageSwitcher } from './LanguageSwitcher';
-
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api/v1') + '/expert-center';
 
 type WorkbenchTab = 'profile' | 'skill' | 'templates' | 'references' | 'scripts' | 'tools';
 
@@ -135,6 +133,7 @@ export function ExpertCenter() {
   const [loadingTools, setLoadingTools] = useState(false);
   const [validationReport, setValidationReport] = useState<DependencyValidationReport | null>(null);
   const [validatingDependencies, setValidatingDependencies] = useState(false);
+  const [showValidationCard, setShowValidationCard] = useState(false);
 
   const GENERATION_STEPS = [
     t('management.generationSteps.0'),
@@ -166,8 +165,8 @@ export function ExpertCenter() {
     setLoading(true);
     try {
       const [expertsRes, treeRes] = await Promise.all([
-        axios.get(`${API_BASE_URL}/experts`),
-        axios.get(`${API_BASE_URL}/file-tree`),
+        apiClient.get('/expert-center/experts'),
+        apiClient.get('/expert-center/file-tree'),
       ]);
 
       const nextExperts = expertsRes.data as Expert[];
@@ -178,7 +177,6 @@ export function ExpertCenter() {
         setSelectedExpertId(nextExperts[0].id);
         setActiveTab('profile');
       }
-      void loadDependencyValidation(true);
     } catch {
       setMessage({ type: 'error', text: t('management.loadError') });
     } finally {
@@ -186,34 +184,27 @@ export function ExpertCenter() {
     }
   };
 
-  const loadDependencyValidation = async (silent = false) => {
-    if (!silent) {
-      setValidatingDependencies(true);
-    }
+  const loadDependencyValidation = async () => {
+    setValidatingDependencies(true);
+    setShowValidationCard(true);
     try {
-      const response = await axios.get(`${API_BASE_URL}/experts/validate-dependencies`);
+      const response = await apiClient.get('/expert-center/experts/validate-dependencies');
       setValidationReport(response.data as DependencyValidationReport);
-      if (!silent) {
-        setMessage({
-          type: response.data.ok ? 'success' : 'error',
-          text: response.data.ok ? t('management.validationSuccess') : t('management.validationIssuesFound'),
-        });
-      }
+      setMessage({
+        type: response.data.ok ? 'success' : 'error',
+        text: response.data.ok ? t('management.validationSuccess') : t('management.validationIssuesFound'),
+      });
     } catch {
-      if (!silent) {
-        setMessage({ type: 'error', text: t('management.validationLoadError') });
-      }
+      setMessage({ type: 'error', text: t('management.validationLoadError') });
     } finally {
-      if (!silent) {
-        setValidatingDependencies(false);
-      }
+      setValidatingDependencies(false);
     }
   };
   
   const loadToolsList = async () => {
     setLoadingTools(true);
     try {
-      const response = await axios.get(`${API_BASE_URL}/tools`);
+      const response = await apiClient.get('/expert-center/tools');
       setToolsList(response.data as ToolInfo[]);
     } catch {
       setMessage({ type: 'error', text: 'Failed to load tools list' });
@@ -224,7 +215,7 @@ export function ExpertCenter() {
   
   const loadToolCode = async (toolName: string) => {
     try {
-      const response = await axios.get(`${API_BASE_URL}/tools/${toolName}/code`);
+      const response = await apiClient.get(`/expert-center/tools/${toolName}/code`);
       setToolCode(response.data.code || '');
     } catch {
       setMessage({ type: 'error', text: `Failed to load ${toolName} code` });
@@ -417,7 +408,7 @@ export function ExpertCenter() {
     setSelectedPath(path);
     setLoading(true);
     try {
-      const response = await axios.get(`${API_BASE_URL}/files/${path}/content`);
+      const response = await apiClient.get(`/expert-center/files/${path}/content`);
       setSelectedFile(response.data);
       setEditingContent(normalizeProfileContent(path, response.data.content));
     } catch {
@@ -433,7 +424,7 @@ export function ExpertCenter() {
     }
     setSaving(true);
     try {
-      await axios.put(`${API_BASE_URL}/files/${selectedFile.path}/content`, {
+      await apiClient.put(`/expert-center/files/${selectedFile.path}/content`, {
         content: editingContent,
       });
       setMessage({ type: 'success', text: t('management.saveSuccess') });
@@ -461,7 +452,7 @@ export function ExpertCenter() {
       
     setCreating(true);
     try {
-      const response = await axios.post(`${API_BASE_URL}/experts`, {
+      const response = await apiClient.post('/expert-center/experts', {
         expert_id: expert_id || 'new-expert', // Fallback if name was all Chinese
         name: newExpertName.trim(),
         description: newExpertDescription.trim(),
@@ -493,7 +484,7 @@ export function ExpertCenter() {
     }
     setDeleting(true);
     try {
-      await axios.delete(`${API_BASE_URL}/experts/${selectedExpert.id}`);
+      await apiClient.delete(`/expert-center/experts/${selectedExpert.id}`);
       setMessage({ type: 'success', text: t('management.deleteExpertSuccess') });
       setSelectedExpertId('');
       setSelectedPath('');
@@ -527,7 +518,7 @@ export function ExpertCenter() {
     setCreatingFile(true);
     try {
       // Create an empty file
-      await axios.put(`${API_BASE_URL}/files/${newPath}/content`, {
+      await apiClient.put(`/expert-center/files/${newPath}/content`, {
         content: '',
       });
       setMessage({ type: 'success', text: 'File created successfully' });
@@ -553,7 +544,7 @@ export function ExpertCenter() {
     
     setDeletingFile(true);
     try {
-      await axios.delete(`${API_BASE_URL}/files/${path}`);
+      await apiClient.delete(`/expert-center/files/${path}`);
       setMessage({ type: 'success', text: 'File deleted successfully' });
       if (selectedPath === path) {
         setSelectedPath('');
@@ -780,6 +771,7 @@ export function ExpertCenter() {
             </div>
           </section>
 
+          {showValidationCard && (
           <section className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
             <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
               <div>
@@ -791,13 +783,23 @@ export function ExpertCenter() {
                     : t('management.validationDescription')}
                 </div>
               </div>
-              <div className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-xs font-black uppercase ${
-                validationReport?.ok
-                  ? 'bg-emerald-50 text-emerald-700'
-                  : 'bg-amber-50 text-amber-700'
-              }`}>
-                {validationReport?.ok ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />}
-                {validationReport?.ok ? t('management.validationHealthy') : t('management.validationAttention')}
+              <div className="flex items-center gap-3">
+                <div className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-xs font-black uppercase ${
+                  validationReport?.ok
+                    ? 'bg-emerald-50 text-emerald-700'
+                    : 'bg-amber-50 text-amber-700'
+                }`}>
+                  {validationReport?.ok ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />}
+                  {validationReport?.ok ? t('management.validationHealthy') : t('management.validationAttention')}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowValidationCard(false)}
+                  className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-all"
+                  title={t('common.dismiss')}
+                >
+                  <X size={16} />
+                </button>
               </div>
             </div>
 
@@ -822,8 +824,9 @@ export function ExpertCenter() {
 
             <div className="mt-6">
               {!validationReport ? (
-                <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 px-5 py-8 text-sm text-gray-400 text-center">
-                  {t('management.validationEmpty')}
+                <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 px-5 py-8 text-sm text-gray-400 text-center flex items-center justify-center gap-3">
+                  <LucideLoader size={16} className="animate-spin" />
+                  {t('common.loading')}
                 </div>
               ) : visibleDependencyFindings.length === 0 ? (
                 <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-5 py-8 text-sm text-emerald-700 flex items-center justify-center gap-2">
@@ -874,6 +877,7 @@ export function ExpertCenter() {
               )}
             </div>
           </section>
+          )}
 
           <section className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
             <div className="px-6 py-4 border-b border-gray-100">
@@ -1182,7 +1186,7 @@ export function ExpertCenter() {
             ) : (
               <>
                 <div className="px-10 pt-12 pb-8 text-center">
-                  <div className="mx-auto w-20 h-20 bg-indigo-50 rounded-3xl flex items-center justify-center text-indigo-600 mb-6 rotate-3">
+                  <div className="mx-auto w-20 h-20 bg-indigo-50 rounded-3xl flex items-center justify-center text-indigo-600 mb-6">
                     <Plus size={40} />
                   </div>
                   <h3 className="text-2xl font-black text-gray-900 tracking-tight">{t('management.newExpertDomain')}</h3>
