@@ -147,13 +147,16 @@ export function ProjectList() {
               className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:bg-white outline-none transition-all"
             />
           </div>
-          <button
-            type="submit"
-            disabled={isCreating || !newProjectName.trim()}
-            className="bg-indigo-600 text-white px-6 py-3 rounded-xl font-bold text-xs uppercase hover:bg-indigo-700 disabled:opacity-50 shadow-lg shadow-indigo-100 transition-all flex items-center justify-center gap-2"
-          >
-            {t('projectList.createBtn')}
-          </button>
+          <div className="relative flex-shrink-0 sm:w-48">
+            <Plus size={48} className="absolute -top-3 -right-3 opacity-10 text-indigo-600 pointer-events-none" />
+            <button
+              type="submit"
+              disabled={isCreating || !newProjectName.trim()}
+              className="w-full bg-indigo-600 text-white px-6 py-3 rounded-xl font-bold text-xs uppercase hover:bg-indigo-700 disabled:opacity-50 shadow-lg shadow-indigo-100 transition-all flex items-center justify-center relative z-10"
+            >
+              {t('projectList.createBtn')}
+            </button>
+          </div>
         </form>
       </div>
 

@@ -116,7 +116,8 @@ export function ExpertCenter() {
   // Search and Modal states
   const [searchTerm, setSearchTerm] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [newExpertName, setNewExpertName] = useState('');
+  const [newExpertNameZh, setNewExpertNameZh] = useState('');
+  const [newExpertNameEn, setNewExpertNameEn] = useState('');
   const [newExpertDescription, setNewExpertDescription] = useState('');
   const [generationStep, setGenerationStep] = useState(0);
   
@@ -438,12 +439,13 @@ export function ExpertCenter() {
   };
 
   const handleCreateExpert = async () => {
-    if (!newExpertName.trim()) {
+    if (!newExpertNameZh.trim() && !newExpertNameEn.trim()) {
       return;
     }
     
-    // Auto-generate expert_id from name (slugify) - FORCE ENGLISH ID
-    const expert_id = newExpertName.trim()
+    // Auto-generate expert_id from English name (or Chinese as fallback) - FORCE ENGLISH ID
+    const idSource = newExpertNameEn.trim() || newExpertNameZh.trim();
+    const expert_id = idSource
       .toLowerCase()
       .replace(/[^\w\s-]/g, '') // Remove non-alphanumeric except whitespace and hyphens
       .trim()
@@ -454,19 +456,23 @@ export function ExpertCenter() {
     try {
       const response = await apiClient.post('/expert-center/experts', {
         expert_id: expert_id || 'new-expert', // Fallback if name was all Chinese
-        name: newExpertName.trim(),
+        name_zh: newExpertNameZh.trim(),
+        name_en: newExpertNameEn.trim(),
         description: newExpertDescription.trim(),
       });
       setMessage({ type: 'success', text: t('management.createExpertSuccess') });
-      setNewExpertName('');
+      setNewExpertNameZh('');
+      setNewExpertNameEn('');
       setNewExpertDescription('');
       setShowCreateModal(false);
       await loadExpertCenter();
       setSelectedExpertId(response.data.id);
     } catch (err: any) {
-      const errMsg = err.response?.data?.detail || t('management.createExpertError');
+      const detail = err.response?.data?.detail || '';
+      const errMsg = detail.includes('duplicate') || detail.includes('similar')
+        ? t('management.createExpertNameDuplicate')
+        : (detail || t('management.createExpertError'));
       setMessage({ type: 'error', text: errMsg });
-      // Keep modal open so user can see what happened, but reset creating state
     } finally {
       setCreating(false);
     }
@@ -1193,37 +1199,53 @@ export function ExpertCenter() {
                   <p className="text-gray-500 mt-3 px-4">{t('management.newExpertDomainHint')}</p>
                 </div>
                 
-                <div className="px-10 pb-12 space-y-6">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">{t('management.expertNameLabel')}</label>
-                    <input
-                      autoFocus
-                      value={newExpertName}
-                      onChange={(e) => setNewExpertName(e.target.value)}
-                      placeholder={t('management.searchExperts')}
-                      className="w-full rounded-2xl border-2 border-gray-100 bg-gray-50 px-5 py-4 text-sm font-medium outline-none focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/5 transition-all"
-                    />
+                <div className="px-10 pb-12 space-y-5">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">{t('management.expertNameZhLabel')}</label>
+                      <input
+                        autoFocus
+                        value={newExpertNameZh}
+                        onChange={(e) => setNewExpertNameZh(e.target.value)}
+                        placeholder={t('management.expertNameZhPlaceholder')}
+                        className="w-full rounded-2xl border-2 border-gray-100 bg-gray-50 px-5 py-4 text-sm font-medium outline-none focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/5 transition-all"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">{t('management.expertNameEnLabel')}</label>
+                      <input
+                        value={newExpertNameEn}
+                        onChange={(e) => setNewExpertNameEn(e.target.value)}
+                        placeholder={t('management.expertNameEnPlaceholder')}
+                        className="w-full rounded-2xl border-2 border-gray-100 bg-gray-50 px-5 py-4 text-sm font-medium outline-none focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/5 transition-all"
+                      />
+                    </div>
                   </div>
-                  
+
                   <div className="space-y-2">
                     <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">{t('management.expertDescLabel')}</label>
                     <textarea
                       value={newExpertDescription}
                       onChange={(e) => setNewExpertDescription(e.target.value)}
                       placeholder={t('management.searchExperts')}
-                      className="w-full rounded-2xl border-2 border-gray-100 bg-gray-50 px-5 py-4 text-sm font-medium outline-none focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/5 transition-all min-h-[140px] resize-none"
+                      className="w-full rounded-2xl border-2 border-gray-100 bg-gray-50 px-5 py-4 text-sm font-medium outline-none focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/5 transition-all min-h-[120px] resize-none"
                     />
                   </div>
 
-                  <div className="flex gap-4 pt-4">
+                  <div className="flex gap-4 pt-2">
                     <button
-                      onClick={() => setShowCreateModal(false)}
+                      onClick={() => {
+                        setShowCreateModal(false);
+                        setNewExpertNameZh('');
+                        setNewExpertNameEn('');
+                        setNewExpertDescription('');
+                      }}
                       className="flex-1 px-6 py-4 rounded-2xl border-2 border-gray-100 text-sm font-black uppercase text-gray-400 hover:bg-gray-50 hover:text-gray-600 transition-all"
                     >
                       {t('management.back')}
                     </button>
                     <button
-                      disabled={!newExpertName.trim() || creating}
+                      disabled={(!newExpertNameZh.trim() && !newExpertNameEn.trim()) || creating}
                       onClick={handleCreateExpert}
                       className="flex-[2] px-8 py-4 rounded-2xl bg-indigo-600 text-white text-sm font-black uppercase tracking-widest hover:bg-indigo-700 disabled:opacity-50 shadow-xl shadow-indigo-200 transition-all flex items-center justify-center gap-3 group"
                     >

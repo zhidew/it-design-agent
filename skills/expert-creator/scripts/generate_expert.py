@@ -120,7 +120,7 @@ class ExpertGenerator:
         
         return found
     
-    def _generate_with_llm(self, name: str, description: str) -> Dict[str, Any]:
+    def _generate_with_llm(self, name: str, description: str, *, name_zh: str = "", name_en: str = "") -> Dict[str, Any]:
         """Use LLM to generate expert content based on SKILL.md instructions."""
         try:
             from api_server.services.llm_service import generate_with_llm
@@ -140,6 +140,11 @@ class ExpertGenerator:
             domain_keywords = self._analyze_domain_keywords(name, description)
             recommended_tools = self.tool_registry.recommend_tools_for_domain(domain_keywords)
             
+            # Build name info for prompt
+            name_info = name
+            if name_zh and name_en:
+                name_info = f"{name_zh}（{name_en}）"
+            
             # Generate metadata
             metadata_prompt = f"""
 {llm_instructions}
@@ -148,7 +153,7 @@ class ExpertGenerator:
 
 Now generate expert metadata for:
 
-**Expert Name**: {name}
+**Expert Name**: {name_info}
 **Description**: {description}
 
 **Domain Keywords**: {domain_keywords}
@@ -247,14 +252,18 @@ Return each file in a code block with the filename as header.
             pass
         return ""
     
-    def _generate_fallback_content(self, expert_id: str, name: str, description: str) -> Dict[str, Any]:
+    def _generate_fallback_content(self, expert_id: str, name: str, description: str, *, name_zh: str = "", name_en: str = "") -> Dict[str, Any]:
         """Generate fallback content when LLM fails."""
         
         # Analyze domain and recommend tools
         domain_keywords = self._analyze_domain_keywords(name, description)
         recommended_tools = self.tool_registry.recommend_tools_for_domain(domain_keywords)
         
-        profile = f"""name: {name}
+        # Use English name for YAML name field, fallback to provided name
+        yaml_name = name_en or name
+        skill_name = name_zh or yaml_name
+        
+        profile = f"""name: {yaml_name}
 capability: {expert_id}
 description: "{description}"
 version: 0.1.0
@@ -271,12 +280,12 @@ outputs:
 policies: {{}}
 """
         skill = f"""---
-name: {name}
+name: {skill_name}
 description: "{description}"
 keywords: {json.dumps(domain_keywords)}
 ---
 
-# {name}
+# {skill_name}
 
 ## Purpose
 
@@ -336,7 +345,7 @@ This expert uses the following tools:
             "expert_id": expert_id,
             "profile": profile,
             "skill": skill,
-            "template": f"# {name} Output Template\n\n## Generated Content\n\n<!-- Add your content here -->",
+            "template": f"# {yaml_name} Output Template\n\n## Generated Content\n\n<!-- Add your content here -->",
             "template_name": "output_template.md.j2",
             "script": "",
             "script_name": None,
@@ -349,16 +358,21 @@ This expert uses the following tools:
         name: str,
         description: str = "",
         use_llm: bool = True,
+        *,
+        name_zh: str = "",
+        name_en: str = "",
     ) -> Optional[Dict[str, Any]]:
         """
         Create a new expert with intelligent generation.
-        
+
         Args:
             expert_id: Initial expert ID (will be cleaned to Kebab-case)
             name: Expert display name
             description: Expert description
             use_llm: Whether to use LLM for intelligent generation
-            
+            name_zh: Chinese name for the expert
+            name_en: English name for the expert
+
         Returns:
             Expert metadata dict if successful, None otherwise
         """
@@ -367,12 +381,12 @@ This expert uses the following tools:
         
         # Generate content
         if use_llm:
-            result = self._generate_with_llm(name, description)
+            result = self._generate_with_llm(name, description, name_zh=name_zh, name_en=name_en)
         else:
             result = {"success": False}
         
         if not result.get("success"):
-            result = self._generate_fallback_content(initial_id, name, description)
+            result = self._generate_fallback_content(initial_id, name, description, name_zh=name_zh, name_en=name_en)
         
         expert_id = result.get("expert_id", initial_id)
         
@@ -409,7 +423,9 @@ This expert uses the following tools:
         # Return expert metadata
         return {
             "id": expert_id,
-            "name": name,
+            "name": name_en or name or name_zh,
+            "name_zh": name_zh or "",
+            "name_en": name_en or "",
             "description": description,
             "profile_path": str(profile_path),
             "skill_path": str(skill_dir / "SKILL.md"),
@@ -424,19 +440,24 @@ def create_expert(
     name: str,
     description: str = "",
     use_llm: bool = True,
+    *,
+    name_zh: str = "",
+    name_en: str = "",
 ) -> Optional[Dict[str, Any]]:
     """
     Convenience function to create a new expert.
-    
+
     Args:
-        base_dir: Project base directory
-        expert_id: Initial expert ID
-        name: Expert display name
-        description: Expert description
-        use_llm: Whether to use LLM generation
-        
+    base_dir: Project base directory
+    expert_id: Initial expert ID
+    name: Expert display name
+    description: Expert description
+    use_llm: Whether to use LLM generation
+    name_zh: Chinese name for the expert
+    name_en: English name for the expert
+
     Returns:
-        Expert metadata dict if successful, None otherwise
+    Expert metadata dict if successful, None otherwise
     """
     generator = ExpertGenerator(base_dir)
-    return generator.create_expert(expert_id, name, description, use_llm)
+    return generator.create_expert(expert_id, name, description, use_llm, name_zh=name_zh, name_en=name_en)

@@ -345,6 +345,7 @@
     "newExpertDescription": "New expert description",
     "createExpertSuccess": "Expert created successfully.",
     "createExpertError": "Failed to create expert.",
+    "createExpertNameDuplicate": "Expert name already exists or is too similar to an existing expert. Please modify and retry.",
     "deleteExpertSuccess": "Expert deleted successfully.",
     "deleteExpertError": "Failed to delete expert.",
     "systemTools": "System Tools",
@@ -381,6 +382,10 @@
     "newExpertDomain": "Add New Expert Domain",
     "newExpertDomainHint": "Enter the expert's professional focus, and the system will build complete intelligent logic and workflows.",
     "expertNameLabel": "Expert Name",
+    "expertNameZhLabel": "Chinese Name",
+    "expertNameEnLabel": "English Name",
+    "expertNameZhPlaceholder": "e.g., 架构设计专家",
+    "expertNameEnPlaceholder": "e.g., Architecture Mapping Expert",
     "expertDescLabel": "Description (Optional)",
     "back": "Back",
     "startGeneration": "Start AI Generation"

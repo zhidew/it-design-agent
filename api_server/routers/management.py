@@ -39,7 +39,9 @@ class ExpertUpdateRequest(BaseModel):
 
 class ExpertCreateRequest(BaseModel):
     expert_id: str
-    name: str
+    name: str = ""
+    name_zh: str = ""
+    name_en: str = ""
     description: str = ""
 
 
@@ -101,7 +103,30 @@ async def validate_expert_dependencies():
 
 @expert_center_router.post("/experts", response_model=ExpertMetadata)
 async def create_expert(req: ExpertCreateRequest):
-    expert = orch.create_expert(req.expert_id, req.name, req.description)
+    # Validate names for duplicates / similarity
+    name_zh = (req.name_zh or "").strip()
+    name_en = (req.name_en or "").strip()
+    name = (req.name or name_en or name_zh).strip()
+
+    experts = orch.list_experts()
+    for existing in experts:
+        existing_name = existing.get("name", "").strip().lower()
+        if name_zh and existing_name == name_zh.lower():
+            raise HTTPException(status_code=409, detail=f"Expert name (zh) '{name_zh}' already exists as '{existing['id']}'.")
+        if name_en and existing_name == name_en.lower():
+            raise HTTPException(status_code=409, detail=f"Expert name (en) '{name_en}' already exists as '{existing['id']}'.")
+
+    # Similarity check: normalize whitespace/punctuation
+    import re as _re
+    def _normalize(s: str) -> str:
+        return _re.sub(r"[\s\-_.]+", "", s).lower()
+
+    for existing in experts:
+        existing_name_norm = _normalize(existing.get("name", ""))
+        if name_en and _normalize(name_en) == existing_name_norm and existing_name_norm:
+            raise HTTPException(status_code=409, detail=f"Expert name '{name_en}' is too similar to existing expert '{existing['id']}' (name: '{existing['name']}').")
+
+    expert = orch.create_expert(req.expert_id, name, req.description, name_zh=name_zh, name_en=name_en)
     if not expert:
         raise HTTPException(status_code=400, detail="Failed to create expert")
     return expert

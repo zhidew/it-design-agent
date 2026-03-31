@@ -348,6 +348,7 @@
     "newExpertDescription": "新专家描述",
     "createExpertSuccess": "专家创建成功。",
     "createExpertError": "创建专家失败。",
+    "createExpertNameDuplicate": "专家名称已存在或与现有专家过于相似，请修改后重试。",
     "deleteExpertSuccess": "专家删除成功。",
     "deleteExpertError": "删除专家失败。",
     "systemTools": "系统工具",
@@ -384,6 +385,10 @@
     "newExpertDomain": "新增专家领域",
     "newExpertDomainHint": "输入专家的专业方向，剩下的交给系统为您构建完整的智能逻辑与工作流。",
     "expertNameLabel": "专家名称",
+    "expertNameZhLabel": "中文名称",
+    "expertNameEnLabel": "英文名称",
+    "expertNameZhPlaceholder": "如：架构设计专家",
+    "expertNameEnPlaceholder": "如：Architecture Mapping Expert",
     "expertDescLabel": "职责描述（可选）",
     "back": "返回",
     "startGeneration": "开始智能生成"

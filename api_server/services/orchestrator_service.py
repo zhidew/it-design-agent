@@ -2128,15 +2128,16 @@ def update_expert(expert_id: str, new_profile_yaml: str):
 SYSTEM_EXPERTS = {"expert-creator"}
 
 
-def create_expert(expert_id: str, name: str, description: str = ""):
+def create_expert(expert_id: str, name: str, description: str = "", *, name_zh: str = "", name_en: str = ""):
     """Create a new expert using the Expert Generator script.
     
     This function delegates to the expert-creator skill's generate_expert.py script
     for intelligent expert generation with LLM support.
     """
+    display_name = name_en or name_zh or name
     try:
         from skills.expert_creator.scripts.generate_expert import create_expert as generate_expert
-        result = generate_expert(BASE_DIR, expert_id, name, description, use_llm=True)
+        result = generate_expert(BASE_DIR, expert_id, display_name, description, use_llm=True, name_zh=name_zh, name_en=name_en)
         if result:
             return result
     except Exception as e:
@@ -2147,7 +2148,7 @@ def create_expert(expert_id: str, name: str, description: str = ""):
     if not initial_id:
         initial_id = "expert-" + str(uuid.uuid4())[:8]
 
-    normalized_name = (name or initial_id).strip()
+    normalized_name = (name or name_en or name_zh or initial_id).strip()
     
     final_id = initial_id
     profile_path = _resolve_expert_profile_path(final_id)
@@ -2162,7 +2163,7 @@ def create_expert(expert_id: str, name: str, description: str = ""):
     (skill_dir / "references").mkdir(parents=True, exist_ok=True)
     (skill_dir / "scripts").mkdir(parents=True, exist_ok=True)
 
-    profile_content = f"""name: {final_id.replace("-", " ").title()}
+    profile_content = f"""name: {name_en or final_id.replace("-", " ").title()}
 capability: {final_id}
 description: "{description or normalized_name}"
 version: 0.1.0
