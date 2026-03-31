@@ -25,6 +25,8 @@ tools:
   allowed:
     - run_command
     - validate_artifacts
+    - write_file
+    - patch_file
 outputs:
   expected:
     - validation-report.md

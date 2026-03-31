@@ -22,13 +22,10 @@ description: Assemble all structured design artifacts into the final detailed de
 - `artifacts/review-checklist.md`
 - `evidence/design-assembler.json`
 
-# Tools
-- list_files
-- read_file_chunk
-- grep_search
-- extract_structure
-- write_file
-- patch_file
+# Tool Usage Notes
+- Follow the runtime-generated tool contract from the expert YAML. Do not assume a tool is available unless the controller prompt exposes it.
+- Prefer reading and reconciling upstream artifacts first. Use write tools only to assemble owned deliverables or make bounded corrections under `artifacts/`.
+- Do not use the assembler to bypass upstream ownership. If evidence is missing or conflicting, record the smallest grounded normalization instead of inventing new design scope.
 
 # Notes
 - Preserve cross-artifact consistency and terminology.

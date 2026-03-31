@@ -20,13 +20,10 @@ description: Generate grounded sequence and state-flow artifacts for the core bu
 - `artifacts/state.md`
 - `evidence/flow-design.json`
 
-# Tools
-- list_files
-- read_file_chunk
-- grep_search
-- extract_structure
-- write_file
-- patch_file
+# Tool Usage Notes
+- Follow the runtime-generated tool contract from the expert YAML. Do not assume a tool is available unless the controller prompt exposes it.
+- Prefer read and grounding steps first. Use write tools only to persist owned sequence/state artifacts or make bounded corrections under `artifacts/`.
+- Keep flow diagrams and state definitions grounded in upstream names and contracts; do not invent extra scope to compensate for missing evidence.
 
 # Notes
 - Cover both mainline and exception behavior.

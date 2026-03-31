@@ -2498,6 +2498,53 @@ def list_system_tools() -> list:
             if script_file.exists():
                 fallback_tool["script_path"] = "api_server/graphs/tools/validate_artifacts.py"
             tools.append(fallback_tool)
+
+        if not any((tool or {}).get("name") == "append_file" for tool in tools):
+            fallback_tool = {
+                "name": "append_file",
+                "category": "file_operations",
+                "description_zh": "向文件末尾追加内容，不覆盖已有内容",
+                "description_en": "Append content to the end of a file without overwriting existing text",
+                "input_schema": {
+                    "root_dir": {"type": "string", "required": True},
+                    "path": {"type": "string", "required": True},
+                    "content": {"type": "string", "required": True},
+                },
+                "output_schema": {
+                    "path": {"type": "string"},
+                    "size_bytes": {"type": "integer"},
+                    "appended_bytes": {"type": "integer"},
+                },
+            }
+            script_file = tools_dir / "append_file.py"
+            if script_file.exists():
+                fallback_tool["script_path"] = "api_server/graphs/tools/append_file.py"
+            tools.append(fallback_tool)
+
+        if not any((tool or {}).get("name") == "upsert_markdown_sections" for tool in tools):
+            fallback_tool = {
+                "name": "upsert_markdown_sections",
+                "category": "file_operations",
+                "description_zh": "按 Markdown 标题增量更新章节，支持替换、缺失追加和近似重复跳过",
+                "description_en": "Upsert markdown sections by heading with replace, append-if-missing, and near-duplicate skip modes",
+                "input_schema": {
+                    "root_dir": {"type": "string", "required": True},
+                    "path": {"type": "string", "required": True},
+                    "sections": {"type": "array", "required": True},
+                    "dedupe_strategy": {"type": "string", "required": False},
+                    "similarity_threshold": {"type": "number", "required": False},
+                },
+                "output_schema": {
+                    "path": {"type": "string"},
+                    "inserted_sections": {"type": "integer"},
+                    "replaced_sections": {"type": "integer"},
+                    "skipped_sections": {"type": "integer"},
+                },
+            }
+            script_file = tools_dir / "upsert_markdown_sections.py"
+            if script_file.exists():
+                fallback_tool["script_path"] = "api_server/graphs/tools/upsert_markdown_sections.py"
+            tools.append(fallback_tool)
         
         return tools
     except Exception as e:

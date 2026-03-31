@@ -49,7 +49,7 @@ description: 负责REST/RPC接口设计、请求响应结构定义、枚举值�
 | `audience == "internal"` 或 `"both"` | `artifacts/api-internal.yaml` | 内部 API 接口定义（OpenAPI 格式）|
 | `audience == "external"` 或 `"both"` | `artifacts/api-public.yaml` | 外部 API 接口定义（OpenAPI 格式）|
 
-# 工具集 (Tools)
+# Tool Usage Notes
 
 ## 文件系统工具
 

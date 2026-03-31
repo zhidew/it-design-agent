@@ -16,6 +16,7 @@ import yaml
 
 from .errors import AgentNotFoundError, ConfigLoadError, ValidationError
 from .skill_parser import SkillParser
+from tool_permissions import build_effective_tools, has_effective_tool_permission
 
 
 def _ensure_list(value: Any) -> List[str]:
@@ -95,6 +96,14 @@ class ExpertConfig:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     @property
+    def explicit_tools_allowed(self) -> List[str]:
+        return list(self.tools_allowed)
+
+    @property
+    def effective_tools(self) -> List[str]:
+        return build_effective_tools(self.tools_allowed)
+
+    @property
     def dependencies(self) -> List[str]:
         """Get expert dependencies for task scheduling."""
         return self.manifest.dependencies
@@ -110,6 +119,8 @@ class ExpertConfig:
             "name": self.manifest.name,
             "description": self.manifest.description,
             "tools_allowed": self.tools_allowed,
+            "explicit_tools_allowed": self.explicit_tools_allowed,
+            "effective_tools": self.effective_tools,
             "policies": self.policies,
             "workflow_steps": self.workflow_steps,
             "prompt_instructions_length": len(self.prompt_instructions),
@@ -120,21 +131,7 @@ class ExpertConfig:
         }
 
     def has_tool_permission(self, tool_name: str) -> bool:
-        default_read_tools = {
-            "list_files",
-            "extract_structure",
-            "grep_search",
-            "read_file_chunk",
-            "extract_lookup_values",
-            "clone_repository",
-            "query_database",
-            "query_knowledge_base",
-        }
-        return (
-            tool_name in self.tools_allowed
-            or "*" in self.tools_allowed
-            or tool_name in default_read_tools
-        )
+        return has_effective_tool_permission(tool_name, self.tools_allowed)
 
 
 class ExpertRegistry:

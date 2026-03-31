@@ -1,55 +1,13 @@
----
+﻿---
 name: config-design
 description: 规划多环境配置键、功能开关策略和密钥规范，产出配置目录与环境对比矩阵。
 ---
 
-# 工作流 (Workflow)
+# Tool Usage Notes
 
-1. **资产读取**：读取需求基线以及现有的配置相关资产（如历史配置文件、环境变量说明）。
-2. **配置分析**：使用 `extract_structure` 和 `grep_search` 分析配置键、环境差异和功能开关。
-3. **目录生成**：生成外部化配置键清单 `artifacts/config-catalog.yaml`。
-4. **矩阵生成**：生成 DEV、TEST、PROD 环境对比矩阵 `artifacts/config-matrix.md`。
-5. **证据沉淀**：将配置设计依据写入 `evidence/config-design.json`。
-
-# 输入参数 (Inputs)
-
-## 必需参数 (Required)
-
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `requirements` | string/path | 配置层面的业务需求文件路径 |
-| `existing_assets` | string/path | 当前生产环境的配置文件或环境变量列表路径 |
-| `output_root` | string/path | 项目设计包的根路径 |
-
-## 可选参数 (Optional)
-
-| 参数 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `context` | string/path | - | 上下文信息文件路径 |
-
-# 输出产物 (Output Artifacts)
-
-## 必需产物 (Always Required)
-
-| 产物路径 | 说明 |
-|----------|------|
-| `artifacts/config-catalog.yaml` | 配置键目录，包含类型、是否敏感等元数据 |
-| `artifacts/config-matrix.md` | 环境对比矩阵（DEV/TEST/PROD），展示各环境配置差异 |
-| `evidence/config-design.json` | 配置设计依据和证据 |
-
-# 工具集 (Tools)
-
-## 文件系统工具
-
-| 工具名称 | 说明 |
-|----------|------|
-| `list_files` | 列出目录下的文件 |
-| `read_file_chunk` | 读取文件片段 |
-| `grep_search` | 搜索配置关键词（timeout, feature flag, Redis, MySQL, Kafka, URL, password, secret, env, prod）|
-| `extract_structure` | 提取文件结构 |
-| `write_file` | 写入设计产物 |
-| `patch_file` | 修补已有文件 |
-
+- Follow the runtime-generated tool contract from the expert YAML. Do not assume a tool is available unless the controller prompt exposes it.
+- Prefer read and grounding steps first. Use write tools only to persist owned artifacts or make bounded corrections under `artifacts/`.
+- Treat optional validators or external techniques as non-guaranteed unless the runtime explicitly exposes them for this run.
 # 参考资料 (References)
 
 - 模板使用 `assets/templates/config-catalog.yaml` 和 `assets/templates/config-matrix.md`。
@@ -111,3 +69,5 @@ description: 规划多环境配置键、功能开关策略和密钥规范，产�
 
 - **config-catalog.yaml**: 包含 service、version、properties 数组。
 - **config-matrix.md**: 包含表格形式的配置键与环境值对比。
+
+

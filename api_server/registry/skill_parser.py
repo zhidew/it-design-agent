@@ -199,9 +199,9 @@ class SkillParser:
         
         # Build instructions from important sections
         for section_key, possible_headers in self.IMPORTANT_SECTIONS:
-            # Workflow is already injected separately as structured workflow_steps.
-            # Skipping it here avoids duplicate prompt content.
-            if section_key == 'workflow':
+            # Workflow and tool availability are injected separately by the runtime.
+            # Skipping them here avoids duplicate or conflicting prompt content.
+            if section_key in {'workflow', 'tools'}:
                 continue
 
             # Try to find matching section (case-insensitive)

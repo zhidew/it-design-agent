@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
 from services.llm_service import SubagentOutput, resolve_runtime_llm_settings
+from tool_permissions import DEFAULT_READ_TOOLS, DEFAULT_WRITE_TOOLS, build_effective_tools
 
 if TYPE_CHECKING:
     from registry.agent_registry import AgentFullConfig
@@ -300,16 +301,32 @@ def _build_shared_context_digest_section(capability: str, topic_ownership: Optio
     ]
 
 # Default tools available to all subagents
-DEFAULT_READ_TOOLS = {"list_files", "extract_structure", "grep_search", "read_file_chunk", "extract_lookup_values"}
-DEFAULT_WRITE_TOOLS = {"write_file", "patch_file"}
+USE_MARKDOWN_UPSERT_TOOL = os.getenv("USE_MARKDOWN_UPSERT_TOOL", "true").lower() in ("true", "1", "yes")
 
 
 def _tool_is_available(tool_name: str, tools_allowed: List[str]) -> bool:
-    return tool_name in tools_allowed or "*" in tools_allowed
+    return tool_name in set(build_effective_tools(tools_allowed))
 
 
 def _is_read_tool(tool_name: str) -> bool:
     return tool_name in DEFAULT_READ_TOOLS
+
+
+def _resolve_effective_tools(
+    agent_config: Optional["AgentFullConfig"],
+    *,
+    allow_unsafe_default: bool = False,
+) -> List[str]:
+    if not agent_config:
+        if allow_unsafe_default:
+            return build_effective_tools(["write_file", "patch_file", "run_command", "validate_artifacts"])
+        return build_effective_tools([])
+
+    effective_tools = getattr(agent_config, "effective_tools", None)
+    if isinstance(effective_tools, list):
+        return effective_tools
+
+    return build_effective_tools(getattr(agent_config, "tools_allowed", []))
 
 
 def _coerce_positive_int(value: Any) -> Optional[int]:
@@ -609,6 +626,57 @@ def _summarize_markdown_sections_for_prompt(content: str, limit: int = 8) -> Lis
         )
 
     return section_summaries[:limit]
+
+
+def _markdown_content_to_upsert_sections(content: str) -> List[Dict[str, Any]]:
+    stripped = str(content or "").strip()
+    if not stripped or not stripped.startswith("#"):
+        return []
+
+    sections: List[Dict[str, Any]] = []
+    current_heading: Optional[str] = None
+    current_level = 0
+    current_lines: List[str] = []
+
+    for raw_line in stripped.splitlines():
+        match = re.match(r"^\s*(#{1,6})\s+(.+?)\s*$", raw_line)
+        if match:
+            if current_heading is not None:
+                sections.append(
+                    {
+                        "heading": current_heading,
+                        "content": "\n".join(current_lines).strip(),
+                        "mode": "skip_if_similar",
+                        "heading_level": current_level,
+                    }
+                )
+            current_heading = match.group(2).strip()
+            current_level = len(match.group(1))
+            current_lines = []
+            continue
+        current_lines.append(raw_line)
+
+    if current_heading is not None:
+        sections.append(
+            {
+                "heading": current_heading,
+                "content": "\n".join(current_lines).strip(),
+                "mode": "skip_if_similar",
+                "heading_level": current_level,
+            }
+        )
+
+    return [section for section in sections if str(section.get("heading") or "").strip()]
+
+
+def _should_use_markdown_upsert(state: Dict[str, Any]) -> bool:
+    orchestrator_config = ((state.get("design_context") or {}).get("orchestrator") or {})
+    explicit_value = orchestrator_config.get("use_markdown_upsert_tool")
+    if explicit_value is None:
+        return USE_MARKDOWN_UPSERT_TOOL
+    if isinstance(explicit_value, bool):
+        return explicit_value
+    return str(explicit_value).strip().lower() in {"true", "1", "yes"}
 
 
 def _dedupe_markdown_sections(content: str, existing_content: str = "") -> tuple[str, int]:
@@ -1723,6 +1791,43 @@ def _write_finalization_step_log(
     return log_path
 
 
+CORE_TOOL_DESCRIPTIONS = {
+    "list_files": "Inspect project directories and files from the current project root.",
+    "read_file_chunk": "Read a file slice by path and line range.",
+    "grep_search": "Search grounded text across project files.",
+    "extract_structure": "Summarize document or file structure before deeper reads.",
+    "extract_lookup_values": "Extract enumerations or repeated structured values from files.",
+    "write_file": "Create or fully overwrite an artifact under `artifacts/`.",
+    "append_file": "Append raw content to the end of an artifact under `artifacts/`.",
+    "upsert_markdown_sections": "Insert or replace markdown sections by heading while deduping similar content.",
+    "patch_file": "Apply a bounded replacement to an existing artifact under `artifacts/`.",
+    "run_command": "Run a shell command from project root when explicitly permitted.",
+    "validate_artifacts": "Run deterministic validation checks against generated files under `artifacts/`.",
+}
+
+
+def _build_available_tool_section(tools_allowed: List[str]) -> str:
+    ordered_tools = [
+        "list_files",
+        "read_file_chunk",
+        "grep_search",
+        "extract_structure",
+        "extract_lookup_values",
+        "write_file",
+        "append_file",
+        "upsert_markdown_sections",
+        "patch_file",
+        "run_command",
+        "validate_artifacts",
+    ]
+    tool_lines = [
+        f"- {tool_name} ({CORE_TOOL_DESCRIPTIONS[tool_name]})"
+        for tool_name in ordered_tools
+        if _tool_is_available(tool_name, tools_allowed)
+    ]
+    return "Available tools:\n" + "\n".join(tool_lines)
+
+
 def _build_asset_tool_section(tools_allowed: List[str], configured_assets: Dict[str, Any] | None) -> str:
     configured_assets = configured_assets or {}
     asset_lines: List[str] = []
@@ -1884,10 +1989,16 @@ def _build_tool_name_options(tools_allowed: List[str], configured_assets: Dict[s
 
     if _tool_is_available("write_file", tools_allowed):
         tool_names.append("write_file")
+    if _tool_is_available("append_file", tools_allowed):
+        tool_names.append("append_file")
     if _tool_is_available("patch_file", tools_allowed):
         tool_names.append("patch_file")
+    if _tool_is_available("upsert_markdown_sections", tools_allowed):
+        tool_names.append("upsert_markdown_sections")
     if _tool_is_available("run_command", tools_allowed):
         tool_names.append("run_command")
+    if _tool_is_available("validate_artifacts", tools_allowed):
+        tool_names.append("validate_artifacts")
     if configured_assets.get("repositories") and _tool_is_available("clone_repository", tools_allowed):
         tool_names.append("clone_repository")
     if configured_assets.get("databases") and _tool_is_available("query_database", tools_allowed):
@@ -1906,6 +2017,14 @@ def _build_tool_contract_section(tools_allowed: List[str], candidate_files: List
         write_examples.append(
             '- `write_file`: `{"path":"architecture.md","content":"..."}`. `path` is relative to `artifacts/`.'
         )
+    if _tool_is_available("append_file", tools_allowed):
+        write_examples.append(
+            '- `append_file`: `{"path":"architecture.md","content":"\\n\\nmore content"}`. Appends raw content to the end of the file under `artifacts/`.'
+        )
+    if _tool_is_available("upsert_markdown_sections", tools_allowed):
+        write_examples.append(
+            '- `upsert_markdown_sections`: `{"path":"architecture.md","sections":[{"heading":"模块边界","content":"...","mode":"replace_by_heading"}]}`. Upserts markdown sections by heading and can skip near-duplicate sections.'
+        )
     if _tool_is_available("patch_file", tools_allowed):
         write_examples.append(
             '- `patch_file`: `{"path":"architecture.md","old_content":"...","new_content":"..."}`. `path` is relative to `artifacts/`.'
@@ -1913,6 +2032,10 @@ def _build_tool_contract_section(tools_allowed: List[str], candidate_files: List
     if _tool_is_available("run_command", tools_allowed):
         write_examples.append(
             '- `run_command`: `{"command":"python -m unittest","timeout":30}`. Runs from project root `.`.'
+        )
+    if _tool_is_available("validate_artifacts", tools_allowed):
+        write_examples.append(
+            '- `validate_artifacts`: `{"target_files":["architecture.md","module-map.json"]}`. Validates generated files under `artifacts/`; omit `target_files` to validate all selected outputs.'
         )
 
     write_block = "\n".join(write_examples)
@@ -2792,12 +2915,9 @@ def build_react_system_prompt(
     topic_ownership = output_plan.get("topic_ownership") if isinstance(output_plan.get("topic_ownership"), dict) else None
     shared_context_block = _build_shared_context_prompt_block(capability, topic_ownership)
     tool_contract_section = _build_tool_contract_section(tools_allowed, candidate_files)
+    available_tools_section = _build_available_tool_section(tools_allowed)
     tools_section = f"""
-Available tools:
-- list_files / read_file_chunk / grep_search / extract_structure / extract_lookup_values (Read operations)
-- write_file (Write scratch drafts only when they materially help evidence collection)
-- patch_file (Make partial corrections to scratch drafts under `artifacts/`)
-- run_command (Execute shell commands from project root when explicitly allowed)
+{available_tools_section}
 
 {tool_contract_section}
 """
@@ -2888,7 +3008,7 @@ Rules:
 6. By step 2, you should already have grounded yourself on the correct baseline requirement content.
 7. Do NOT write or patch the final expected artifact paths during ReAct. If you are ready to produce the final expected artifacts, return `done=true` instead.
 8. Only use `actions` for short read-only batches such as `read_file_chunk`, `extract_structure`, `grep_search`, or `extract_lookup_values`.
-9. Never batch `write_file`, `patch_file`, `run_command`, `clone_repository`, `query_database`, or `query_knowledge_base`; those must be emitted as a single action step.
+9. Never batch `write_file`, `patch_file`, `run_command` or other write/execution tools such as `append_file`, `upsert_markdown_sections`, `clone_repository`, `query_database`, or `query_knowledge_base`; those must be emitted as a single action step.
 10. Later actions in the same batch cannot see outputs from earlier actions in that batch, so only batch independent or low-risk steps.
 11. Do not gather evidence merely to recreate generic shared-context sections such as {GENERIC_SHARED_CONTEXT_SECTION_EXAMPLES} when they are already owned upstream.
 12. When reading upstream artifacts, extract only the expert-specific delta you need for the selected outputs instead of planning to restate large blocks verbatim.
@@ -2977,12 +3097,17 @@ Requirements:
 def build_finalization_system_prompt(
     capability: str,
     prompt_instructions: str,
+    tools_allowed: List[str],
     expected_files: List[str],
     candidate_files: List[str],
     workspace_paths: Dict[str, str],
     topic_ownership: Optional[Dict[str, Any]] = None,
+    configured_assets: Optional[Dict[str, Any]] = None,
 ) -> str:
-    tool_contract_section = _build_tool_contract_section(["write_file", "patch_file"], candidate_files)
+    tool_contract_section = _build_tool_contract_section(tools_allowed, candidate_files)
+    available_tools_section = _build_available_tool_section(tools_allowed)
+    asset_tool_section = _build_asset_tool_section(tools_allowed, configured_assets)
+    tool_name_options = _build_tool_name_options(tools_allowed, configured_assets)
     expected_block = "\n".join(f"- {file_name}" for file_name in expected_files)
     shared_context_block = _build_shared_context_prompt_block(capability, topic_ownership)
     workspace_block = "\n".join(
@@ -3017,9 +3142,9 @@ Workspace files you should use first:
 {shared_context_block}
 
 {custom_section}
-Available tools:
-- list_files / read_file_chunk / grep_search / extract_structure (read project files and workspace files)
-- write_file / patch_file (write or refine files under `artifacts/`)
+{available_tools_section}
+
+{asset_tool_section}
 
 {tool_contract_section}
 
@@ -3027,9 +3152,9 @@ Rules:
 1. The full requirement text is intentionally NOT embedded here. Start from the requirement digest and coverage brief, and only read the baseline file again if needed.
 2. Prefer reading `artifacts/{workspace_paths['workspace_index']}`, `artifacts/{workspace_paths['output_plan']}`, `artifacts/{workspace_paths['coverage_brief']}`, and `artifacts/{workspace_paths['requirement_digest']}` before writing.
 3. Write final artifacts incrementally. One file at a time is preferred.
-4. You may patch an existing final artifact when refining it.
-5. Use `write_file` for new files and `patch_file` for targeted corrections.
-6. Batch only read-only actions. Never batch `write_file` or `patch_file`.
+4. Use only the write or validation tools that the runtime tool contract exposes for this expert.
+5. When multiple permitted write tools exist, prefer the narrowest one that preserves grounded structure.
+6. Batch only read-only actions. Never batch `write_file`, `append_file`, `upsert_markdown_sections`, or `patch_file`.
 7. For non-owner artifacts, start directly with expert-specific sections. Do not recreate generic background, scope, or goal sections from the digest.
 8. Do not copy large blocks from the requirement digest or upstream artifacts. Synthesize and cite them briefly.
 9. Set `done=true` only when every expected artifact exists under `artifacts/` and is materially complete.
@@ -3038,7 +3163,7 @@ Return JSON in artifacts.decision:
 {{
   "done": false,
   "thought": "why this step is needed",
-  "tool_name": "list_files" | "read_file_chunk" | "grep_search" | "extract_structure" | "write_file" | "patch_file" | "none",
+  "tool_name": {tool_name_options},
   "tool_input": {{}},
   "actions": [
     {{"tool_name":"read_file_chunk","tool_input":{{"path":"artifacts/{workspace_paths['workspace_index']}","start_line":1,"end_line":200}}}},
@@ -3064,16 +3189,20 @@ def default_next_finalization_decision(
     agent_config: Optional["AgentFullConfig"] = None,
 ) -> Dict[str, Any]:
     prompt_instructions = ""
+    tools_allowed = build_effective_tools([])
     if agent_config:
         prompt_instructions = agent_config.prompt_instructions or ""
+        tools_allowed = _resolve_effective_tools(agent_config)
 
     system_prompt = build_finalization_system_prompt(
         capability=capability,
         prompt_instructions=prompt_instructions,
+        tools_allowed=tools_allowed,
         expected_files=expected_files,
         candidate_files=candidate_files,
         workspace_paths=workspace_paths,
         topic_ownership=payload.get("topic_ownership") if isinstance(payload.get("topic_ownership"), dict) else None,
+        configured_assets=payload.get("configured_assets") if isinstance(payload.get("configured_assets"), dict) else None,
     )
 
     payload_summary = _compact_payload_for_finalization_prompt(payload, expected_files)
@@ -3144,12 +3273,12 @@ def default_next_react_decision(
     # Get configuration
     prompt_instructions = ""
     workflow_steps = None
-    tools_allowed = []
+    tools_allowed = build_effective_tools([])
     
     if agent_config:
         prompt_instructions = agent_config.prompt_instructions or ""
         workflow_steps = agent_config.workflow_steps or None
-        tools_allowed = agent_config.tools_allowed or []
+        tools_allowed = _resolve_effective_tools(agent_config)
     
     bootstrap_decision = _build_bootstrap_decision(candidate_files, observations, step)
     if bootstrap_decision:
@@ -3473,6 +3602,12 @@ async def run_dynamic_subagent(
         except RuntimeError:
             # Registry not initialized, proceed without config
             pass
+
+    effective_tools = _resolve_effective_tools(
+        agent_config,
+        allow_unsafe_default=not enable_permission_check,
+    )
+    effective_tool_set = set(effective_tools)
     
     project_id = state["project_id"]
     version = state["version"]
@@ -4112,6 +4247,7 @@ async def run_dynamic_subagent(
                             final_reasoning_sections.append(fallback_output.reasoning)
 
                     current_content = target_path.read_text(encoding="utf-8") if target_path.exists() else ""
+                    markdown_upsert_sections: List[Dict[str, Any]] = []
                     if Path(target_file).suffix.lower() == ".md":
                         generated_content, removed_sections = _dedupe_markdown_sections(
                             generated_content,
@@ -4126,68 +4262,78 @@ async def run_dynamic_subagent(
                                 f"[{capability}] Finalization step {step}: skipped `{target_file}` batch {batch.get('batch_index')}/{batch.get('batch_total')}` because it only repeated existing sections."
                             )
                             continue
+                        generated_content, was_trimmed = _enforce_markdown_budget(generated_content, artifact_char_budget)
+                        if was_trimmed:
+                            history_updates.append(
+                                f"[{capability}] Finalization step {step}: controller truncated `{target_file}` to the markdown size budget."
+                            )
+                        if _should_use_markdown_upsert(state):
+                            markdown_upsert_sections = _markdown_content_to_upsert_sections(generated_content)
+                    if markdown_upsert_sections and "upsert_markdown_sections" in effective_tool_set:
+                        tool_name = "upsert_markdown_sections"
+                        tool_input = {
+                            "path": target_file,
+                            "sections": markdown_upsert_sections,
+                            "dedupe_strategy": "heading_or_similar",
+                            "similarity_threshold": 0.9,
+                            "root_dir": str(artifacts_dir),
+                        }
+                        decision_tool_input = {
+                            "path": target_file,
+                            "section_count": len(markdown_upsert_sections),
+                            "dedupe_strategy": "heading_or_similar",
+                            "similarity_threshold": 0.9,
+                        }
                     is_append_batch = bool(current_content) and int(batch.get("batch_total") or 1) > 1 and int(batch.get("batch_index") or 1) > 1
-                    if is_append_batch:
-                        new_content = f"{current_content.rstrip()}\n\n{generated_content.lstrip()}"
-                        if Path(target_file).suffix.lower() == ".md":
-                            new_content, removed_sections = _dedupe_markdown_sections(new_content)
-                            if removed_sections:
-                                history_updates.append(
-                                    f"[{capability}] Finalization step {step}: removed {removed_sections} duplicate markdown section(s) after merging `{target_file}`."
-                                )
-                            new_content, was_trimmed = _enforce_markdown_budget(new_content, artifact_char_budget)
-                            if was_trimmed:
-                                history_updates.append(
-                                    f"[{capability}] Finalization step {step}: controller truncated `{target_file}` to the markdown size budget."
-                                )
-                        tool_name = "patch_file"
-                        tool_input = {
-                            "path": target_file,
-                            "old_content": current_content,
-                            "new_content": new_content,
-                            "root_dir": str(artifacts_dir),
-                        }
-                        decision_tool_input = {
-                            "path": target_file,
-                            "old_content_summary": f"<omitted {len(current_content)} chars>",
-                            "new_content_summary": f"<omitted {len(new_content)} chars>",
-                        }
-                    elif target_path.exists():
-                        if Path(target_file).suffix.lower() == ".md":
-                            generated_content, was_trimmed = _enforce_markdown_budget(generated_content, artifact_char_budget)
-                            if was_trimmed:
-                                history_updates.append(
-                                    f"[{capability}] Finalization step {step}: controller truncated `{target_file}` to the markdown size budget."
-                                )
-                        tool_name = "patch_file"
-                        tool_input = {
-                            "path": target_file,
-                            "old_content": current_content,
-                            "new_content": generated_content,
-                            "root_dir": str(artifacts_dir),
-                        }
-                        decision_tool_input = {
-                            "path": target_file,
-                            "old_content_summary": f"<omitted {len(current_content)} chars>",
-                            "new_content_summary": f"<omitted {len(generated_content)} chars>",
-                        }
-                    else:
-                        if Path(target_file).suffix.lower() == ".md":
-                            generated_content, was_trimmed = _enforce_markdown_budget(generated_content, artifact_char_budget)
-                            if was_trimmed:
-                                history_updates.append(
-                                    f"[{capability}] Finalization step {step}: controller truncated `{target_file}` to the markdown size budget."
-                                )
-                        tool_name = "write_file"
-                        tool_input = {
-                            "path": target_file,
-                            "content": generated_content,
-                            "root_dir": str(artifacts_dir),
-                        }
-                        decision_tool_input = {
-                            "path": target_file,
-                            "content_summary": f"<omitted {len(generated_content)} chars>",
-                        }
+                    if markdown_upsert_sections and "upsert_markdown_sections" not in effective_tool_set:
+                        history_updates.append(
+                            f"[{capability}] Finalization step {step}: markdown upsert is not permitted for `{target_file}`; falling back to the permitted file write path."
+                        )
+
+                    if not (markdown_upsert_sections and "upsert_markdown_sections" in effective_tool_set):
+                        content_to_persist = generated_content
+                        if is_append_batch:
+                            content_to_persist = f"{current_content.rstrip()}\n\n{generated_content.lstrip()}"
+                            if Path(target_file).suffix.lower() == ".md":
+                                content_to_persist, removed_sections = _dedupe_markdown_sections(content_to_persist)
+                                if removed_sections:
+                                    history_updates.append(
+                                        f"[{capability}] Finalization step {step}: removed {removed_sections} duplicate markdown section(s) after merging `{target_file}`."
+                                    )
+                                content_to_persist, was_trimmed = _enforce_markdown_budget(content_to_persist, artifact_char_budget)
+                                if was_trimmed:
+                                    history_updates.append(
+                                        f"[{capability}] Finalization step {step}: controller truncated `{target_file}` to the markdown size budget."
+                                    )
+
+                        if target_path.exists() and "patch_file" in effective_tool_set:
+                            tool_name = "patch_file"
+                            tool_input = {
+                                "path": target_file,
+                                "old_content": current_content,
+                                "new_content": content_to_persist,
+                                "root_dir": str(artifacts_dir),
+                            }
+                            decision_tool_input = {
+                                "path": target_file,
+                                "old_content_summary": f"<omitted {len(current_content)} chars>",
+                                "new_content_summary": f"<omitted {len(content_to_persist)} chars>",
+                            }
+                        elif "write_file" in effective_tool_set:
+                            tool_name = "write_file"
+                            tool_input = {
+                                "path": target_file,
+                                "content": content_to_persist,
+                                "root_dir": str(artifacts_dir),
+                            }
+                            decision_tool_input = {
+                                "path": target_file,
+                                "content_summary": f"<omitted {len(content_to_persist)} chars>",
+                            }
+                        else:
+                            raise RuntimeError(
+                                f"Finalization cannot persist `{target_file}` because expert `{capability}` does not permit any writable finalization tool."
+                            )
 
                     decision = {
                         "done": False,

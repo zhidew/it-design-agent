@@ -20,12 +20,10 @@ description: Validate completeness and consistency of the generated design packa
 - `artifacts/validation-report.md`
 - `evidence/validator.json`
 
-# Tools
-- list_files
-- read_file_chunk
-- grep_search
-- extract_structure
-- run_command
+# Tool Usage Notes
+- Follow the runtime-generated tool contract from the expert YAML. Do not assume a tool is available unless the controller prompt exposes it.
+- Prefer read and evidence-gathering steps first. Use write tools only to persist the owned validation artifacts or make bounded corrections under `artifacts/`.
+- Use execution or validation tools only when they are explicitly exposed for this run and they are needed to confirm machine-readable outputs. Do not invent ad-hoc external tools.
 
 # Notes
 - Validation should surface actionable issues without inventing missing evidence.

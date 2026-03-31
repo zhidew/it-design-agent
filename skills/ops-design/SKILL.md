@@ -1,57 +1,13 @@
----
+﻿---
 name: ops-design
 description: 设计 SLO、告警规则、监控指标及发布回滚的运行手册，确保服务生产就绪。
 ---
 
-# 工作流 (Workflow)
+# Tool Usage Notes
 
-1. **资产读取**：读取需求基线以及现有的运维相关资产（如历史 SLO、告警规则）。
-2. **SLO 分析**：使用 `extract_structure` 和 `grep_search` 分析可用性、延迟、回滚、告警等指标。
-3. **SLO 生成**：生成服务等级目标 `artifacts/slo.yaml`。
-4. **可观测性生成**：生成监控指标和告警规范 `artifacts/observability-spec.yaml`。
-5. **Runbook 生成**：生成部署运行手册 `artifacts/deployment-runbook.md`。
-6. **证据沉淀**：将运维设计依据写入 `evidence/ops-design.json`。
-
-# 输入参数 (Inputs)
-
-## 必需参数 (Required)
-
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `requirements` | string/path | 运维层面的业务需求文件路径 |
-| `existing_assets` | string/path | 当前生产环境的 SLO 文档或告警配置路径 |
-| `output_root` | string/path | 项目设计包的根路径 |
-
-## 可选参数 (Optional)
-
-| 参数 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `context` | string/path | - | 上下文信息文件路径 |
-
-# 输出产物 (Output Artifacts)
-
-## 必需产物 (Always Required)
-
-| 产物路径 | 说明 |
-|----------|------|
-| `artifacts/slo.yaml` | SLI/SLO 目标定义（可用性、延迟等）|
-| `artifacts/observability-spec.yaml` | 监控指标、Trace Span、告警规则定义 |
-| `artifacts/deployment-runbook.md` | 部署检查清单和回滚触发条件 |
-| `evidence/ops-design.json` | 运维设计依据和证据 |
-
-# 工具集 (Tools)
-
-## 文件系统工具
-
-| 工具名称 | 说明 |
-|----------|------|
-| `list_files` | 列出目录下的文件 |
-| `read_file_chunk` | 读取文件片段 |
-| `grep_search` | 搜索运维关键词（availability, latency, rollback, alert, Kafka, tracing, error rate, p99, dependency）|
-| `extract_structure` | 提取文件结构 |
-| `write_file` | 写入设计产物 |
-| `patch_file` | 修补已有文件 |
-
+- Follow the runtime-generated tool contract from the expert YAML. Do not assume a tool is available unless the controller prompt exposes it.
+- Prefer read and grounding steps first. Use write tools only to persist owned artifacts or make bounded corrections under `artifacts/`.
+- Treat optional validators or external techniques as non-guaranteed unless the runtime explicitly exposes them for this run.
 # 参考资料 (References)
 
 - 模板使用 `assets/templates/slo.yaml`、`assets/templates/observability-spec.yaml` 和 `assets/templates/deployment-runbook.md`。
@@ -115,3 +71,5 @@ description: 设计 SLO、告警规则、监控指标及发布回滚的运行手
 - **slo.yaml**: 包含 service、slos 数组（sli_name、target）。
 - **observability-spec.yaml**: 包含 service、tracing、alerts 定义。
 - **deployment-runbook.md**: 包含检查清单、回滚触发条件、核心场景保护策略。
+
+

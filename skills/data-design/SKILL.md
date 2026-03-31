@@ -1,66 +1,13 @@
----
+﻿---
 name: data-design
 description: 负责数据库表结构设计、索引优化、实体关系映射（ER图）以及平滑的数据迁移与回滚策略。确保数据设计的向后兼容性和高性能。
 ---
 
-# 工作流 (Workflow)
+# Tool Usage Notes
 
-1. **资产读取**：在开始设计前，读取需求基线以及现有的数据库设计资产（如历史 DDL、数据字典、慢查询日志）。
-2. **结构生成**：基于需求，利用 `assets/templates/` 中的模板，生成增量或全量的 `artifacts/schema.sql`，明确表结构、字段类型、约束和索引。
-3. **ER 图渲染**：抽取 `schema.sql` 中的实体与外键/逻辑关系，生成 Mermaid 格式的实体关系图 `artifacts/er.md`。
-4. **迁移策略**：评估结构变更对存量数据的影响。如果存在破坏性变更或大表 DDL，必须在 `artifacts/migration-plan.md` 中提供详细的迁移与数据回滚方案。
-5. **证据沉淀**：将设计依据（如依赖了哪些现存表）和校验结果（如通过了 sqlfluff 检查）写入 `evidence/data-design.json`。
-6. **校验门禁**：如果缺少回滚方案或 `schema.sql` 语法有误，则直接终止工作流并抛出错误。
-
-# 输入参数 (Inputs)
-
-## 必需参数 (Required)
-
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `requirements` | string/path | 数据层面的业务需求文件路径（如新增属性、优化查询）|
-| `existing_assets` | string/path | 当前生产环境的 DDL、数据字典或索引信息路径 |
-| `output_root` | string/path | 项目设计包的根路径 |
-
-## 可选参数 (Optional)
-
-| 参数 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `constraints` | string/path | - | 约束策略文件路径 |
-| `context` | string/path | - | 上下文信息文件路径 |
-| `data_volume_estimation` | string | - | 预估的数据量，用于指导分库分表或索引策略 |
-
-# 输出产物 (Output Artifacts)
-
-## 必需产物 (Always Required)
-
-| 产物路径 | 说明 |
-|----------|------|
-| `artifacts/schema.sql` | 数据库 DDL 脚本（表结构、字段类型、约束和索引）|
-| `artifacts/er.md` | 基于 Mermaid 的实体关系图及说明 |
-| `artifacts/migration-plan.md` | 数据迁移、兼容性处理及回滚计划 |
-| `evidence/data-design.json` | 资产采纳和校验过程的证据 |
-
-# 工具集 (Tools)
-
-## 文件系统工具
-
-| 工具名称 | 说明 |
-|----------|------|
-| `list_files` | 列出目录下的文件 |
-| `read_file_chunk` | 读取文件片段 |
-| `grep_search` | 搜索文件内容 |
-| `extract_structure` | 提取文件结构 |
-| `write_file` | 写入设计产物 |
-| `patch_file` | 修补已有文件 |
-
-## 数据处理工具
-
-| 工具名称 | 说明 |
-|----------|------|
-| `extract_lookup_values` | 提取枚举值 |
-| `run_command` | 执行命令（如 sqlfluff 校验）|
-
+- Follow the runtime-generated tool contract from the expert YAML. Do not assume a tool is available unless the controller prompt exposes it.
+- Prefer read and grounding steps first. Use write tools only to persist owned artifacts or make bounded corrections under `artifacts/`.
+- Treat optional validators or external techniques as non-guaranteed unless the runtime explicitly exposes them for this run.
 # 参考资料 (References)
 
 - 模板使用 `assets/templates/schema.sql`、`assets/templates/er.md` 和 `assets/templates/migration-plan.md`。
@@ -124,3 +71,5 @@ description: 负责数据库表结构设计、索引优化、实体关系映射�
 - **schema.sql**: 包含所有表结构定义、字段类型、约束和索引。
 - **er.md**: Mermaid 格式的实体关系图，展示表之间的关联关系。
 - **migration-plan.md**: 迁移步骤、兼容性处理和回滚方案。
+
+

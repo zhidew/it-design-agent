@@ -23,13 +23,10 @@ description: Build a grounded domain model, DDD structure description, and conte
 - `artifacts/context-map.md`
 - `evidence/ddd-structure.json`
 
-# Tools
-- list_files
-- read_file_chunk
-- grep_search
-- extract_structure
-- write_file
-- patch_file
+# Tool Usage Notes
+- Follow the runtime-generated tool contract from the expert YAML. Do not assume a tool is available unless the controller prompt exposes it.
+- Prefer read and grounding steps first. Use write tools only to persist owned DDD artifacts or make bounded corrections under `artifacts/`.
+- Reuse upstream ownership boundaries and terminology. If an upstream artifact already settled a name or scope, reference it instead of redefining it here.
 
 # Notes
 - Keep aggregate boundaries and invariants explicit.

@@ -1,61 +1,13 @@
----
+﻿---
 name: architecture-mapping
 description: 分析业务需求与既有系统结构，识别系统边界、容器划分及模块约束，产出 C4 架构图与模块依赖映射。
 ---
 
-# 工作流 (Workflow)
+# Tool Usage Notes
 
-1. **资产读取**：读取需求基线以及现有的架构资产（如历史架构文档、系统边界说明）。
-2. **结构分析**：使用 `extract_structure` 分析需求文件的结构和关键概念。
-3. **架构生成**：基于需求，生成 C4 上下文视图和容器视图的 `artifacts/architecture.md`。
-4. **模块映射**：定义模块边界和允许的依赖关系，生成 `artifacts/module-map.json`。
-5. **证据沉淀**：将架构决策依据写入 `evidence/architecture-mapping.json`。
-
-# 输入参数 (Inputs)
-
-## 必需参数 (Required)
-
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `requirements` | string/path | 架构层面的业务需求文件路径 |
-| `existing_assets` | string/path | 当前生产环境的架构文档或模块说明路径 |
-| `output_root` | string/path | 项目设计包的根路径 |
-
-## 可选参数 (Optional)
-
-| 参数 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `context` | string/path | - | 上下文信息文件路径 |
-
-# 输出产物 (Output Artifacts)
-
-## 必需产物 (Always Required)
-
-| 产物路径 | 说明 |
-|----------|------|
-| `artifacts/architecture.md` | 包含 C4 Context 和 Container 视图的架构文档（Mermaid 格式）|
-| `artifacts/module-map.json` | 模块边界和依赖约束定义 |
-| `evidence/architecture-mapping.json` | 架构决策依据和证据 |
-
-# 工具集 (Tools)
-
-## 文件系统工具
-
-| 工具名称 | 说明 |
-|----------|------|
-| `list_files` | 列出目录下的文件 |
-| `read_file_chunk` | 读取文件片段 |
-| `grep_search` | 搜索文件内容 |
-| `extract_structure` | 提取文件结构 |
-| `write_file` | 写入设计产物 |
-| `patch_file` | 修补已有文件 |
-
-## 数据处理工具
-
-| 工具名称 | 说明 |
-|----------|------|
-| `extract_lookup_values` | 提取枚举值 |
-
+- Follow the runtime-generated tool contract from the expert YAML. Do not assume a tool is available unless the controller prompt exposes it.
+- Prefer read and grounding steps first. Use write tools only to persist owned artifacts or make bounded corrections under `artifacts/`.
+- Treat optional validators or external techniques as non-guaranteed unless the runtime explicitly exposes them for this run.
 # 参考资料 (References)
 
 - 模板使用 `assets/templates/architecture.md` 和 `assets/templates/module-map.json`。
@@ -118,3 +70,5 @@ description: 分析业务需求与既有系统结构，识别系统边界、容�
 
 - **architecture.md**: 包含 Mermaid 格式的 C4Context 和 C4Container 图表。
 - **module-map.json**: 包含 modules 数组，每个模块定义 name 和 allowed_dependencies。
+
+

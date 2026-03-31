@@ -2330,7 +2330,7 @@ export function ProjectDetail() {
             </button>
 
             {isLogsOpen && (
-              <div className="bg-gray-900 rounded-2xl p-4 font-mono text-[11px] leading-relaxed text-gray-300 overflow-y-auto max-h-[432px] space-y-1 animate-in slide-in-from-top-2 duration-300">
+              <div className="bg-gray-900 rounded-2xl p-4 font-mono text-[11px] leading-relaxed text-gray-300 overflow-y-auto max-h-[691px] space-y-1 animate-in slide-in-from-top-2 duration-300">
                 {executionEntries.length > 0 ? (
                   executionEntries.map((entry, idx) => (
                     entry.kind === 'tool' ? (

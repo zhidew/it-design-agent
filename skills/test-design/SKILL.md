@@ -1,55 +1,13 @@
----
+﻿---
 name: test-design
 description: 提取测试输入条件，生成覆盖率映射矩阵，覆盖边界测试、异常用例、混沌测试和并发测试。
 ---
 
-# 工作流 (Workflow)
+# Tool Usage Notes
 
-1. **资产读取**：读取需求基线以及现有的测试相关资产（如历史测试用例、测试策略文档）。
-2. **测试分析**：使用 `extract_structure` 和 `grep_search` 分析边界测试、无效用例、混沌测试、并发测试。
-3. **测试输入生成**：生成测试输入条件 `artifacts/test-inputs.md`。
-4. **覆盖率映射生成**：生成测试覆盖率映射 `artifacts/coverage-map.json`。
-5. **证据沉淀**：将测试设计依据写入 `evidence/test-design.json`。
-
-# 输入参数 (Inputs)
-
-## 必需参数 (Required)
-
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `requirements` | string/path | 测试层面的业务需求文件路径 |
-| `existing_assets` | string/path | 当前生产环境的测试用例或测试策略文档路径 |
-| `output_root` | string/path | 项目设计包的根路径 |
-
-## 可选参数 (Optional)
-
-| 参数 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `context` | string/path | - | 上下文信息文件路径 |
-
-# 输出产物 (Output Artifacts)
-
-## 必需产物 (Always Required)
-
-| 产物路径 | 说明 |
-|----------|------|
-| `artifacts/test-inputs.md` | 测试输入条件列表（边界、无效、集成失败、并发测试想法）|
-| `artifacts/coverage-map.json` | 设计关注点到自动化测试预期的映射 |
-| `evidence/test-design.json` | 测试设计依据和证据 |
-
-# 工具集 (Tools)
-
-## 文件系统工具
-
-| 工具名称 | 说明 |
-|----------|------|
-| `list_files` | 列出目录下的文件 |
-| `read_file_chunk` | 读取文件片段 |
-| `grep_search` | 搜索测试关键词（invalid, boundary, idempotent, timeout, retry, concurrency, duplicate, status, callback）|
-| `extract_structure` | 提取文件结构 |
-| `write_file` | 写入设计产物 |
-| `patch_file` | 修补已有文件 |
-
+- Follow the runtime-generated tool contract from the expert YAML. Do not assume a tool is available unless the controller prompt exposes it.
+- Prefer read and grounding steps first. Use write tools only to persist owned artifacts or make bounded corrections under `artifacts/`.
+- Treat optional validators or external techniques as non-guaranteed unless the runtime explicitly exposes them for this run.
 # 参考资料 (References)
 
 - 模板使用 `assets/templates/test-inputs.md` 和 `assets/templates/coverage-map.json`。
@@ -113,3 +71,5 @@ description: 提取测试输入条件，生成覆盖率映射矩阵，覆盖边�
 
 - **test-inputs.md**: 包含边界测试、无效用例、混沌测试、并发测试的测试想法列表。
 - **coverage-map.json**: 包含 coverage_rules 和 mapped_test_cases 数组。
+
+

@@ -47,6 +47,7 @@ class ToolParamSpec:
     expected_kind: str = "any"
     must_exist: bool = False
     allow_scalar_list: bool = False
+    preserve_whitespace: bool = False
 
 
 @dataclass(frozen=True)
@@ -233,7 +234,8 @@ def execute_tool_with_permission(
             context={
                 "tool_name": tool_name,
                 "agent_capability": config.manifest.capability,
-                "allowed_tools": config.tools_allowed or [],
+                "allowed_tools": config.effective_tools,
+                "explicit_tools": config.tools_allowed or [],
             },
             suggestions=["Choose a permitted tool or update the agent tool allowlist."],
         )
@@ -440,6 +442,10 @@ def _normalize_parameter_value(
         return _normalize_string_param(tool_name, param_name, value, spec)
     if spec.kind == "int":
         return _normalize_int_param(param_name, value, normalization)
+    if spec.kind == "float":
+        return _normalize_float_param(param_name, value, normalization)
+    if spec.kind == "json":
+        return _normalize_json_param(param_name, value, spec)
     if spec.kind == "path":
         return _normalize_path_param(param_name, value, spec, root_dir)
     if spec.kind == "path_list":
@@ -470,7 +476,7 @@ def _normalize_string_param(
             suggestions=[f"Pass `{param_name}` as a string value."],
         )
 
-    normalized_value = value.strip()
+    normalized_value = value if spec.preserve_whitespace else value.strip()
     if not normalized_value and spec.required:
         raise ToolInputError(
             TOOL_ERROR_INVALID_INPUT,
@@ -523,6 +529,59 @@ def _normalize_int_param(param_name: str, value: Any, normalization: Dict[str, A
             f"`{param_name}` must be an integer.",
             context={"parameter": param_name, "received_type": type(value).__name__},
             suggestions=[f"Pass `{param_name}` as an integer value."],
+        )
+    return value
+
+
+def _normalize_float_param(param_name: str, value: Any, normalization: Dict[str, Any]) -> float:
+    if isinstance(value, bool):
+        raise ToolInputError(
+            TOOL_ERROR_INVALID_INPUT,
+            f"`{param_name}` must be a float.",
+            context={"parameter": param_name, "received_type": type(value).__name__},
+            suggestions=[f"Pass `{param_name}` as a float value."],
+        )
+
+    if isinstance(value, str):
+        stripped = value.strip()
+        try:
+            value = float(stripped)
+        except ValueError as exc:
+            raise ToolInputError(
+                TOOL_ERROR_INVALID_INPUT,
+                f"`{param_name}` must be a float.",
+                context={"parameter": param_name, "received_value": value},
+                suggestions=[f"Use a numeric value when setting `{param_name}`."],
+            ) from exc
+        normalization["applied"].append(f"Coerced string parameter `{param_name}` to float.")
+
+    if isinstance(value, int):
+        value = float(value)
+
+    if not isinstance(value, float):
+        raise ToolInputError(
+            TOOL_ERROR_INVALID_INPUT,
+            f"`{param_name}` must be a float.",
+            context={"parameter": param_name, "received_type": type(value).__name__},
+            suggestions=[f"Pass `{param_name}` as a float value."],
+        )
+    return value
+
+
+def _normalize_json_param(param_name: str, value: Any, spec: ToolParamSpec) -> Any:
+    if spec.expected_kind == "list" and not isinstance(value, list):
+        raise ToolInputError(
+            TOOL_ERROR_INVALID_INPUT,
+            f"`{param_name}` must be a list.",
+            context={"parameter": param_name, "received_type": type(value).__name__},
+            suggestions=[f"Pass `{param_name}` as a JSON array."],
+        )
+    if spec.expected_kind == "dict" and not isinstance(value, dict):
+        raise ToolInputError(
+            TOOL_ERROR_INVALID_INPUT,
+            f"`{param_name}` must be an object.",
+            context={"parameter": param_name, "received_type": type(value).__name__},
+            suggestions=[f"Pass `{param_name}` as a JSON object."],
         )
     return value
 
@@ -915,6 +974,24 @@ def _run_write_file(tool_input: Dict[str, Any]) -> Dict[str, Any]:
         raise _build_wrapped_error("write_file", tool_input, exc) from exc
 
 
+def _run_append_file(tool_input: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        from .append_file import append_file
+
+        return append_file(_require_root_dir(tool_input), tool_input)
+    except (ValueError, FileNotFoundError) as exc:
+        raise _build_wrapped_error("append_file", tool_input, exc) from exc
+
+
+def _run_upsert_markdown_sections(tool_input: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        from .upsert_markdown_sections import upsert_markdown_sections
+
+        return upsert_markdown_sections(_require_root_dir(tool_input), tool_input)
+    except (ValueError, FileNotFoundError) as exc:
+        raise _build_wrapped_error("upsert_markdown_sections", tool_input, exc) from exc
+
+
 def _run_patch_file(tool_input: Dict[str, Any]) -> Dict[str, Any]:
     try:
         from .patch_file import patch_file
@@ -952,6 +1029,8 @@ _TOOL_REGISTRY: Dict[str, Callable[[Dict[str, Any]], Dict[str, Any]]] = {
     "query_database": _run_query_database,
     "query_knowledge_base": _run_query_knowledge_base,
     "write_file": _run_write_file,
+    "append_file": _run_append_file,
+    "upsert_markdown_sections": _run_upsert_markdown_sections,
     "patch_file": _run_patch_file,
     "run_command": _run_run_command,
     "validate_artifacts": _run_validate_artifacts,
@@ -1048,7 +1127,23 @@ _TOOL_SCHEMAS: Dict[str, ToolSchema] = {
         parameters={
             "root_dir": ToolParamSpec("path", required=True, path_mode="root_dir"),
             "path": ToolParamSpec("path", required=True, aliases=("file_path",), path_mode="within_root", expected_kind="file"),
-            "content": ToolParamSpec("string", required=True),
+            "content": ToolParamSpec("string", required=True, preserve_whitespace=True),
+        }
+    ),
+    "append_file": ToolSchema(
+        parameters={
+            "root_dir": ToolParamSpec("path", required=True, path_mode="root_dir"),
+            "path": ToolParamSpec("path", required=True, aliases=("file_path",), path_mode="within_root", expected_kind="file"),
+            "content": ToolParamSpec("string", required=True, preserve_whitespace=True),
+        }
+    ),
+    "upsert_markdown_sections": ToolSchema(
+        parameters={
+            "root_dir": ToolParamSpec("path", required=True, path_mode="root_dir"),
+            "path": ToolParamSpec("path", required=True, aliases=("file_path",), path_mode="within_root", expected_kind="file"),
+            "sections": ToolParamSpec("json", required=True, expected_kind="list"),
+            "dedupe_strategy": ToolParamSpec("string", default="heading_or_similar"),
+            "similarity_threshold": ToolParamSpec("float", default=0.9),
         }
     ),
     "patch_file": ToolSchema(
@@ -1062,8 +1157,8 @@ _TOOL_SCHEMAS: Dict[str, ToolSchema] = {
                 expected_kind="file",
                 must_exist=True,
             ),
-            "old_content": ToolParamSpec("string", required=True),
-            "new_content": ToolParamSpec("string", required=True),
+            "old_content": ToolParamSpec("string", required=True, preserve_whitespace=True),
+            "new_content": ToolParamSpec("string", required=True, preserve_whitespace=True),
         }
     ),
     "run_command": ToolSchema(
