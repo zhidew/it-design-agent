@@ -2168,7 +2168,7 @@ def create_expert(expert_id: str, name: str, description: str = "", *, name_zh: 
     except Exception as e:
         print(f"[Orchestrator] Expert generation script failed: {e}. Using inline fallback.")
     
-    # Fallback: simple inline generation
+    # Fallback: inline generation with rich structure
     initial_id = "".join(ch for ch in expert_id if ch.isalnum() or ch == "-").strip("-").lower()
     if not initial_id:
         initial_id = "expert-" + str(uuid.uuid4())[:8]
@@ -2188,8 +2188,9 @@ def create_expert(expert_id: str, name: str, description: str = "", *, name_zh: 
     (skill_dir / "references").mkdir(parents=True, exist_ok=True)
     (skill_dir / "scripts").mkdir(parents=True, exist_ok=True)
 
-    profile_content = f"""name: {json.dumps(name_en or final_id.replace("-", " ").title(), ensure_ascii=False)}
-name_en: {json.dumps(name_en or final_id.replace("-", " ").title(), ensure_ascii=False)}
+    yaml_name = name_en or final_id.replace("-", " ").title()
+    profile_content = f"""name: {json.dumps(yaml_name, ensure_ascii=False)}
+name_en: {json.dumps(yaml_name, ensure_ascii=False)}
 name_zh: {json.dumps(name_zh, ensure_ascii=False)}
 capability: {final_id}
 description: {json.dumps(description or normalized_name, ensure_ascii=False)}
@@ -2199,12 +2200,30 @@ skills:
 scheduling:
   priority: 50
   dependencies: []
+upstream_artifacts: {{}}
 keywords: []
 tools:
-  allowed: ["list_files", "read_file_chunk", "grep_search", "write_file"]
+  allowed: ["list_files", "read_file_chunk", "grep_search", "write_file", "patch_file"]
 outputs:
-  expected: ["output.md"]
-policies: {{}}
+  expected: ["{final_id}-design.md"]
+metadata:
+  boundary_contract:
+    owns:
+      - {final_id} domain design artifacts
+    excludes:
+      - full architecture narrative
+      - ops runbooks and test inventory
+    upstream_inputs: []
+policies:
+  asset_baseline_required: true
+  evidence_required: true
+  output_must_be_structured: true
+  manual_override_forbidden: true
+  descriptions_prefer_chinese: true
+error_handling:
+  on_missing_required_input: fail
+  on_validation_failure: fail
+  on_partial_generation: emit_evidence_and_fail
 """
     skill_content = f"""---
 name: {normalized_name}
@@ -2214,11 +2233,35 @@ keywords: []
 
 # {normalized_name}
 
-## Workflow
+## 工作流 (Workflow)
 
-1. Research existing context and requirements.
-2. Generate design artifacts.
-3. Validate output quality.
+1. **需求分析**：读取需求基线，识别业务场景和设计需求。
+2. **上下文收集**：使用读取工具从现有资产和参考文档中收集必要信息。
+3. **设计生成**：基于收集到的证据生成领域设计产物。
+4. **验证与修正**：回读已写入的内容，检查完整性和一致性，必要时修补。
+5. **证据沉淀**：将设计依据写入 evidence 文件。
+
+## 输出产物 (Output Artifacts)
+
+| 产物路径 | 说明 |
+|----------|------|
+| `artifacts/{final_id}-design.md` | 主要设计文档 |
+| `evidence/{final_id}.json` | 设计依据和决策证据 |
+
+# ReAct 执行策略 (ReAct Strategy)
+
+1. **研究 (Research)**：使用读取工具（list_files, read_file_chunk, grep_search）从需求文件中收集证据。
+2. **编写 (Write)**：使用 `write_file` 生成草稿产物。
+3. **验证 (Verify)**：使用 `read_file_chunk` 回读已写入的内容进行验证。
+4. **修补 (Patch)**：基于验证结果或新发现，使用 `patch_file` 进行微调。
+5. **完成 (Finalize)**：仅当所有预期产物正确写入并验证后，设置 done=true。
+
+## ReAct 规则
+
+1. 默认每次只输出一个下一步动作；只有在收集独立、低风险的读取证据时，才可使用 `actions` 返回最多 2 个只读动作。
+2. 仅当收集到足够证据且已写入所有预期文件时才停止。
+3. 保持 tool_input 简洁且为机器可读的 JSON 格式。
+4. `actions` 只可包含 `read_file_chunk`、`extract_structure`、`grep_search` 等只读工具。
 """
 
     profile_path.write_text(profile_content, encoding="utf-8")
