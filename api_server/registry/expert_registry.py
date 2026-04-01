@@ -7,6 +7,7 @@ the product surface shifts to the Expert mental model.
 """
 
 import asyncio
+import re
 import threading
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -42,13 +43,19 @@ def _normalize_artifact_mapping(value: Any) -> Dict[str, List[str]]:
     return normalized
 
 
+def _contains_cjk(value: str) -> bool:
+    return bool(re.search(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]", value or ""))
+
+
 @dataclass
 class ExpertProfile:
     """Lightweight expert metadata used for discovery and routing."""
 
     capability: str
     name: str
-    description: str
+    name_zh: str = ""
+    name_en: str = ""
+    description: str = ""
     keywords: List[str] = field(default_factory=list)
     required_inputs: List[str] = field(default_factory=list)
     expected_outputs: List[str] = field(default_factory=list)
@@ -243,7 +250,12 @@ class ExpertRegistry:
             except Exception as exc:
                 self._load_errors.append(f"Warning: Could not parse {skill_path}: {exc}")
 
-        name = data.get("name") or skill_frontmatter.get("name") or capability
+        skill_name = str(skill_frontmatter.get("name") or "").strip()
+        name = data.get("name") or skill_name or capability
+        name_en = str(data.get("name_en") or data.get("name") or capability).strip()
+        name_zh = str(data.get("name_zh") or "").strip()
+        if not name_zh and skill_name and skill_name != name_en and _contains_cjk(skill_name):
+            name_zh = skill_name
         description = (
             skill_frontmatter.get("description")
             or data.get("description")
@@ -268,6 +280,8 @@ class ExpertRegistry:
         return ExpertProfile(
             capability=capability,
             name=name,
+            name_zh=name_zh,
+            name_en=name_en,
             description=description,
             keywords=list(keywords),
             required_inputs=_ensure_list(data.get("inputs", {}).get("required", [])),

@@ -110,10 +110,14 @@ async def create_expert(req: ExpertCreateRequest):
 
     experts = orch.list_experts()
     for existing in experts:
-        existing_name = existing.get("name", "").strip().lower()
-        if name_zh and existing_name == name_zh.lower():
+        existing_names = {
+            str(existing.get("name", "")).strip().lower(),
+            str(existing.get("name_zh", "")).strip().lower(),
+            str(existing.get("name_en", "")).strip().lower(),
+        }
+        if name_zh and name_zh.lower() in existing_names:
             raise HTTPException(status_code=409, detail=f"Expert name (zh) '{name_zh}' already exists as '{existing['id']}'.")
-        if name_en and existing_name == name_en.lower():
+        if name_en and name_en.lower() in existing_names:
             raise HTTPException(status_code=409, detail=f"Expert name (en) '{name_en}' already exists as '{existing['id']}'.")
 
     # Similarity check: normalize whitespace/punctuation
@@ -122,7 +126,7 @@ async def create_expert(req: ExpertCreateRequest):
         return _re.sub(r"[\s\-_.]+", "", s).lower()
 
     for existing in experts:
-        existing_name_norm = _normalize(existing.get("name", ""))
+        existing_name_norm = _normalize(existing.get("name_en") or existing.get("name", ""))
         if name_en and _normalize(name_en) == existing_name_norm and existing_name_norm:
             raise HTTPException(status_code=409, detail=f"Expert name '{name_en}' is too similar to existing expert '{existing['id']}' (name: '{existing['name']}').")
 

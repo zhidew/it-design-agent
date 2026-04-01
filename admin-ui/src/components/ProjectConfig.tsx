@@ -69,6 +69,8 @@ interface KnowledgeBaseConfig {
 interface ExpertConfig {
   id: string;
   name: string;
+  name_zh?: string | null;
+  name_en?: string | null;
   enabled: boolean;
   description?: string;
 }
@@ -345,9 +347,9 @@ export function ProjectConfig() {
   };
 
   const getExpertDisplayNames = (expert: ExpertConfig) => {
-    const zhName = getTranslatedValue('zh', `experts.${expert.id}.name`);
-    const enName = getTranslatedValue('en', `experts.${expert.id}.name`);
-    const fallbackName = expert.name || expert.id;
+    const zhName = expert.name_zh || getTranslatedValue('zh', `experts.${expert.id}.name`);
+    const enName = expert.name_en || getTranslatedValue('en', `experts.${expert.id}.name`) || expert.name || expert.id;
+    const fallbackName = expert.name || enName || expert.id;
     const isZh = i18n.language.toLowerCase().startsWith('zh');
     const primary = (isZh ? zhName : enName) || fallbackName;
     const secondary = isZh ? enName : zhName;
@@ -581,6 +583,8 @@ export function ProjectConfig() {
           api.saveExpertConfig(projectId, {
             id: item.id,
             name: item.name,
+            name_zh: item.name_zh,
+            name_en: item.name_en,
             enabled: item.enabled,
             description: item.description,
           }),

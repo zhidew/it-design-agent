@@ -47,6 +47,8 @@ class ExpertVersion(BaseModel):
 class ExpertMetadata(BaseModel):
     id: str
     name: str
+    name_zh: Optional[str] = None
+    name_en: Optional[str] = None
     description: Optional[str] = None
     expertise: List[str] = []
     profile_path: str

@@ -80,6 +80,8 @@ class KnowledgeBasesConfig(BaseModel):
 class ExpertConfig(BaseModel):
     id: str
     name: str
+    name_zh: Optional[str] = None
+    name_en: Optional[str] = None
     enabled: bool = True
     description: Optional[str] = None
 

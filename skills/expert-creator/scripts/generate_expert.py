@@ -251,6 +251,33 @@ Return each file in a code block with the filename as header.
         except Exception:
             pass
         return ""
+
+    def _ensure_profile_names(
+        self,
+        raw_profile: str,
+        expert_id: str,
+        *,
+        fallback_name: str,
+        name_zh: str = "",
+        name_en: str = "",
+    ) -> str:
+        """Ensure generated expert YAML persists bilingual display names."""
+        normalized_en = (name_en or fallback_name or expert_id).strip() or expert_id
+        normalized_zh = (name_zh or "").strip()
+
+        try:
+            profile = yaml.safe_load(raw_profile) or {}
+            if not isinstance(profile, dict):
+                profile = {}
+        except Exception:
+            profile = {}
+
+        profile["name"] = str(profile.get("name") or normalized_en)
+        profile["name_en"] = str(profile.get("name_en") or normalized_en)
+        profile["name_zh"] = str(profile.get("name_zh") or normalized_zh)
+        profile["capability"] = str(profile.get("capability") or expert_id)
+
+        return yaml.safe_dump(profile, allow_unicode=True, sort_keys=False)
     
     def _generate_fallback_content(self, expert_id: str, name: str, description: str, *, name_zh: str = "", name_en: str = "") -> Dict[str, Any]:
         """Generate fallback content when LLM fails."""
@@ -264,6 +291,8 @@ Return each file in a code block with the filename as header.
         skill_name = name_zh or yaml_name
         
         profile = f"""name: {yaml_name}
+name_en: {name_en or yaml_name}
+name_zh: {name_zh}
 capability: {expert_id}
 description: "{description}"
 version: 0.1.0
@@ -410,7 +439,16 @@ This expert uses the following tools:
         template_name = result.get("template_name", "output_template.md.j2")
         script_content = result.get("script", "")
         script_name = result.get("script_name")
-        
+
+        if profile_content:
+            profile_content = self._ensure_profile_names(
+                profile_content,
+                expert_id,
+                fallback_name=name,
+                name_zh=name_zh,
+                name_en=name_en,
+            )
+
         if profile_content:
             profile_path.write_text(profile_content, encoding="utf-8")
         if skill_content:

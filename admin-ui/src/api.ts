@@ -140,6 +140,8 @@ export const api = {
   saveExpertConfig: (projectId: string, payload: {
     id: string;
     name: string;
+    name_zh?: string | null;
+    name_en?: string | null;
     enabled: boolean;
     description?: string;
   }) => apiClient.post(`/projects/${projectId}/config/experts`, payload).then(res => res.data),

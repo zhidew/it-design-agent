@@ -40,6 +40,25 @@ scheduled_runtime_tasks = {}
 RESERVED_PROJECT_DIR_NAMES = {"cloned_repos"}
 
 
+def _extract_localized_expert_names(config: dict) -> tuple[str, str]:
+    name = str(config.get("name") or "").strip()
+    name_zh = str(config.get("name_zh") or "").strip()
+    name_en = str(config.get("name_en") or name or "").strip()
+    return name_zh, name_en
+
+
+def _resolve_localized_expert_names(expert_id: str, config: dict) -> tuple[str, str]:
+    name_zh, name_en = _extract_localized_expert_names(config)
+    try:
+        manifest = ExpertRegistry.get_instance().get_manifest(expert_id)
+    except RuntimeError:
+        manifest = None
+    if manifest:
+        name_zh = name_zh or manifest.name_zh or ""
+        name_en = name_en or manifest.name_en or manifest.name or expert_id
+    return name_zh, name_en
+
+
 def _is_project_internal_dir_name(name: str) -> bool:
     return name.startswith(".") or name in RESERVED_PROJECT_DIR_NAMES
 
@@ -2075,10 +2094,13 @@ def list_experts():
             with open(item, "r", encoding="utf-8") as handle:
                 config = yaml.safe_load(handle) or {}
             expert_id = item.stem.replace(".expert", "").replace(".agent", "")
+            name_zh, name_en = _resolve_localized_expert_names(expert_id, config)
             experts.append(
                 {
                     "id": expert_id,
                     "name": config.get("name", expert_id),
+                    "name_zh": name_zh or None,
+                    "name_en": name_en or config.get("name", expert_id),
                     "description": config.get("description", ""),
                     "expertise": config.get("keywords", []),
                     "profile_path": str(item.relative_to(BASE_DIR)),
@@ -2107,9 +2129,12 @@ def get_expert(expert_id: str):
 
     content = profile_path.read_text(encoding="utf-8")
     config = yaml.safe_load(content) or {}
+    name_zh, name_en = _resolve_localized_expert_names(expert_id, config)
     return {
         "id": expert_id,
         "name": config.get("name", expert_id),
+        "name_zh": name_zh or None,
+        "name_en": name_en or config.get("name", expert_id),
         "description": config.get("description", ""),
         "expertise": config.get("keywords", []),
         "profile_path": str(profile_path.relative_to(BASE_DIR)),
@@ -2163,9 +2188,11 @@ def create_expert(expert_id: str, name: str, description: str = "", *, name_zh: 
     (skill_dir / "references").mkdir(parents=True, exist_ok=True)
     (skill_dir / "scripts").mkdir(parents=True, exist_ok=True)
 
-    profile_content = f"""name: {name_en or final_id.replace("-", " ").title()}
+    profile_content = f"""name: {json.dumps(name_en or final_id.replace("-", " ").title(), ensure_ascii=False)}
+name_en: {json.dumps(name_en or final_id.replace("-", " ").title(), ensure_ascii=False)}
+name_zh: {json.dumps(name_zh, ensure_ascii=False)}
 capability: {final_id}
-description: "{description or normalized_name}"
+description: {json.dumps(description or normalized_name, ensure_ascii=False)}
 version: 0.1.0
 skills:
   - {final_id}

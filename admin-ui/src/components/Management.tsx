@@ -28,6 +28,8 @@ type WorkbenchTab = 'profile' | 'skill' | 'templates' | 'references' | 'scripts'
 interface Expert {
   id: string;
   name: string;
+  name_zh?: string | null;
+  name_en?: string | null;
   description: string;
   expertise: string[];
   profile_path: string;
@@ -99,7 +101,7 @@ interface WorkbenchSection {
 const TAB_ORDER: WorkbenchTab[] = ['profile', 'skill', 'templates', 'references', 'scripts', 'tools'];
 
 export function ExpertCenter() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [experts, setExperts] = useState<Expert[]>([]);
   const [tree, setTree] = useState<FileNode[]>([]);
   const [selectedExpertId, setSelectedExpertId] = useState<string>('');
@@ -234,6 +236,8 @@ export function ExpertCenter() {
       const searchable = [
         expert.id,
         expert.name,
+        expert.name_zh || '',
+        expert.name_en || '',
         expert.description,
         expertI18n?.name || '',
         expertI18n?.description || '',
@@ -243,12 +247,25 @@ export function ExpertCenter() {
     });
   }, [experts, searchTerm, t]);
 
+  const getExpertDisplayName = (expert: Expert | null) => {
+    if (!expert) {
+      return '';
+    }
+    const locale = i18n.language.toLowerCase().startsWith('zh') ? 'zh' : 'en';
+    const localeKey = `experts.${expert.id}.name`;
+    const localeName = t(localeKey, { lng: locale, defaultValue: '' });
+    const localizedFromI18n = localeName && localeName !== localeKey ? localeName : '';
+    if (locale === 'zh') {
+      return expert.name_zh || localizedFromI18n || expert.name_en || expert.name || expert.id;
+    }
+    return expert.name_en || localizedFromI18n || expert.name || expert.name_zh || expert.id;
+  };
+
   const translateExpertName = (expert: Expert | null) => {
     if (!expert) {
       return t('management.selectExpert');
     }
-    // Prefer i18n translation, fallback to API data
-    return t(`experts.${expert.id}.name`, expert.name);
+    return getExpertDisplayName(expert);
   };
 
   const translateExpertDescription = (expert: Expert | null) => {

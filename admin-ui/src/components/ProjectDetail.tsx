@@ -111,6 +111,8 @@ interface KnowledgeBaseResourceSummary {
 interface ExpertResourceSummary {
   id: string;
   name: string;
+  name_zh?: string | null;
+  name_en?: string | null;
   enabled: boolean;
   dependencies?: string[];
 }
@@ -346,6 +348,18 @@ export function ProjectDetail() {
       emptyExperts: pick('projectDetail.resources.emptyExperts', fallback.emptyExperts),
     };
   }, [i18n.language, t]);
+
+  const getExpertDisplayName = (expert: ExpertResourceSummary) => {
+    const isZh = i18n.language.toLowerCase().startsWith('zh');
+    const locale = isZh ? 'zh' : 'en';
+    const localeKey = `experts.${expert.id}.name`;
+    const localeName = t(localeKey, { lng: locale, defaultValue: '' });
+    const localizedFromI18n = localeName && localeName !== localeKey ? localeName : '';
+    if (isZh) {
+      return expert.name_zh || localizedFromI18n || expert.name_en || expert.name || expert.id;
+    }
+    return expert.name_en || localizedFromI18n || expert.name || expert.name_zh || expert.id;
+  };
 
   const loadProjectModels = async () => {
     if (!id) return;
@@ -1828,7 +1842,7 @@ export function ProjectDetail() {
                         className="inline-flex max-w-full items-center gap-2 rounded-full bg-white border border-gray-100 px-3 py-2"
                       >
                         <span className="h-2 w-2 rounded-full bg-sky-400 flex-shrink-0" />
-                        <span className="text-[11px] font-black text-gray-800 truncate">{expert.name}</span>
+                        <span className="text-[11px] font-black text-gray-800 truncate">{getExpertDisplayName(expert)}</span>
                       </div>
                     ))}
                     {resourceSummary.experts.filter((expert) => expert.enabled).length > 5 && (
