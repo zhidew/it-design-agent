@@ -67,6 +67,7 @@ class ExpertProfile:
     upstream_artifacts: Dict[str, List[str]] = field(default_factory=dict)
     boundary_upstream_inputs: List[str] = field(default_factory=list)
     priority: int = 50
+    phase: str = ""  # Explicit phase declaration from scheduling.phase (e.g. "ARCHITECTURE")
 
     @property
     def expertise(self) -> List[str]:
@@ -204,6 +205,19 @@ class ExpertRegistry:
             return preferred
         return legacy
 
+    def _get_phase_config(self):
+        try:
+            from config import PhaseConfig
+        except ModuleNotFoundError:
+            import sys
+
+            project_root = Path(__file__).resolve().parents[2]
+            if str(project_root) not in sys.path:
+                sys.path.insert(0, str(project_root))
+            from config import PhaseConfig
+
+        return PhaseConfig.initialize(self._base_dir / "config" / "phases.yaml")
+
     def _load_all_manifests(self) -> None:
         experts_dir = self._resolve_experts_dir()
         skills_dir = self._base_dir / "skills"
@@ -272,6 +286,13 @@ class ExpertRegistry:
             scheduling = {}
         dependencies = _ensure_list(scheduling.get("dependencies", []))
         priority = scheduling.get("priority", 50)
+        phase = ""
+        try:
+            phase = self._get_phase_config().get_phase_for_expert(str(capability).strip())
+        except Exception:
+            phase = ""
+        if not phase:
+            phase = str(scheduling.get("phase", "")).strip().upper() if scheduling.get("phase") else ""
         upstream_artifacts = _normalize_artifact_mapping(data.get("upstream_artifacts", {}))
         boundary_upstream_inputs = _ensure_list(
             data.get("metadata", {}).get("boundary_contract", {}).get("upstream_inputs", [])
@@ -293,6 +314,7 @@ class ExpertRegistry:
             upstream_artifacts=upstream_artifacts,
             boundary_upstream_inputs=boundary_upstream_inputs,
             priority=int(priority),
+            phase=phase,
         )
 
     def get_all_manifests(self) -> List[ExpertProfile]:
@@ -600,6 +622,72 @@ class ExpertRegistry:
                     "Multiple experts declare the same expected output file name.",
                     details={"output": output_name, "owners": owners},
                 )
+
+        # --- Phase dependency validation ---
+        # Build a phase map: expert_id -> phase for all schedulable experts.
+        _pcfg = self._get_phase_config()
+        for error_message in _pcfg.validation_errors:
+            add_finding(
+                "error",
+                "DUPLICATE_PHASE_ASSIGNMENT",
+                error_message,
+            )
+
+        # Collect phase per expert from phases.yaml, falling back only for older configs.
+        expert_phase_map: Dict[str, str] = _pcfg.get_expert_phase_map()
+        try:
+            from graphs.nodes import AGENT_PHASE_MAP as _legacy_phase_map
+        except Exception:
+            _legacy_phase_map = {}
+        for capability, manifest in manifests.items():
+            if not manifest.has_scheduling or capability in expert_phase_map:
+                continue
+            if manifest.phase and _pcfg.is_executable_phase(manifest.phase):
+                expert_phase_map[capability] = manifest.phase
+            elif capability in _legacy_phase_map:
+                expert_phase_map[capability] = _legacy_phase_map[capability]
+
+        for capability, manifest in manifests.items():
+            if not manifest.has_scheduling:
+                continue
+
+            # MISSING_PHASE_BINDING: expert has no phase binding at all
+            if capability not in expert_phase_map:
+                add_finding(
+                    "error",
+                    "MISSING_PHASE_BINDING",
+                    "Expert has no phase binding (neither scheduling.phase in YAML nor legacy AGENT_PHASE_MAP).",
+                    expert_id=capability,
+                    details={"available_phases": _pcfg.execution_phases},
+                )
+                continue
+
+            my_phase = expert_phase_map[capability]
+            my_rank = _pcfg.phase_rank(my_phase)
+
+            # BACKWARD_PHASE_DEPENDENCY: dependency is in the same or later phase
+            for dependency in manifest.dependencies:
+                if dependency not in expert_phase_map:
+                    continue  # already reported as MISSING_DEPENDENCY above
+                dep_phase = expert_phase_map[dependency]
+                dep_rank = _pcfg.phase_rank(dep_phase)
+
+                if dep_rank >= my_rank:
+                    add_finding(
+                        "error",
+                        "BACKWARD_PHASE_DEPENDENCY",
+                        f"Expert depends on '{dependency}' which is in phase '{dep_phase}' (rank {dep_rank}), "
+                        f"same as or later than this expert's phase '{my_phase}' (rank {my_rank}). "
+                        f"Dependencies must come from strictly earlier phases.",
+                        expert_id=capability,
+                        related_expert_id=dependency,
+                        details={
+                            "my_phase": my_phase,
+                            "my_rank": my_rank,
+                            "dep_phase": dep_phase,
+                            "dep_rank": dep_rank,
+                        },
+                    )
 
         severity_rank = {"error": 0, "warning": 1, "info": 2}
         findings.sort(

@@ -14,6 +14,12 @@ from .tools import execute_tool
 from services.db_service import metadata_db
 from subgraphs.dynamic_subagent import build_default_topic_ownership, run_dynamic_subagent
 
+# Ensure project root is on sys.path so config module can be resolved
+_project_root = str(Path(__file__).resolve().parent.parent.parent)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+from config import get_phase_config
+
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 # Agent aliases for normalization (kept for backward compatibility)
@@ -316,8 +322,17 @@ USE_DYNAMIC_SUBAGENT = os.getenv("USE_DYNAMIC_SUBAGENT", "true").lower() in ("tr
 # Set to empty to use dynamic subagent for all agents
 _HARDCODED_AGENTS: set = set()
 
-AGENT_PHASE_MAP = {
-    "planner": "ANALYSIS",
+# --- Phase configuration (loaded from config/phases.yaml) ---
+_phase_cfg = get_phase_config()
+
+PHASE_ORDER: List[str] = _phase_cfg.phase_order
+EXECUTION_PHASES: List[str] = _phase_cfg.execution_phases
+
+# Legacy phase map – kept as backward-compatible fallback when experts
+# do not declare `scheduling.phase` in their YAML.  New experts should
+# always include `scheduling.phase` so this dict can eventually be removed.
+AGENT_PHASE_MAP: Dict[str, str] = {
+    "planner": "PLANNING",
     "architecture-mapping": "ARCHITECTURE",
     "integration-design": "ARCHITECTURE",
     "data-design": "MODELING",
@@ -330,9 +345,6 @@ AGENT_PHASE_MAP = {
     "design-assembler": "DELIVERY",
     "validator": "DELIVERY",
 }
-
-PHASE_ORDER = ["INIT", "ANALYSIS", "ARCHITECTURE", "MODELING", "INTERFACE", "QUALITY", "DELIVERY", "DONE"]
-EXECUTION_PHASES = ["ARCHITECTURE", "MODELING", "INTERFACE", "QUALITY", "DELIVERY"]
 
 
 def _should_use_dynamic_subagent(agent_type: str) -> bool:
@@ -593,11 +605,35 @@ def _resolve_parallel_limit(state: DesignState) -> int:
 
 
 def _get_base_phase(agent_type: str) -> str:
-    return AGENT_PHASE_MAP.get(agent_type, "ARCHITECTURE")
+    """Resolve the execution phase for *agent_type* using a 3-tier fallback.
+
+    1. ``config/phases.yaml`` expert assignment (surfaced via ExpertProfile.phase)
+    2. Legacy ``scheduling.phase`` / ``AGENT_PHASE_MAP`` fallback
+    3. Default – first executable phase
+    """
+    from registry.expert_registry import ExpertRegistry
+
+    # Tier-1: check the resolved phase on the manifest, which now prefers phases.yaml.
+    try:
+        registry = ExpertRegistry.get_instance()
+        manifest = registry.get_manifest(agent_type)
+        if manifest and manifest.phase:
+            if _phase_cfg.is_executable_phase(manifest.phase):
+                return manifest.phase
+    except RuntimeError:
+        pass  # registry not initialized yet (e.g. during import-time)
+
+    # Tier-2: legacy map
+    mapped = AGENT_PHASE_MAP.get(agent_type)
+    if mapped and _phase_cfg.is_executable_phase(mapped):
+        return mapped
+
+    # Tier-3: first executable phase
+    return EXECUTION_PHASES[0] if EXECUTION_PHASES else "ARCHITECTURE"
 
 
 def _phase_rank(phase: str) -> int:
-    return EXECUTION_PHASES.index(phase) if phase in EXECUTION_PHASES else len(EXECUTION_PHASES)
+    return _phase_cfg.phase_rank(phase)
 
 
 def _get_task_phase(task: Task) -> str:
@@ -1318,7 +1354,7 @@ Output JSON format:
         )
         
         return {
-            "workflow_phase": "ANALYSIS",
+            "workflow_phase": "PLANNING",
             "task_queue": _planner_waiting_task(),
             "history": [
                 "[SYSTEM] Planner: insufficient information detected, requesting human clarification.",
@@ -1345,7 +1381,7 @@ Output JSON format:
         (project_path / "logs" / "planner-reasoning.md").write_text(reasoning_content, encoding="utf-8")
         
         return {
-            "workflow_phase": "ANALYSIS",
+            "workflow_phase": "PLANNING",
             "task_queue": _planner_success_task(), # Use success task for planner itself
             "history": [
                 "[SYSTEM] Planner: No suitable experts identified for the provided requirement.",
@@ -1413,7 +1449,7 @@ Output JSON format:
     )
 
     return {
-        "workflow_phase": "ARCHITECTURE",
+        "workflow_phase": "ANALYSIS",
         "task_queue": tasks,
         "history": [
             "[SYSTEM] Planner: LLM-driven intent analysis completed and baseline initialized.",

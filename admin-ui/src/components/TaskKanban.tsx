@@ -1,4 +1,4 @@
-import React, { memo, useMemo } from 'react';
+import React, { memo, useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -9,6 +9,7 @@ import {
   Sparkles,
   XCircle,
 } from 'lucide-react';
+import { apiClient } from '../api';
 
 export type NodeStatus = 'todo' | 'running' | 'waiting_human' | 'success' | 'failed' | 'skipped' | 'idle';
 
@@ -33,14 +34,8 @@ interface TaskKanbanProps {
   showPlannedStages?: boolean;
 }
 
-const ALL_STAGES = [
-  { id: 'ANALYSIS', agents: ['planner'] },
-  { id: 'ARCHITECTURE', agents: ['architecture-mapping', 'integration-design'] },
-  { id: 'MODELING', agents: ['data-design', 'ddd-structure'] },
-  { id: 'INTERFACE', agents: ['flow-design', 'api-design', 'config-design'] },
-  { id: 'QUALITY', agents: ['test-design', 'ops-design'] },
-  { id: 'DELIVERY', agents: ['design-assembler', 'validator'] },
-];
+/** Minimum width per pipeline column (px) */
+const COLUMN_MIN_WIDTH = 140;
 
 const TaskKanbanComponent: React.FC<TaskKanbanProps> = ({
   tasks,
@@ -54,6 +49,86 @@ const TaskKanbanComponent: React.FC<TaskKanbanProps> = ({
   isInitializing,
   showPlannedStages = false,
 }) => {
+  // ---------- Dynamic phase stages from backend API ----------
+  const [phaseLabels, setPhaseLabels] = useState<Record<string, string>>({});
+  const [allStages, setAllStages] = useState<Array<{ id: string; agents: string[] }>>([]);
+
+  useEffect(() => {
+    apiClient
+      .get('/expert-center/phases', { params: { executable_only: true } })
+      .then((res) => {
+        const labelMap: Record<string, string> = {};
+        const stages: Array<{ id: string; agents: string[] }> = [];
+        for (const p of res.data) {
+          const agents = Array.isArray(p.agents) ? [...p.agents] : [];
+          if (p.id === 'PLANNING' && !agents.includes('planner')) {
+            agents.unshift('planner');
+          }
+          if (agents.length === 0) {
+            continue;
+          }
+          labelMap[p.id] = p.label;
+          stages.push({ id: p.id, agents });
+        }
+        setPhaseLabels(labelMap);
+        setAllStages(stages);
+      })
+      .catch(() => {});
+  }, []);
+
+  /** Resolve phase display label: prefer API-fetched label, fallback to i18n key */
+  const getPhaseLabel = useCallback(
+    (phaseId: string) => phaseLabels[phaseId] || t(`stages.${phaseId}`) || phaseId,
+    [phaseLabels, t],
+  );
+
+  // ---------- Horizontal drag-scroll refs & state ----------
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const isDragging = useRef(false);
+  const dragStartX = useRef(0);
+  const scrollStartLeft = useRef(0);
+  const [isDragActive, setIsDragActive] = useState(false);
+
+  const handleDragStart = useCallback((e: React.MouseEvent) => {
+    // Only start drag on the scroll container itself, not on interactive children
+    if ((e.target as HTMLElement).closest('button')) return;
+    isDragging.current = true;
+    dragStartX.current = e.clientX;
+    scrollStartLeft.current = scrollRef.current?.scrollLeft || 0;
+    setIsDragActive(true);
+  }, []);
+
+  const handleDragMove = useCallback((e: React.MouseEvent) => {
+    if (!isDragging.current) return;
+    e.preventDefault();
+    const dx = e.clientX - dragStartX.current;
+    if (scrollRef.current) {
+      scrollRef.current.scrollLeft = scrollStartLeft.current - dx;
+    }
+  }, []);
+
+  const handleDragEnd = useCallback(() => {
+    isDragging.current = false;
+    setIsDragActive(false);
+  }, []);
+
+  // ---------- Auto-scroll to active phase ----------
+  const activePhaseRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!currentPhase || !scrollRef.current) return;
+    // Delay slightly to let React finish rendering
+    const timer = setTimeout(() => {
+      activePhaseRef.current?.scrollIntoView({
+        behavior: 'smooth',
+        inline: 'center',
+        block: 'nearest',
+      });
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [currentPhase]);
+
+  // ---------- Pipeline logic (unchanged) ----------
   const hasTaskBackedPipeline = tasks.some((task) => task.agent_type !== 'planner');
   const hasConfirmedPipeline = (selectedPipeline?.length || 0) > 0 || hasTaskBackedPipeline;
 
@@ -63,8 +138,8 @@ const TaskKanbanComponent: React.FC<TaskKanbanProps> = ({
   // Check if we're in "Blueprint Mode" (Cold Start)
   const isBlueprintMode = !hasConfirmedPipeline && tasks.length === 0;
 
-  // Check if we're in analysis phase (only planner is active)
-  const isInAnalysisPhase = useMemo(() => {
+  // Check if we're in planning phase (only planner is active)
+  const isInPlanningPhase = useMemo(() => {
     if (isBlueprintMode) return false;
     if (!hasConfirmedPipeline && !hasTaskBackedPipeline) {
       return true;
@@ -89,68 +164,78 @@ const TaskKanbanComponent: React.FC<TaskKanbanProps> = ({
     return false;
   }, [hasConfirmedPipeline, hasTaskBackedPipeline, showInitMode, tasks, isBlueprintMode]);
 
-  // Determine active agents: prefer tasks, fallback to selectedPipeline
-  const activeAgentTypes = useMemo(() => {
-    const fromTasks = new Set(
-      tasks.map((task) => task.agent_type)
+  const stageIdByAgent = useMemo(() => {
+    const map: Record<string, string> = { planner: 'PLANNING' };
+    for (const stage of allStages) {
+      for (const agentId of stage.agents) {
+        map[agentId] = stage.id;
+      }
+    }
+    return map;
+  }, [allStages]);
+
+  const taskAgentsByStage = useMemo(() => {
+    const map: Record<string, string[]> = {};
+    for (const task of tasks) {
+      const phaseId = (task.phase || '').toUpperCase();
+      const stageId = task.agent_type === 'planner'
+        ? 'PLANNING'
+        : phaseId || stageIdByAgent[task.agent_type];
+      if (!stageId) {
+        continue;
+      }
+      const agents = map[stageId] || [];
+      if (!agents.includes(task.agent_type)) {
+        agents.push(task.agent_type);
+      }
+      map[stageId] = agents;
+    }
+    return map;
+  }, [tasks, stageIdByAgent]);
+
+  const selectedPipelineStageIds = useMemo(() => {
+    if (!selectedPipeline?.length) {
+      return new Set<string>();
+    }
+    const pipelineAgentIds = new Set(selectedPipeline);
+    return new Set(
+      allStages
+        .filter((stage) => stage.agents.some((agentId) => pipelineAgentIds.has(agentId)))
+        .map((stage) => stage.id),
     );
-    if (fromTasks.size > 0) {
-      return fromTasks;
-    }
-    // During init, show planner as active
-    if (showInitMode) {
-      return new Set(['planner']);
-    }
-    return new Set<string>();
-  }, [tasks, selectedPipeline, showInitMode]);
+  }, [allStages, selectedPipeline]);
 
   // Derive stages dynamically based on active tasks and their phases
   const activeStages = useMemo(() => {
     if (isBlueprintMode) {
-      return ALL_STAGES;
+      return allStages;
     }
-    if (isInAnalysisPhase) {
-      return ALL_STAGES.filter((stage) => stage.id === 'ANALYSIS');
-    }
-    
-    // Get unique phases from tasks
-    const phaseIdsFromTasks = new Set(
-      tasks
-        .map(t => t.phase)
-        .filter((p): p is string => !!p)
-    );
-
-    if (phaseIdsFromTasks.size > 0) {
-      // Return stages that match the phases found in tasks, preserving ALL_STAGES order
-      return ALL_STAGES.filter(stage => phaseIdsFromTasks.has(stage.id));
+    if (isInPlanningPhase) {
+      return allStages.filter((stage) => stage.id === 'PLANNING');
     }
 
-    if (activeAgentTypes.size === 0) {
-      return [];
-    }
-    
-    // Fallback: Filter ALL_STAGES to only include stages with active agents
-    return ALL_STAGES.filter((stage) => stage.agents.some((agentId) => activeAgentTypes.has(agentId)));
-  }, [isInAnalysisPhase, tasks, activeAgentTypes, isBlueprintMode]);
+    return allStages.filter((stage) => (taskAgentsByStage[stage.id] || []).length > 0);
+  }, [isInPlanningPhase, isBlueprintMode, allStages, taskAgentsByStage]);
 
   // Get pending stages (from selectedPipeline but not yet in tasks)
   // Only show pending stages when NOT in analysis phase
   const pendingStages = useMemo(() => {
     // Never show pending stages during analysis or blueprint phase
-    if (isInAnalysisPhase || isBlueprintMode) return [];
+    if (isInPlanningPhase || isBlueprintMode) return [];
     if (!showPlannedStages || !selectedPipeline || tasks.length === 0) return [];
     
-    const activeStageIds = new Set(activeStages.map(s => s.id));
+    const activeStageIds = new Set(activeStages.map((stage) => stage.id));
     
-    return ALL_STAGES.filter(
-      (stage) => !activeStageIds.has(stage.id) &&
-        stage.agents.some((agentId) => selectedPipeline.includes(agentId))
+    return allStages.filter(
+      (stage) => !activeStageIds.has(stage.id) && selectedPipelineStageIds.has(stage.id)
     );
-  }, [isInAnalysisPhase, showPlannedStages, selectedPipeline, tasks, activeStages, isBlueprintMode]);
+  }, [isInPlanningPhase, showPlannedStages, selectedPipeline, tasks, activeStages, isBlueprintMode, allStages, selectedPipelineStageIds]);
 
-  const gridTemplateColumns = isInAnalysisPhase
-    ? '1fr 3fr'
-    : `repeat(${Math.max(activeStages.length + (showInitMode ? 1 : pendingStages.length), 1)}, minmax(0, 1fr))`;
+  /** Total visible columns for width calculation */
+  const totalColumns = isInPlanningPhase
+    ? 2
+    : Math.max(activeStages.length + (showInitMode ? 1 : pendingStages.length), 1);
+  const needsScroll = !isInPlanningPhase && totalColumns > 4;
 
   const renderNode = (nodeId: string, label: string, _isActive: boolean, isLoading: boolean = false) => {
     const status = isLoading ? 'running' : (nodeStatuses[nodeId] || 'idle');
@@ -211,7 +296,7 @@ const TaskKanbanComponent: React.FC<TaskKanbanProps> = ({
 
   // Render initialization placeholder with breathing animation
   const renderInitPlaceholder = () => (
-    <div className="flex min-w-0 flex-col items-center gap-3 transition-all duration-500">
+    <div className="flex-shrink-0 flex flex-col items-center gap-3 transition-all duration-500" style={{ width: COLUMN_MIN_WIDTH * 2 }}>
       <div className="relative flex h-7 w-7 items-center justify-center">
         <div className="absolute inset-0 rounded-full bg-indigo-200 animate-ping opacity-75" />
         <div className="absolute inset-1 rounded-full bg-indigo-100 animate-pulse" />
@@ -224,20 +309,20 @@ const TaskKanbanComponent: React.FC<TaskKanbanProps> = ({
   );
 
   // Render pending stage with dashed style
-  const renderPendingStage = (stage: typeof ALL_STAGES[0], idx: number) => (
-    <div key={`pending-${stage.id}`} className="flex min-w-0 flex-col items-center gap-3 transition-all duration-500 opacity-50">
+  const renderPendingStage = (stage: { id: string; agents: string[] }, idx: number) => (
+    <div key={`pending-${stage.id}`} className="flex-shrink-0 flex flex-col items-center gap-3 transition-all duration-500 opacity-50" style={{ width: COLUMN_MIN_WIDTH }}>
       <div className="flex h-7 w-7 items-center justify-center rounded-full border-2 border-dashed border-gray-300">
         <span className="text-[10px] font-black text-gray-400">{idx + 1}</span>
       </div>
       <span className="text-[9px] font-black uppercase tracking-tight text-center leading-tight text-gray-400">
-        {t(`stages.${stage.id}`)}
+        {getPhaseLabel(stage.id)}
       </span>
     </div>
   );
 
   // Render analysis phase waiting placeholder
   const renderAnalysisWaitingPlaceholder = () => (
-    <div className="flex min-w-0 flex-col items-center gap-3 transition-all duration-500">
+    <div className="flex-shrink-0 flex flex-col items-center gap-3 transition-all duration-500" style={{ width: COLUMN_MIN_WIDTH * 2 }}>
       <div className="relative flex h-7 w-7 items-center justify-center">
         <div className="absolute inset-0 rounded-full bg-gray-200 animate-ping opacity-30" />
         <div className="absolute inset-1 rounded-full bg-gray-100 animate-pulse" />
@@ -264,177 +349,197 @@ const TaskKanbanComponent: React.FC<TaskKanbanProps> = ({
   }
 
   return (
-    <div className="relative w-full space-y-8 pb-8">
-      <div className="relative px-2 py-2">
-        <div className="absolute top-1/2 left-8 right-8 h-[1px] bg-gray-100 -translate-y-[12px] z-0" />
-
-        <div
-          className="relative z-10 grid items-start gap-4"
-          style={{ gridTemplateColumns }}
-        >
-          {activeStages.map((stage, idx) => {
-            const isActive = currentPhase === stage.id || (showInitMode && stage.id === 'ANALYSIS');
-            const stageAgentsInQueue = stage.agents.filter((agentId) => tasks.some((task) => task.agent_type === agentId));
-            const statuses = stageAgentsInQueue.map((agentId) => nodeStatuses[agentId] || 'idle');
-            const isAllSuccess = statuses.length > 0 && statuses.every((status) => status === 'success');
-            
-            // Special handling for ANALYSIS stage to prevent premature success checkmark
-            // while the planner might still be finalizing its state.
-            const isAnalysisStageReallyDone = stage.id === 'ANALYSIS' 
-              ? (isAllSuccess && currentPhase !== 'ANALYSIS')
-              : isAllSuccess;
-
-            const hasFailed = statuses.some((status) => status === 'failed');
-            const hasWaitingHuman = statuses.some((status) => status === 'waiting_human');
-            const hasSuccess = statuses.some((status) => status === 'success');
-            const hasRunning = statuses.some((status) => status === 'running');
-
-            let circleColor = 'bg-white border-gray-200 text-gray-300';
-            let textColor = 'text-gray-400';
-            let icon = <span className="text-[10px] font-black">{idx + 1}</span>;
-
-            if (showInitMode && stage.id === 'ANALYSIS') {
-              circleColor = 'bg-indigo-500 border-indigo-500 text-white shadow-lg shadow-indigo-200';
-              textColor = 'text-indigo-600';
-              icon = <Activity size={14} className="animate-pulse" />;
-            } else if (isBlueprintMode) {
-              circleColor = 'bg-gray-50 border-dashed border-gray-300 text-gray-300';
-              textColor = 'text-gray-400 opacity-60';
-              icon = <Circle size={10} className="opacity-40" />;
-            } else if (isAnalysisStageReallyDone) {
-              circleColor = 'bg-emerald-500 border-emerald-500 text-white';
-              textColor = 'text-emerald-600';
-              icon = <CheckCircle size={14} />;
-            } else if (hasFailed && hasSuccess) {
-              circleColor = 'bg-amber-500 border-amber-500 text-white';
-              textColor = 'text-amber-600';
-              icon = <AlertTriangle size={14} />;
-            } else if (hasWaitingHuman) {
-              circleColor = 'bg-amber-400 border-amber-400 text-white';
-              textColor = 'text-amber-600';
-              icon = <AlertTriangle size={14} />;
-            } else if (hasFailed) {
-              circleColor = 'bg-rose-500 border-rose-500 text-white';
-              textColor = 'text-rose-600';
-              icon = <XCircle size={14} />;
-            } else if (isActive || hasRunning) {
-              circleColor = 'bg-white border-indigo-600 text-indigo-600 shadow-md scale-110';
-              textColor = 'text-indigo-600';
-              icon = <Activity size={14} className="animate-pulse" />;
-            }
-
-            return (
-              <div key={stage.id} className="flex min-w-0 flex-col items-center gap-3 transition-all duration-500">
-                <div className={`flex h-7 w-7 items-center justify-center rounded-full border-2 transition-all duration-500 ${circleColor}`}>
-                  {icon}
-                </div>
-                <span className={`text-[9px] font-black uppercase tracking-tight text-center leading-tight transition-colors break-words ${textColor}`}>
-                  {t(`stages.${stage.id}`)}
-                </span>
-              </div>
-            );
-          })}
-
-          {isInAnalysisPhase && renderAnalysisWaitingPlaceholder()}
-          {!isInAnalysisPhase && showInitMode && renderInitPlaceholder()}
-          {!isInAnalysisPhase && pendingStages.map((stage, idx) => renderPendingStage(stage, activeStages.length + idx))}
-        </div>
-      </div>
-
+    <div className="relative w-full pb-8">
+      {/* Horizontally scrollable pipeline container */}
       <div
-        className="grid items-start gap-4"
-        style={{ gridTemplateColumns }}
+        ref={scrollRef}
+        className={`overflow-x-auto ${isDragActive ? 'cursor-grabbing select-none' : 'cursor-grab'}`}
+        onMouseDown={handleDragStart}
+        onMouseMove={handleDragMove}
+        onMouseUp={handleDragEnd}
+        onMouseLeave={handleDragEnd}
       >
-        {activeStages.map((stage) => {
-          if (isBlueprintMode) {
-            return (
-              <div
-                key={stage.id}
-                className="flex min-w-0 flex-col gap-2 p-2.5 rounded-2xl border border-dashed border-gray-100 bg-gray-50/10 min-h-[110px] opacity-40 transition-all duration-700"
-              >
-                <div className="flex flex-col gap-1.5">
-                  {stage.agents.map((agentId) => (
-                    <div
-                      key={agentId}
-                      className="flex items-center gap-2 w-full p-2.5 rounded-xl border border-dashed border-gray-100 bg-white/40 text-gray-300 text-[9px] uppercase tracking-tighter font-black"
-                    >
-                      <Circle size={10} className="opacity-30" />
-                      <span className="truncate">{t(`agents.${agentId}`)}</span>
+        <div className="min-w-max px-4">
+          {/* ===== Timeline row ===== */}
+          <div className="relative py-2">
+            {/* Connecting line spanning full content width */}
+            {!isInPlanningPhase && (
+              <div className="absolute top-1/2 left-0 right-0 h-[1px] bg-gray-100 -translate-y-[12px] z-0" />
+            )}
+
+            <div className="relative z-10 flex items-start gap-4">
+              {activeStages.map((stage, idx) => {
+                const isActive = currentPhase === stage.id || (showInitMode && stage.id === 'PLANNING');
+                const isAutoScrollTarget = isActive && needsScroll;
+                const stageAgentsInQueue = taskAgentsByStage[stage.id] || [];
+                const statuses = stageAgentsInQueue.map((agentId) => nodeStatuses[agentId] || 'idle');
+                const isAllSuccess = statuses.length > 0 && statuses.every((status) => status === 'success');
+                
+                // Special handling for PLANNING stage to prevent premature success checkmark
+                // while the planner might still be finalizing its state.
+                const isPlanningStageReallyDone = stage.id === 'PLANNING' 
+                  ? (isAllSuccess && currentPhase !== 'PLANNING')
+                  : isAllSuccess;
+
+                const hasFailed = statuses.some((status) => status === 'failed');
+                const hasWaitingHuman = statuses.some((status) => status === 'waiting_human');
+                const hasSuccess = statuses.some((status) => status === 'success');
+                const hasRunning = statuses.some((status) => status === 'running');
+
+                let circleColor = 'bg-white border-gray-200 text-gray-300';
+                let textColor = 'text-gray-400';
+                let icon = <span className="text-[10px] font-black">{idx + 1}</span>;
+
+                if (showInitMode && stage.id === 'PLANNING') {
+                  circleColor = 'bg-indigo-500 border-indigo-500 text-white shadow-lg shadow-indigo-200';
+                  textColor = 'text-indigo-600';
+                  icon = <Activity size={14} className="animate-pulse" />;
+                } else if (isBlueprintMode) {
+                  circleColor = 'bg-gray-50 border-dashed border-gray-300 text-gray-300';
+                  textColor = 'text-gray-400 opacity-60';
+                  icon = <Circle size={10} className="opacity-40" />;
+                } else if (isPlanningStageReallyDone) {
+                  circleColor = 'bg-emerald-500 border-emerald-500 text-white';
+                  textColor = 'text-emerald-600';
+                  icon = <CheckCircle size={14} />;
+                } else if (hasFailed && hasSuccess) {
+                  circleColor = 'bg-amber-500 border-amber-500 text-white';
+                  textColor = 'text-amber-600';
+                  icon = <AlertTriangle size={14} />;
+                } else if (hasWaitingHuman) {
+                  circleColor = 'bg-amber-400 border-amber-400 text-white';
+                  textColor = 'text-amber-600';
+                  icon = <AlertTriangle size={14} />;
+                } else if (hasFailed) {
+                  circleColor = 'bg-rose-500 border-rose-500 text-white';
+                  textColor = 'text-rose-600';
+                  icon = <XCircle size={14} />;
+                } else if (isActive || hasRunning) {
+                  circleColor = 'bg-white border-indigo-600 text-indigo-600 shadow-md scale-110';
+                  textColor = 'text-indigo-600';
+                  icon = <Activity size={14} className="animate-pulse" />;
+                }
+
+                return (
+                  <div
+                    key={stage.id}
+                    ref={isAutoScrollTarget ? activePhaseRef : undefined}
+                    className="flex-shrink-0 flex flex-col items-center gap-3 transition-all duration-500"
+                    style={{ width: COLUMN_MIN_WIDTH }}
+                  >
+                    <div className={`flex h-7 w-7 items-center justify-center rounded-full border-2 transition-all duration-500 ${circleColor}`}>
+                      {icon}
                     </div>
-                  ))}
-                </div>
-              </div>
-            );
-          }
+                    <span className={`text-[9px] font-black uppercase tracking-tight text-center leading-tight transition-colors break-words ${textColor}`}>
+                      {getPhaseLabel(stage.id)}
+                    </span>
+                  </div>
+                );
+              })}
 
-          const isActive = currentPhase === stage.id || (showInitMode && stage.id === 'ANALYSIS');
-          const stageAgentsInQueue = stage.agents.filter((agentId) => tasks.some((task) => task.agent_type === agentId));
-
-          return (
-            <div
-              key={stage.id}
-              className={`flex min-w-0 flex-col gap-2 p-2.5 rounded-2xl border transition-all duration-500 min-h-[110px] ${isActive
-                ? 'bg-white border-indigo-100 shadow-xl shadow-indigo-50/50 ring-1 ring-indigo-50'
-                : 'bg-white/60 border-gray-100 shadow-sm opacity-90'
-                }`}
-            >
-              <div className="flex flex-col gap-1.5">
-                {stageAgentsInQueue.map((agentId) => {
-                  const isLoading = agentId === 'planner' && (showInitMode || !hasConfirmedPipeline);
-                  return renderNode(agentId, t(`agents.${agentId}`), isActive, isLoading);
-                })}
-              </div>
-            </div>
-          );
-        })}
-
-        {isInAnalysisPhase && !isBlueprintMode && (
-          <div className="flex min-w-0 flex-col gap-2 p-2.5 rounded-2xl border border-dashed border-gray-200 bg-gray-50/30 min-h-[110px]">
-            <div className="flex flex-1 items-center justify-center">
-              <div className="flex flex-col items-center gap-3">
-                <div className="relative">
-                  <div className="absolute inset-0 rounded-full bg-gray-200 animate-ping opacity-30" />
-                  <div className="absolute inset-0 rounded-full bg-gray-100 animate-pulse" />
-                  <LucideLoader size={20} className="relative text-gray-400 animate-spin" />
-                </div>
-                <span className="text-[10px] font-bold uppercase tracking-tight text-gray-500 animate-pulse">
-                  {t('pipeline.expertsWaiting') || '设计专家正在等待加载...'}
-                </span>
-              </div>
+              {isInPlanningPhase && renderAnalysisWaitingPlaceholder()}
+              {!isInPlanningPhase && showInitMode && renderInitPlaceholder()}
+              {!isInPlanningPhase && pendingStages.map((stage, idx) => renderPendingStage(stage, activeStages.length + idx))}
             </div>
           </div>
-        )}
 
-        {isBlueprintMode && (
-          <div className="hidden" /> // Already covered by skeleton cards
-        )}
+          {/* ===== Cards row ===== */}
+          <div className="flex items-start gap-4 mt-6">
+            {activeStages.map((stage) => {
+              if (isBlueprintMode) {
+                return (
+                  <div
+                    key={stage.id}
+                    className="flex-shrink-0 flex flex-col gap-2 p-2.5 rounded-2xl border border-dashed border-gray-100 bg-gray-50/10 min-h-[110px] opacity-40 transition-all duration-700"
+                    style={{ width: COLUMN_MIN_WIDTH }}
+                  >
+                    <div className="flex flex-col gap-1.5">
+                      {stage.agents.map((agentId) => (
+                        <div
+                          key={agentId}
+                          className="flex items-center gap-2 w-full p-2.5 rounded-xl border border-dashed border-gray-100 bg-white/40 text-gray-300 text-[9px] uppercase tracking-tighter font-black"
+                        >
+                          <Circle size={10} className="opacity-30" />
+                          <span className="truncate">{t(`agents.${agentId}`)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              }
 
-        {!isInAnalysisPhase && !isBlueprintMode && showInitMode && (
-          <div className="flex min-w-0 flex-col gap-2 p-2.5 rounded-2xl border border-dashed border-indigo-200 bg-indigo-50/30 min-h-[110px]">
-            <div className="flex flex-1 items-center justify-center">
-              <div className="flex flex-col items-center gap-2">
-                <div className="relative">
-                  <div className="absolute inset-0 rounded-full bg-indigo-200 animate-ping opacity-50" />
-                  <LucideLoader size={16} className="relative text-indigo-500 animate-spin" />
+              const isActive = currentPhase === stage.id || (showInitMode && stage.id === 'PLANNING');
+              const stageAgentsInQueue = taskAgentsByStage[stage.id] || [];
+
+              return (
+                <div
+                  key={stage.id}
+                  className={`flex-shrink-0 flex flex-col gap-2 p-2.5 rounded-2xl border transition-all duration-500 min-h-[110px] ${isActive
+                    ? 'bg-white border-indigo-100 shadow-xl shadow-indigo-50/50 ring-1 ring-indigo-50'
+                    : 'bg-white/60 border-gray-100 shadow-sm opacity-90'
+                    }`}
+                  style={{ width: COLUMN_MIN_WIDTH }}
+                >
+                  <div className="flex flex-col gap-1.5">
+                    {stageAgentsInQueue.map((agentId) => {
+                      const isLoading = agentId === 'planner' && (showInitMode || !hasConfirmedPipeline);
+                      return renderNode(agentId, t(`agents.${agentId}`), isActive, isLoading);
+                    })}
+                  </div>
                 </div>
-                <span className="text-[9px] font-bold uppercase tracking-tight text-indigo-500 animate-pulse">
-                  {t('pipeline.preparing') || 'Preparing pipeline...'}
-                </span>
-              </div>
-            </div>
-          </div>
-        )}
+              );
+            })}
 
-        {!isInAnalysisPhase && pendingStages.map((stage) => (
-          <div
-            key={`pending-${stage.id}`}
-            className="flex min-w-0 flex-col gap-2 p-2.5 rounded-2xl border border-dashed border-gray-200 bg-gray-50/30 min-h-[110px] opacity-50"
-          >
-            <div className="flex min-h-[68px] items-center justify-center rounded-xl border border-dashed border-gray-200 bg-gray-50/60 px-2 text-center text-[9px] font-bold uppercase tracking-tight text-gray-300">
-              {t(`stages.${stage.id}`)}
-            </div>
+            {isInPlanningPhase && !isBlueprintMode && (
+              <div className="flex-shrink-0 flex flex-col gap-2 p-2.5 rounded-2xl border border-dashed border-gray-200 bg-gray-50/30 min-h-[110px]" style={{ width: COLUMN_MIN_WIDTH * 2 }}>
+                <div className="flex flex-1 items-center justify-center">
+                  <div className="flex flex-col items-center gap-3">
+                    <div className="relative">
+                      <div className="absolute inset-0 rounded-full bg-gray-200 animate-ping opacity-30" />
+                      <div className="absolute inset-0 rounded-full bg-gray-100 animate-pulse" />
+                      <LucideLoader size={20} className="relative text-gray-400 animate-spin" />
+                    </div>
+                    <span className="text-[10px] font-bold uppercase tracking-tight text-gray-500 animate-pulse">
+                      {t('pipeline.expertsWaiting') || '设计专家正在等待加载...'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {isBlueprintMode && (
+              <div className="hidden" />
+            )}
+
+            {!isInPlanningPhase && !isBlueprintMode && showInitMode && (
+              <div className="flex-shrink-0 flex flex-col gap-2 p-2.5 rounded-2xl border border-dashed border-indigo-200 bg-indigo-50/30 min-h-[110px]" style={{ width: COLUMN_MIN_WIDTH }}>
+                <div className="flex flex-1 items-center justify-center">
+                  <div className="flex flex-col items-center gap-2">
+                    <div className="relative">
+                      <div className="absolute inset-0 rounded-full bg-indigo-200 animate-ping opacity-50" />
+                      <LucideLoader size={16} className="relative text-indigo-500 animate-spin" />
+                    </div>
+                    <span className="text-[9px] font-bold uppercase tracking-tight text-indigo-500 animate-pulse">
+                      {t('pipeline.preparing') || 'Preparing pipeline...'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {!isInPlanningPhase && pendingStages.map((stage) => (
+              <div
+                key={`pending-${stage.id}`}
+                className="flex-shrink-0 flex flex-col gap-2 p-2.5 rounded-2xl border border-dashed border-gray-200 bg-gray-50/30 min-h-[110px] opacity-50"
+                style={{ width: COLUMN_MIN_WIDTH }}
+              >
+                <div className="flex min-h-[68px] items-center justify-center rounded-xl border border-dashed border-gray-200 bg-gray-50/60 px-2 text-center text-[9px] font-bold uppercase tracking-tight text-gray-300">
+                  {getPhaseLabel(stage.id)}
+                </div>
+              </div>
+            ))}
           </div>
-        ))}
+        </div>
       </div>
 
       {selectedNode && nodeLlmMap?.[selectedNode]?.label && (

@@ -493,7 +493,23 @@ Return each file in a code block with the filename as header.
         profile["capability"] = str(profile.get("capability") or expert_id)
 
         return yaml.safe_dump(profile, allow_unicode=True, sort_keys=False)
-    
+
+    @staticmethod
+    def _inject_phase(profile_yaml: str, phase: str) -> str:
+        """Inject or update scheduling.phase in an expert profile YAML."""
+        try:
+            profile = yaml.safe_load(profile_yaml) or {}
+        except Exception:
+            profile = {}
+
+        scheduling = profile.get("scheduling")
+        if not isinstance(scheduling, dict):
+            scheduling = {}
+            profile["scheduling"] = scheduling
+        scheduling["phase"] = str(phase).strip().upper()
+
+        return yaml.safe_dump(profile, allow_unicode=True, sort_keys=False)
+
     def _generate_fallback_content(self, expert_id: str, name: str, description: str, *, name_zh: str = "", name_en: str = "") -> Dict[str, Any]:
         """Generate fallback content when LLM fails."""
         
@@ -726,6 +742,7 @@ keywords: {json.dumps(domain_keywords)}
         *,
         name_zh: str = "",
         name_en: str = "",
+        phase: str = "",
     ) -> Optional[Dict[str, Any]]:
         """
         Create a new expert with intelligent generation.
@@ -737,6 +754,7 @@ keywords: {json.dumps(domain_keywords)}
             use_llm: Whether to use LLM for intelligent generation
             name_zh: Chinese name for the expert
             name_en: English name for the expert
+            phase: Target execution phase (e.g. "ARCHITECTURE")
 
         Returns:
             Expert metadata dict if successful, None otherwise
@@ -784,6 +802,9 @@ keywords: {json.dumps(domain_keywords)}
                 name_zh=name_zh,
                 name_en=name_en,
             )
+            # Inject scheduling.phase if provided
+            if phase:
+                profile_content = self._inject_phase(profile_content, phase)
 
         if profile_content:
             profile_path.write_text(profile_content, encoding="utf-8")
@@ -817,6 +838,7 @@ def create_expert(
     *,
     name_zh: str = "",
     name_en: str = "",
+    phase: str = "",
 ) -> Optional[Dict[str, Any]]:
     """
     Convenience function to create a new expert.
@@ -829,9 +851,10 @@ def create_expert(
     use_llm: Whether to use LLM generation
     name_zh: Chinese name for the expert
     name_en: English name for the expert
+    phase: Target execution phase (e.g. "ARCHITECTURE")
 
     Returns:
     Expert metadata dict if successful, None otherwise
     """
     generator = ExpertGenerator(base_dir)
-    return generator.create_expert(expert_id, name, description, use_llm, name_zh=name_zh, name_en=name_en)
+    return generator.create_expert(expert_id, name, description, use_llm, name_zh=name_zh, name_en=name_en, phase=phase)

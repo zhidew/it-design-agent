@@ -2083,6 +2083,69 @@ def _write_versioned_file(file_path: Path, content: str, *, validate_yaml: bool 
     return True
 
 
+def _reload_phase_and_registry_state() -> None:
+    from config import get_phase_config
+
+    get_phase_config().reload()
+    try:
+        ExpertRegistry.get_instance().reload()
+    except RuntimeError:
+        ExpertRegistry.initialize(BASE_DIR)
+
+
+def get_phase_orchestration():
+    from config import get_phase_config
+
+    phase_config = get_phase_config()
+    experts = []
+    phase_map = phase_config.get_expert_phase_map()
+
+    for expert in list_experts():
+        if expert["id"] in SYSTEM_EXPERTS:
+            continue
+        experts.append(
+            {
+                "id": expert["id"],
+                "name": expert["name"],
+                "name_zh": expert.get("name_zh"),
+                "name_en": expert.get("name_en"),
+                "description": expert.get("description"),
+                "phase": phase_map.get(expert["id"], ""),
+            }
+        )
+
+    experts.sort(key=lambda item: item["id"])
+
+    return {
+        "phases": phase_config.get_phase_labels(lang="zh", executable_only=False),
+        "experts": experts,
+        "validation_errors": phase_config.validation_errors,
+    }
+
+
+def update_phase_orchestration(phases: list[dict]):
+    from config import get_phase_config
+
+    phase_config = get_phase_config()
+    valid_experts = {expert["id"] for expert in list_experts() if expert["id"] not in SYSTEM_EXPERTS}
+    phase_updates: list[dict] = []
+
+    for phase in phases:
+        phase_id = str(phase.get("id") or "").strip().upper()
+        order = int(phase.get("order", 0))
+        experts = [str(item).strip() for item in (phase.get("experts") or []) if str(item).strip()]
+        unknown = sorted({expert_id for expert_id in experts if expert_id not in valid_experts})
+        if unknown:
+            raise ValueError(
+                f"Unknown experts for phase '{phase_id}': {', '.join(unknown)}",
+            )
+        phase_updates.append({"id": phase_id, "order": order, "experts": experts})
+
+    phase_config.update_phase_configuration(phase_updates)
+    _reload_phase_and_registry_state()
+    return get_phase_orchestration()
+
+
 def list_experts():
     experts_dir = _resolve_experts_dir()
     if not experts_dir.exists():
@@ -2153,18 +2216,31 @@ def update_expert(expert_id: str, new_profile_yaml: str):
 SYSTEM_EXPERTS = {"expert-creator"}
 
 
-def create_expert(expert_id: str, name: str, description: str = "", *, name_zh: str = "", name_en: str = ""):
+def create_expert(expert_id: str, name: str, description: str = "", *, name_zh: str = "", name_en: str = "", phase: str = ""):
     """Create a new expert using the Expert Generator script.
     
     This function delegates to the expert-creator skill's generate_expert.py script
     for intelligent expert generation with LLM support.
+    
+    Args:
+        phase: Target execution phase (e.g. "ARCHITECTURE"). Written to config/phases.yaml.
     """
     display_name = name_en or name_zh or name
     try:
         from skills.expert_creator.scripts.generate_expert import create_expert as generate_expert
-        result = generate_expert(BASE_DIR, expert_id, display_name, description, use_llm=True, name_zh=name_zh, name_en=name_en)
+        result = generate_expert(BASE_DIR, expert_id, display_name, description, use_llm=True, name_zh=name_zh, name_en=name_en, phase="")
         if result:
-            return result
+            target_phase = phase or "INTERFACE"
+            update_phase_orchestration(
+                [
+                    {
+                        "id": item["id"],
+                        "experts": list(item.get("experts") or []) + ([result["id"]] if item["id"] == target_phase else []),
+                    }
+                    for item in get_phase_orchestration()["phases"]
+                ]
+            )
+            return get_expert(result["id"])
     except Exception as e:
         print(f"[Orchestrator] Expert generation script failed: {e}. Using inline fallback.")
     
@@ -2266,6 +2342,16 @@ keywords: []
 
     profile_path.write_text(profile_content, encoding="utf-8")
     (skill_dir / "SKILL.md").write_text(skill_content, encoding="utf-8")
+    target_phase = phase or "INTERFACE"
+    update_phase_orchestration(
+        [
+            {
+                "id": item["id"],
+                "experts": list(item.get("experts") or []) + ([final_id] if item["id"] == target_phase else []),
+            }
+            for item in get_phase_orchestration()["phases"]
+        ]
+    )
     return get_expert(final_id)
 
 
@@ -2285,6 +2371,15 @@ def delete_expert(expert_id: str) -> bool:
         profile_path.unlink()
     if skill_dir.exists():
         shutil.rmtree(skill_dir, ignore_errors=True)
+    update_phase_orchestration(
+        [
+            {
+                "id": item["id"],
+                "experts": [item_id for item_id in (item.get("experts") or []) if item_id != expert_id],
+            }
+            for item in get_phase_orchestration()["phases"]
+        ]
+    )
     return True
 
 

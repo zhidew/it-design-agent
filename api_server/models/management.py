@@ -97,6 +97,31 @@ class ExpertDependencyValidationResponse(BaseModel):
     findings: List[ExpertDependencyFinding] = []
 
 
+class PhaseExpertOption(BaseModel):
+    id: str
+    name: str
+    name_zh: Optional[str] = None
+    name_en: Optional[str] = None
+    description: Optional[str] = None
+    phase: str = ""
+
+
+class PhaseOrchestrationItem(BaseModel):
+    id: str
+    label: str
+    label_zh: str
+    label_en: str
+    executable: bool
+    order: int
+    experts: List[str] = []
+
+
+class PhaseOrchestrationResponse(BaseModel):
+    phases: List[PhaseOrchestrationItem] = []
+    experts: List[PhaseExpertOption] = []
+    validation_errors: List[str] = []
+
+
 ExpertCenterFileNode.model_rebuild()
 
 

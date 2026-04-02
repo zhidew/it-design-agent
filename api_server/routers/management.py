@@ -6,6 +6,7 @@ import services.orchestrator_service as orch
 from models.management import (
     ExpertDependencyValidationResponse,
     ExpertCenterFileNode,
+    PhaseOrchestrationResponse,
     ExpertMetadata,
     FileContentResponse,
     SkillMetadata,
@@ -43,10 +44,21 @@ class ExpertCreateRequest(BaseModel):
     name_zh: str = ""
     name_en: str = ""
     description: str = ""
+    phase: str = ""  # Target execution phase, e.g. "ARCHITECTURE"
 
 
 class FileContentUpdateRequest(BaseModel):
     content: str
+
+
+class PhaseOrchestrationItemRequest(BaseModel):
+    id: str
+    order: int
+    experts: List[str] = []
+
+
+class PhaseOrchestrationUpdateRequest(BaseModel):
+    phases: List[PhaseOrchestrationItemRequest]
 
 
 @management_router.get("/agents")
@@ -96,6 +108,28 @@ async def list_experts():
     return orch.list_experts()
 
 
+@expert_center_router.get("/phases")
+async def list_phases(executable_only: bool = True):
+    payload = orch.get_phase_orchestration()
+    phases = payload["phases"]
+    if executable_only:
+        phases = [phase for phase in phases if phase.get("executable")]
+    return phases
+
+
+@expert_center_router.get("/phase-orchestration", response_model=PhaseOrchestrationResponse)
+async def get_phase_orchestration():
+    return orch.get_phase_orchestration()
+
+
+@expert_center_router.put("/phase-orchestration", response_model=PhaseOrchestrationResponse)
+async def update_phase_orchestration(req: PhaseOrchestrationUpdateRequest):
+    try:
+        return orch.update_phase_orchestration([item.model_dump() for item in req.phases])
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
 @expert_center_router.get("/experts/validate-dependencies", response_model=ExpertDependencyValidationResponse)
 async def validate_expert_dependencies():
     return orch.validate_expert_dependencies()
@@ -107,6 +141,17 @@ async def create_expert(req: ExpertCreateRequest):
     name_zh = (req.name_zh or "").strip()
     name_en = (req.name_en or "").strip()
     name = (req.name or name_en or name_zh).strip()
+
+    # Validate phase if provided
+    phase = (req.phase or "").strip().upper()
+    if phase:
+        from config import get_phase_config
+        _pcfg = get_phase_config()
+        if not _pcfg.is_executable_phase(phase):
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid phase '{phase}'. Must be one of: {', '.join(_pcfg.execution_phases)}",
+            )
 
     experts = orch.list_experts()
     for existing in experts:
@@ -130,7 +175,7 @@ async def create_expert(req: ExpertCreateRequest):
         if name_en and _normalize(name_en) == existing_name_norm and existing_name_norm:
             raise HTTPException(status_code=409, detail=f"Expert name '{name_en}' is too similar to existing expert '{existing['id']}' (name: '{existing['name']}').")
 
-    expert = orch.create_expert(req.expert_id, name, req.description, name_zh=name_zh, name_en=name_en)
+    expert = orch.create_expert(req.expert_id, name, req.description, name_zh=name_zh, name_en=name_en, phase=phase)
     if not expert:
         raise HTTPException(status_code=400, detail="Failed to create expert")
     return expert

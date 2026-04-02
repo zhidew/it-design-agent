@@ -22,6 +22,7 @@ import {
 import { apiClient } from '../api';
 import { useTranslation } from 'react-i18next';
 import { LanguageSwitcher } from './LanguageSwitcher';
+import { PhaseOrchestrationPanel } from './PhaseOrchestrationPanel';
 
 type WorkbenchTab = 'profile' | 'skill' | 'templates' | 'references' | 'scripts' | 'tools';
 
@@ -63,8 +64,8 @@ interface ToolInfo {
   category: string;
   description_zh: string;
   description_en: string;
-  input_schema: Record<string, any>;
-  output_schema: Record<string, any>;
+  input_schema: Record<string, unknown>;
+  output_schema: Record<string, unknown>;
   use_cases: string[];
   recommended_for: string[];
   script_path?: string;
@@ -76,7 +77,7 @@ interface DependencyFinding {
   message: string;
   expert_id?: string | null;
   related_expert_id?: string | null;
-  details: Record<string, any>;
+  details: Record<string, unknown>;
 }
 
 interface DependencyValidationReport {
@@ -99,6 +100,16 @@ interface WorkbenchSection {
 }
 
 const TAB_ORDER: WorkbenchTab[] = ['profile', 'skill', 'templates', 'references', 'scripts', 'tools'];
+const PHASE_ORCHESTRATION_ID = '__phase-orchestration__';
+
+function extractApiErrorDetail(error: unknown): string {
+  if (typeof error !== 'object' || error === null || !('response' in error)) {
+    return '';
+  }
+  const response = (error as { response?: { data?: { detail?: unknown } } }).response;
+  const detail = response?.data?.detail;
+  return typeof detail === 'string' ? detail : '';
+}
 
 export function ExpertCenter() {
   const { t, i18n } = useTranslation();
@@ -147,7 +158,7 @@ export function ExpertCenter() {
   ];
 
   useEffect(() => {
-    let interval: any;
+    let interval: ReturnType<typeof setInterval> | undefined;
     if (creating) {
       setGenerationStep(0);
       interval = setInterval(() => {
@@ -160,11 +171,7 @@ export function ExpertCenter() {
     return () => { if (interval) clearInterval(interval); };
   }, [creating, GENERATION_STEPS.length]);
 
-  useEffect(() => {
-    void loadExpertCenter();
-  }, []);
-
-  const loadExpertCenter = async () => {
+  const loadExpertCenter = React.useCallback(async () => {
     setLoading(true);
     try {
       const [expertsRes, treeRes] = await Promise.all([
@@ -185,7 +192,11 @@ export function ExpertCenter() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedExpertId, t]);
+
+  useEffect(() => {
+    void loadExpertCenter();
+  }, [loadExpertCenter]);
 
   const loadDependencyValidation = async () => {
     setValidatingDependencies(true);
@@ -295,18 +306,19 @@ export function ExpertCenter() {
     () => experts.find((expert) => expert.id === selectedExpertId) ?? null,
     [experts, selectedExpertId],
   );
+  const isPhaseOrchestrationView = selectedExpertId === PHASE_ORCHESTRATION_ID;
 
   const visibleDependencyFindings = useMemo(() => {
     if (!validationReport) {
       return [];
     }
-    if (!selectedExpertId) {
+    if (!selectedExpertId || isPhaseOrchestrationView) {
       return validationReport.findings;
     }
     return validationReport.findings.filter(
       (finding) => finding.expert_id === selectedExpertId || finding.related_expert_id === selectedExpertId,
     );
-  }, [validationReport, selectedExpertId]);
+  }, [validationReport, selectedExpertId, isPhaseOrchestrationView]);
 
   const fileNamesByPath = useMemo(() => {
     const entries: Record<string, string> = {};
@@ -393,7 +405,7 @@ export function ExpertCenter() {
     return sectionsByExpert;
   }, [tree, t]);
 
-  const activeSections = selectedExpertId ? workbenchSections[selectedExpertId] ?? [] : [];
+  const activeSections = selectedExpertId && !isPhaseOrchestrationView ? workbenchSections[selectedExpertId] ?? [] : [];
   const activeSection = activeSections.find((section) => section.tab === activeTab) ?? null;
 
   useEffect(() => {
@@ -405,6 +417,20 @@ export function ExpertCenter() {
     setSelectedFile(null);
     setEditingContent('');
   }, [selectedExpertId]);
+
+  const selectFile = React.useCallback(async (path: string) => {
+    setSelectedPath(path);
+    setLoading(true);
+    try {
+      const response = await apiClient.get(`/expert-center/files/${path}/content`);
+      setSelectedFile(response.data);
+      setEditingContent(normalizeProfileContent(path, response.data.content));
+    } catch {
+      setMessage({ type: 'error', text: t('common.loadError') });
+    } finally {
+      setLoading(false);
+    }
+  }, [t]);
 
   useEffect(() => {
     if (!selectedExpertId) {
@@ -420,21 +446,7 @@ export function ExpertCenter() {
       return;
     }
     void selectFile(activeSection.paths[0]);
-  }, [selectedExpertId, activeTab, activeSection?.paths.join('|')]);
-
-  const selectFile = async (path: string) => {
-    setSelectedPath(path);
-    setLoading(true);
-    try {
-      const response = await apiClient.get(`/expert-center/files/${path}/content`);
-      setSelectedFile(response.data);
-      setEditingContent(normalizeProfileContent(path, response.data.content));
-    } catch {
-      setMessage({ type: 'error', text: t('common.loadError') });
-    } finally {
-      setLoading(false);
-    }
-  };
+  }, [selectedExpertId, activeTab, activeSection, selectedPath, selectFile]);
 
   const handleSave = async () => {
     if (!selectedFile) {
@@ -484,8 +496,8 @@ export function ExpertCenter() {
       setShowCreateModal(false);
       await loadExpertCenter();
       setSelectedExpertId(response.data.id);
-    } catch (err: any) {
-      const detail = err.response?.data?.detail || '';
+    } catch (err: unknown) {
+      const detail = extractApiErrorDetail(err);
       const errMsg = detail.includes('duplicate') || detail.includes('similar')
         ? t('management.createExpertNameDuplicate')
         : (detail || t('management.createExpertError'));
@@ -550,8 +562,8 @@ export function ExpertCenter() {
       await loadExpertCenter();
       // Select the new file
       setTimeout(() => void selectFile(newPath), 100);
-    } catch (err: any) {
-      const errMsg = err.response?.data?.detail || 'Failed to create file';
+    } catch (err: unknown) {
+      const errMsg = extractApiErrorDetail(err) || 'Failed to create file';
       setMessage({ type: 'error', text: errMsg });
     } finally {
       setCreatingFile(false);
@@ -575,8 +587,8 @@ export function ExpertCenter() {
         setEditingContent('');
       }
       await loadExpertCenter();
-    } catch (err: any) {
-      const errMsg = err.response?.data?.detail || 'Failed to delete file';
+    } catch (err: unknown) {
+      const errMsg = extractApiErrorDetail(err) || 'Failed to delete file';
       setMessage({ type: 'error', text: errMsg });
     } finally {
       setDeletingFile(false);
@@ -602,6 +614,10 @@ export function ExpertCenter() {
   // System experts that cannot be deleted
   const SYSTEM_EXPERTS = ['expert-creator'];
   const isSystemExpert = selectedExpertId ? SYSTEM_EXPERTS.includes(selectedExpertId) : false;
+  const expertVersionKey = useMemo(
+    () => experts.map((expert) => expert.id).sort((left, right) => left.localeCompare(right)).join('|'),
+    [experts],
+  );
 
   const restoreVersion = (content: string) => {
     setEditingContent(content);
@@ -729,6 +745,25 @@ export function ExpertCenter() {
                 <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3 px-1">
                   {t('management.systemTools') || 'System Tools'}
                 </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedExpertId(PHASE_ORCHESTRATION_ID)}
+                  className={`mb-2 w-full rounded-2xl border p-4 text-left transition-all ${
+                    isPhaseOrchestrationView
+                      ? 'border-indigo-500 bg-indigo-600 text-white shadow-lg shadow-indigo-100'
+                      : 'border-gray-200 bg-gradient-to-br from-sky-50 to-indigo-50 text-gray-700 hover:border-indigo-200'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-xs font-black uppercase truncate">{t('management.phaseOrchestrationTitle')}</div>
+                      <div className={`text-[11px] mt-1 truncate ${isPhaseOrchestrationView ? 'text-indigo-100' : 'text-gray-400'}`}>
+                        {t('management.phaseOrchestrationNavHint')}
+                      </div>
+                    </div>
+                    <Network size={16} />
+                  </div>
+                </button>
                 {filteredExperts
                   .filter((expert) => SYSTEM_EXPERTS.includes(expert.id))
                   .map((expert) => {
@@ -764,9 +799,11 @@ export function ExpertCenter() {
             <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-6">
               <div className="space-y-3">
                 <div className="text-[10px] font-black text-indigo-500 uppercase tracking-widest">{t('management.workbenchTitle')}</div>
-                <div className="text-2xl font-black text-gray-900">{translateExpertName(selectedExpert)}</div>
+                <div className="text-2xl font-black text-gray-900">
+                  {isPhaseOrchestrationView ? t('management.phaseOrchestrationTitle') : translateExpertName(selectedExpert)}
+                </div>
                 <div className="max-w-3xl text-sm text-gray-500 leading-relaxed">
-                  {translateExpertDescription(selectedExpert)}
+                  {isPhaseOrchestrationView ? t('management.phaseOrchestrationDescription') : translateExpertDescription(selectedExpert)}
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-3">
@@ -779,7 +816,7 @@ export function ExpertCenter() {
                   {validatingDependencies ? <LucideLoader size={14} className="animate-spin" /> : <RefreshCw size={14} />}
                   {t('management.validateDependencies')}
                 </button>
-                {selectedExpert && !isSystemExpert && (
+                {selectedExpert && !isSystemExpert && !isPhaseOrchestrationView && (
                   <button
                     type="button"
                     onClick={handleDeleteExpert}
@@ -801,7 +838,7 @@ export function ExpertCenter() {
                 <div className="text-[10px] font-black text-indigo-500 uppercase tracking-widest">{t('management.validationEyebrow')}</div>
                 <div className="text-lg font-black text-gray-900 mt-1">{t('management.validationTitle')}</div>
                 <div className="text-sm text-gray-500 mt-2 max-w-3xl">
-                  {selectedExpertId
+                  {selectedExpertId && !isPhaseOrchestrationView
                     ? t('management.validationDescriptionSelected', { expert: translateExpertName(selectedExpert) })
                     : t('management.validationDescription')}
                 </div>
@@ -902,6 +939,9 @@ export function ExpertCenter() {
           </section>
           )}
 
+          {isPhaseOrchestrationView ? (
+            <PhaseOrchestrationPanel expertVersionKey={expertVersionKey} />
+          ) : (
           <section className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
             <div className="px-6 py-4 border-b border-gray-100">
               <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">{t('management.workbenchSections')}</div>
@@ -1168,6 +1208,7 @@ export function ExpertCenter() {
               </div>
             </div>
           </section>
+          )}
         </main>
       </div>
 
