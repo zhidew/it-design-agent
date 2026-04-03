@@ -303,8 +303,17 @@ class ExpertGenerator:
         
         return skill_content
     
-    def _generate_with_llm(self, name: str, description: str, *, name_zh: str = "", name_en: str = "") -> Dict[str, Any]:
+    def _generate_with_llm(
+        self,
+        name: str,
+        description: str,
+        *,
+        name_zh: str = "",
+        name_en: str = "",
+        request_id: str = "",
+    ) -> Dict[str, Any]:
         """Use LLM to generate expert content based on SKILL.md instructions."""
+        request_tag = request_id or uuid.uuid4().hex[:8]
         try:
             from api_server.services.llm_service import generate_with_llm
             
@@ -358,6 +367,7 @@ Now generate expert metadata for:
 Generate a JSON object following Step 2 instructions. Return ONLY the JSON, no explanations.
 """
             
+            print(f"[ExpertCreate:{request_tag}] Requesting metadata draft from LLM for '{name}'.")
             metadata_result = generate_with_llm(
                 metadata_prompt,
                 f"Generate metadata for expert: {name}",
@@ -436,6 +446,7 @@ Generate the following files following Step 3-6 instructions:
 Return each file in a code block with the filename as header.
 """
             
+            print(f"[ExpertCreate:{request_tag}] Requesting expert asset bundle from LLM for '{expert_id}'.")
             content_result = generate_with_llm(
                 content_prompt,
                 f"Generate complete expert files for: {name}",
@@ -467,7 +478,7 @@ Return each file in a code block with the filename as header.
             }
             
         except Exception as e:
-            print(f"[ExpertGenerator] LLM generation failed: {e}")
+            print(f"[ExpertCreate:{request_tag}] LLM generation failed: {e}")
             return {"success": False, "error": str(e)}
     
     def _clean_yaml(self, raw: str) -> str:
@@ -778,6 +789,7 @@ keywords: {json.dumps(domain_keywords)}
         name_zh: str = "",
         name_en: str = "",
         phase: str = "",
+        request_id: str = "",
     ) -> Optional[Dict[str, Any]]:
         """
         Create a new expert with intelligent generation.
@@ -795,15 +807,27 @@ keywords: {json.dumps(domain_keywords)}
             Expert metadata dict if successful, None otherwise
         """
         # Clean initial ID
+        request_tag = request_id or uuid.uuid4().hex[:8]
         initial_id = self._clean_expert_id(expert_id)
+        print(
+            f"[ExpertCreate:{request_tag}] ExpertGenerator started "
+            f"initial_id='{initial_id}' use_llm={'true' if use_llm else 'false'}."
+        )
         
         # Generate content
         if use_llm:
-            result = self._generate_with_llm(name, description, name_zh=name_zh, name_en=name_en)
+            result = self._generate_with_llm(
+                name,
+                description,
+                name_zh=name_zh,
+                name_en=name_en,
+                request_id=request_tag,
+            )
         else:
             result = {"success": False}
         
         if not result.get("success"):
+            print(f"[ExpertCreate:{request_tag}] Falling back to deterministic content generation.")
             result = self._generate_fallback_content(initial_id, name, description, name_zh=name_zh, name_en=name_en)
         
         expert_id = result.get("expert_id", initial_id)
@@ -813,6 +837,7 @@ keywords: {json.dumps(domain_keywords)}
         if profile_path.exists():
             expert_id = f"{expert_id}-{uuid.uuid4().hex[:4]}"
             profile_path = self._resolve_expert_profile_path(expert_id)
+            print(f"[ExpertCreate:{request_tag}] Expert id already existed. Using unique id '{expert_id}'.")
         
         # Create directory structure
         self.experts_dir.mkdir(parents=True, exist_ok=True)
@@ -849,6 +874,10 @@ keywords: {json.dumps(domain_keywords)}
             (skill_dir / "assets" / "templates" / template_name).write_text(template_content, encoding="utf-8")
         if script_content and script_name:
             (skill_dir / "scripts" / script_name).write_text(script_content, encoding="utf-8")
+        print(
+            f"[ExpertCreate:{request_tag}] Expert files written "
+            f"profile='{profile_path.name}' template='{template_name}' script='{script_name or ''}'."
+        )
         
         # Return expert metadata
         return {
@@ -874,6 +903,7 @@ def create_expert(
     name_zh: str = "",
     name_en: str = "",
     phase: str = "",
+    request_id: str = "",
 ) -> Optional[Dict[str, Any]]:
     """
     Convenience function to create a new expert.
@@ -892,4 +922,13 @@ def create_expert(
     Expert metadata dict if successful, None otherwise
     """
     generator = ExpertGenerator(base_dir)
-    return generator.create_expert(expert_id, name, description, use_llm, name_zh=name_zh, name_en=name_en, phase=phase)
+    return generator.create_expert(
+        expert_id,
+        name,
+        description,
+        use_llm,
+        name_zh=name_zh,
+        name_en=name_en,
+        phase=phase,
+        request_id=request_id,
+    )

@@ -2267,7 +2267,16 @@ def update_expert(expert_id: str, new_profile_yaml: str):
 SYSTEM_EXPERTS = {"expert-creator"}
 
 
-def create_expert(expert_id: str, name: str, description: str = "", *, name_zh: str = "", name_en: str = "", phase: str = ""):
+def create_expert(
+    expert_id: str,
+    name: str,
+    description: str = "",
+    *,
+    name_zh: str = "",
+    name_en: str = "",
+    phase: str = "",
+    request_id: str = "",
+):
     """Create a new expert using the Expert Generator script.
     
     This function delegates to the expert-creator skill's generate_expert.py script
@@ -2276,12 +2285,31 @@ def create_expert(expert_id: str, name: str, description: str = "", *, name_zh: 
     Args:
         phase: Target execution phase (e.g. "ARCHITECTURE"). Written to config/phases.yaml.
     """
+    request_tag = request_id or uuid.uuid4().hex[:8]
     display_name = name_en or name_zh or name
+    target_phase = phase or "INTERFACE"
+    print(
+        f"[ExpertCreate:{request_tag}] Starting generation flow "
+        f"expert_id='{expert_id}' display_name='{display_name}' target_phase='{target_phase}'."
+    )
     try:
         from skills.expert_creator.scripts.generate_expert import create_expert as generate_expert
-        result = generate_expert(BASE_DIR, expert_id, display_name, description, use_llm=True, name_zh=name_zh, name_en=name_en, phase="")
+        result = generate_expert(
+            BASE_DIR,
+            expert_id,
+            display_name,
+            description,
+            use_llm=True,
+            name_zh=name_zh,
+            name_en=name_en,
+            phase="",
+            request_id=request_tag,
+        )
         if result:
-            target_phase = phase or "INTERFACE"
+            print(
+                f"[ExpertCreate:{request_tag}] Expert asset generation succeeded with generated_id='{result['id']}'. "
+                f"Updating phase orchestration."
+            )
             update_phase_orchestration(
                 [
                     {
@@ -2291,11 +2319,13 @@ def create_expert(expert_id: str, name: str, description: str = "", *, name_zh: 
                     for item in get_phase_orchestration()["phases"]
                 ]
             )
+            print(f"[ExpertCreate:{request_tag}] Phase orchestration updated for expert '{result['id']}'.")
             return get_expert(result["id"])
     except Exception as e:
-        print(f"[Orchestrator] Expert generation script failed: {e}. Using inline fallback.")
+        print(f"[ExpertCreate:{request_tag}] Expert generation script failed: {e}. Using inline fallback.")
     
     # Fallback: inline generation with rich structure
+    print(f"[ExpertCreate:{request_tag}] Entering inline fallback generation path.")
     initial_id = "".join(ch for ch in expert_id if ch.isalnum() or ch == "-").strip("-").lower()
     if not initial_id:
         initial_id = "expert-" + str(uuid.uuid4())[:8]
@@ -2402,7 +2432,7 @@ keywords: []
 
     profile_path.write_text(profile_content, encoding="utf-8")
     (skill_dir / "SKILL.md").write_text(skill_content, encoding="utf-8")
-    target_phase = phase or "INTERFACE"
+    print(f"[ExpertCreate:{request_tag}] Applying fallback expert '{final_id}' to phase '{target_phase}'.")
     update_phase_orchestration(
         [
             {
@@ -2412,6 +2442,7 @@ keywords: []
             for item in get_phase_orchestration()["phases"]
         ]
     )
+    print(f"[ExpertCreate:{request_tag}] Inline fallback completed with id='{final_id}'.")
     return get_expert(final_id)
 
 

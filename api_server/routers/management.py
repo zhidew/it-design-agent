@@ -1,4 +1,8 @@
+from functools import partial
+from uuid import uuid4
+
 from fastapi import APIRouter, HTTPException
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from typing import List
 
@@ -137,10 +141,16 @@ async def validate_expert_dependencies():
 
 @expert_center_router.post("/experts", response_model=ExpertMetadata)
 async def create_expert(req: ExpertCreateRequest):
+    request_id = uuid4().hex[:8]
+
     # Validate names for duplicates / similarity
     name_zh = (req.name_zh or "").strip()
     name_en = (req.name_en or "").strip()
     name = (req.name or name_en or name_zh).strip()
+    print(
+        f"[ExpertCreate:{request_id}] Received create request "
+        f"expert_id='{req.expert_id}' name_en='{name_en}' name_zh='{name_zh}' phase='{req.phase or ''}'."
+    )
 
     # Validate phase if provided
     phase = (req.phase or "").strip().upper()
@@ -175,9 +185,25 @@ async def create_expert(req: ExpertCreateRequest):
         if name_en and _normalize(name_en) == existing_name_norm and existing_name_norm:
             raise HTTPException(status_code=409, detail=f"Expert name '{name_en}' is too similar to existing expert '{existing['id']}' (name: '{existing['name']}').")
 
-    expert = orch.create_expert(req.expert_id, name, req.description, name_zh=name_zh, name_en=name_en, phase=phase)
+    # Expert generation performs long-running sync LLM/file work. Run it in the
+    # threadpool so one slow create request does not block unrelated API calls.
+    print(f"[ExpertCreate:{request_id}] Dispatching expert generation to threadpool.")
+    expert = await run_in_threadpool(
+        partial(
+            orch.create_expert,
+            req.expert_id,
+            name,
+            req.description,
+            name_zh=name_zh,
+            name_en=name_en,
+            phase=phase,
+            request_id=request_id,
+        )
+    )
     if not expert:
+        print(f"[ExpertCreate:{request_id}] Expert generation returned no result.")
         raise HTTPException(status_code=400, detail="Failed to create expert")
+    print(f"[ExpertCreate:{request_id}] Expert generation completed with id='{expert['id']}'.")
     return expert
 
 

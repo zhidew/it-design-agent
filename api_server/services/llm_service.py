@@ -2,6 +2,7 @@ import os
 import json
 import time
 import threading
+from urllib.parse import urlsplit, urlunsplit
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 from pathlib import Path
@@ -47,6 +48,37 @@ def _resolve_nonnegative_float_env(env_key: str, default: float = 0.0) -> float:
 
 def _get_llm_min_call_interval_seconds() -> float:
     return _resolve_nonnegative_float_env("LLM_MIN_CALL_INTERVAL_SECONDS", 0.0)
+
+
+def _get_llm_request_timeout_seconds() -> float:
+    return _resolve_nonnegative_float_env("LLM_REQUEST_TIMEOUT_SECONDS", 600.0)
+
+
+def _format_timeout_seconds(timeout_seconds: float) -> str:
+    if timeout_seconds <= 0:
+        return "disabled"
+    return f"{timeout_seconds:g}s"
+
+
+def _summarize_expected_files(expected_files: list[str], max_items: int = 3) -> str:
+    if not expected_files:
+        return "(none)"
+    if len(expected_files) <= max_items:
+        return ", ".join(expected_files)
+    head = ", ".join(expected_files[:max_items])
+    return f"{head}, ... (+{len(expected_files) - max_items} more)"
+
+
+def _sanitize_base_url(base_url: str) -> str:
+    raw = str(base_url or "").strip()
+    if not raw:
+        return ""
+    try:
+        parts = urlsplit(raw)
+        netloc = parts.netloc.split("@", 1)[-1]
+        return urlunsplit((parts.scheme, netloc, parts.path.rstrip("/"), "", ""))
+    except Exception:
+        return raw
 
 
 def _throttle_llm_request() -> None:
@@ -149,9 +181,17 @@ def generate_with_llm(
         model_name = _resolve_llm_setting(llm_settings, "gemini_model_name", "GEMINI_MODEL_NAME", "gemini-2.0-flash")
     else:
         model_name = _resolve_llm_setting(llm_settings, "openai_model_name", "OPENAI_MODEL_NAME", "gpt-4o")
+    timeout_seconds = _get_llm_request_timeout_seconds()
 
     for attempt in range(max_retries + 1):
+        attempt_number = attempt + 1
+        attempt_started_at = time.monotonic()
         try:
+            print(
+                f"[LLM Service] Attempt {attempt_number}/{max_retries + 1} starting "
+                f"provider='{provider}' model='{model_name}' timeout={_format_timeout_seconds(timeout_seconds)} "
+                f"expected_files={_summarize_expected_files(expected_files)}."
+            )
             raw_data = None
             if provider == "gemini":
                 raw_data = _call_gemini_raw(enhanced_system_prompt, user_prompt, llm_settings=llm_settings)
@@ -201,11 +241,20 @@ def generate_with_llm(
             if "reasoning" not in raw_data:
                 raw_data["reasoning"] = "No reasoning provided by LLM."
 
+            elapsed = time.monotonic() - attempt_started_at
+            print(
+                f"[LLM Service] Attempt {attempt_number}/{max_retries + 1} succeeded "
+                f"provider='{provider}' model='{model_name}' elapsed={elapsed:.2f}s."
+            )
             return SubagentOutput.model_validate(raw_data)
 
         except json.JSONDecodeError as e:
             last_error = e
-            print(f"  [LLM Service] JSON parse failed (attempt {attempt + 1}/{max_retries + 1}): {e}")
+            elapsed = time.monotonic() - attempt_started_at
+            print(
+                f"  [LLM Service] JSON parse failed (attempt {attempt_number}/{max_retries + 1}, "
+                f"elapsed={elapsed:.2f}s): {e}"
+            )
             if project_id and version and llm_interaction_logging_enabled:
                 save_llm_interaction(
                     project_id=project_id,
@@ -224,7 +273,11 @@ def generate_with_llm(
             time.sleep(2)
         except Exception as e:
             last_error = e
-            print(f"  [LLM Service] Data validation/call failed (attempt {attempt + 1}/{max_retries + 1}): {e}")
+            elapsed = time.monotonic() - attempt_started_at
+            print(
+                f"  [LLM Service] Data validation/call failed (attempt {attempt_number}/{max_retries + 1}, "
+                f"elapsed={elapsed:.2f}s): {e}"
+            )
             if project_id and version and llm_interaction_logging_enabled:
                 save_llm_interaction(
                     project_id=project_id,
@@ -332,6 +385,7 @@ def _call_gemini_raw(system_prompt: str, user_prompt: str, llm_settings: dict | 
     import google.generativeai as genai
     api_key = _resolve_llm_setting(llm_settings, "gemini_api_key", "GEMINI_API_KEY")
     model_name = _resolve_llm_setting(llm_settings, "gemini_model_name", "GEMINI_MODEL_NAME", "gemini-2.0-flash")
+    timeout_seconds = _get_llm_request_timeout_seconds()
     
     # Use placeholder if key is missing to support local/no-auth gateways
     genai.configure(api_key=api_key or "not-required")
@@ -342,7 +396,27 @@ def _call_gemini_raw(system_prompt: str, user_prompt: str, llm_settings: dict | 
         generation_config={"response_mime_type": "application/json"}
     )
     _throttle_llm_request()
-    response = model.generate_content(user_prompt)
+    started_at = time.monotonic()
+    print(
+        f"[LLM Service] Gemini request starting model='{model_name}' "
+        f"timeout={_format_timeout_seconds(timeout_seconds)}."
+    )
+    request_kwargs = {}
+    if timeout_seconds > 0:
+        request_kwargs["request_options"] = {"timeout": timeout_seconds}
+    try:
+        response = model.generate_content(user_prompt, **request_kwargs)
+    except TypeError as exc:
+        if request_kwargs:
+            print(
+                "[LLM Service] Gemini SDK rejected request_options timeout; "
+                f"retrying without explicit timeout. error={exc}"
+            )
+            response = model.generate_content(user_prompt)
+        else:
+            raise
+    elapsed = time.monotonic() - started_at
+    print(f"[LLM Service] Gemini request completed model='{model_name}' elapsed={elapsed:.2f}s.")
     # Use robust parsing
     return _parse_llm_response_to_dict(response.text)
 
@@ -413,6 +487,7 @@ def _call_openai_raw(system_prompt: str, user_prompt: str, llm_settings: dict | 
     base_url = _resolve_llm_setting(llm_settings, "openai_base_url", "OPENAI_BASE_URL", "https://api.openai.com/v1")
     model_name = _resolve_llm_setting(llm_settings, "openai_model_name", "OPENAI_MODEL_NAME", "gpt-4o")
     headers = _resolve_llm_dict_setting(llm_settings, "openai_headers")
+    timeout_seconds = _get_llm_request_timeout_seconds()
     
     # Use placeholder if key is missing to support local/no-auth gateways
     # Check if Auth header is already present
@@ -421,8 +496,21 @@ def _call_openai_raw(system_prompt: str, user_prompt: str, llm_settings: dict | 
     if not effective_api_key and not has_auth_header:
         effective_api_key = "not-required"
 
-    client = OpenAI(api_key=effective_api_key or "", base_url=base_url, default_headers=headers or None)
+    client_kwargs = {
+        "api_key": effective_api_key or "",
+        "base_url": base_url,
+        "default_headers": headers or None,
+    }
+    if timeout_seconds > 0:
+        client_kwargs["timeout"] = timeout_seconds
+
+    client = OpenAI(**client_kwargs)
     _throttle_llm_request()
+    started_at = time.monotonic()
+    print(
+        f"[LLM Service] OpenAI-compatible request starting model='{model_name}' "
+        f"base_url='{_sanitize_base_url(base_url)}' timeout={_format_timeout_seconds(timeout_seconds)}."
+    )
     completion = client.chat.completions.create(
         model=model_name,
         messages=[
@@ -430,6 +518,11 @@ def _call_openai_raw(system_prompt: str, user_prompt: str, llm_settings: dict | 
             {"role": "user", "content": user_prompt}
         ],
         response_format={"type": "json_object"}
+    )
+    elapsed = time.monotonic() - started_at
+    print(
+        f"[LLM Service] OpenAI-compatible request completed model='{model_name}' "
+        f"elapsed={elapsed:.2f}s."
     )
     
     # Use robust parsing for production design calls

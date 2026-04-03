@@ -153,6 +153,7 @@ The backend loads the root `.env` file from the repository root.
 | `OPENAI_MODEL_NAME` | `gpt-4o` | Yes | Model name for OpenAI-compatible APIs |
 | `IT_DESIGN_AGENT_METADATA_KEY` | auto-generated if absent | No | Encrypts secrets stored in metadata SQLite |
 | `LLM_MIN_CALL_INTERVAL_SECONDS` | `0` | No | Minimum delay between LLM request starts |
+| `LLM_REQUEST_TIMEOUT_SECONDS` | `600` | No | Per-request timeout for expert generation and other synchronous LLM calls; set `0` to disable |
 | `USE_DYNAMIC_SUBAGENT` | `true` | No | Enables dynamic expert execution path |
 | `USE_MARKDOWN_UPSERT_TOOL` | `true` | No | Enables markdown upsert behavior in dynamic subagent finalization |
 | `ORCHESTRATOR_MAX_PARALLEL` | `2` | No | Max parallel executable tasks in orchestration |
@@ -196,6 +197,7 @@ Recommended tuning guidance:
 - LangGraph checkpoints: `projects/.orchestrator/langgraph-checkpoints.sqlite`
 - Backend currently starts on `0.0.0.0:8000` in `api_server/main.py`
 - Frontend Vite dev server defaults to port `5173`
+- Expert creation in Expert Center uses the system-level LLM env settings from `.env`, not a specific project's saved model selection
 
 ## Expert Development
 
