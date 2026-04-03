@@ -188,18 +188,25 @@ async def create_expert(req: ExpertCreateRequest):
     # Expert generation performs long-running sync LLM/file work. Run it in the
     # threadpool so one slow create request does not block unrelated API calls.
     print(f"[ExpertCreate:{request_id}] Dispatching expert generation to threadpool.")
-    expert = await run_in_threadpool(
-        partial(
-            orch.create_expert,
-            req.expert_id,
-            name,
-            req.description,
-            name_zh=name_zh,
-            name_en=name_en,
-            phase=phase,
-            request_id=request_id,
+    try:
+        expert = await run_in_threadpool(
+            partial(
+                orch.create_expert,
+                req.expert_id,
+                name,
+                req.description,
+                name_zh=name_zh,
+                name_en=name_en,
+                phase=phase,
+                request_id=request_id,
+            )
         )
-    )
+    except ValueError as exc:
+        print(f"[ExpertCreate:{request_id}] Validation error: {exc}")
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception as exc:
+        print(f"[ExpertCreate:{request_id}] Unexpected error: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc))
     if not expert:
         print(f"[ExpertCreate:{request_id}] Expert generation returned no result.")
         raise HTTPException(status_code=400, detail="Failed to create expert")

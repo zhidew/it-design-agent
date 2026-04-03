@@ -73,6 +73,14 @@ interface ExpertConfig {
   name_en?: string | null;
   enabled: boolean;
   description?: string;
+  phase?: string | null;
+}
+
+interface PhaseOrchestrationPayload {
+  experts?: Array<{
+    id: string;
+    phase?: string | null;
+  }>;
 }
 
 interface ModelConfig {
@@ -156,6 +164,16 @@ function parseHeadersJson(value?: string): Record<string, string> | undefined {
   return Object.fromEntries(
     Object.entries(candidate).map(([key, item]) => [String(key), String(item)]),
   );
+}
+
+function extractApiErrorDetail(error: unknown): string {
+  if (typeof error !== 'object' || error === null || !('response' in error)) {
+    return '';
+  }
+
+  const response = (error as { response?: { data?: { detail?: unknown } } }).response;
+  const detail = response?.data?.detail;
+  return typeof detail === 'string' ? detail : '';
 }
 
 function normalizeModelPayload(model: ModelConfig) {
@@ -251,6 +269,8 @@ export function ProjectConfig() {
   const [loadingSummary, setLoadingSummary] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [expertNotice, setExpertNotice] = useState<{ type: 'warning' | 'error'; text: string } | null>(null);
+  const isZh = i18n.language.toLowerCase().startsWith('zh');
 
   const testModelConfig = async () => {
     if (!projectId || !editingModel) return;
@@ -323,18 +343,38 @@ export function ProjectConfig() {
       empty: isZh ? '暂无可配置专家。' : 'No experts available yet.',
       enabled: isZh ? '已启用' : 'Enabled',
       disabled: isZh ? '未启用' : 'Disabled',
+      description: isZh
+        ? '控制当前项目允许哪些专家参与编排。只有已归属 phase 的专家才能启用。'
+        : 'Control which experts the planner can schedule for this project. Only experts with a phase assignment can be enabled.',
+      phaseMissing: isZh ? '未归属 Phase' : 'Phase Required',
+      phasePrefix: isZh ? '归属 Phase' : 'Phase',
+      phaseRequiredHint: isZh
+        ? '未归属 phase 的专家暂时不能启用，请先到“专家中心 > System Tools > Phase Orchestration”完成归属配置。'
+        : 'Experts without a phase assignment cannot be enabled yet. Configure them in "Expert Center > System Tools > Phase Orchestration" first.',
+      phaseConfigureAction: isZh ? '前往 Phase 编排' : 'Open Phase Orchestration',
+      phaseConfigureLocation: isZh
+        ? '配置入口：专家中心 > System Tools > Phase Orchestration'
+        : 'Location: Expert Center > System Tools > Phase Orchestration',
+      saveError: isZh ? '保存专家启用配置失败。' : 'Failed to save expert enablement.',
     };
     const pick = (key: string, fallbackValue: string) => {
       const value = t(key);
-      return /\?{2,}/.test(value) ? fallbackValue : value;
+      return value === key || /\?{2,}/.test(value) ? fallbackValue : value;
     };
     return {
       tab: pick('projectConfig.tabs.experts', fallback.tab),
       eyebrow: pick('projectConfig.experts.eyebrow', fallback.eyebrow),
       title: pick('projectConfig.experts.title', fallback.title),
+      description: pick('projectConfig.experts.description', fallback.description),
       empty: pick('projectConfig.experts.empty', fallback.empty),
       enabled: pick('projectConfig.experts.enabled', fallback.enabled),
       disabled: pick('projectConfig.experts.disabled', fallback.disabled),
+      phaseMissing: pick('projectConfig.experts.phaseMissing', fallback.phaseMissing),
+      phasePrefix: pick('projectConfig.experts.phasePrefix', fallback.phasePrefix),
+      phaseRequiredHint: pick('projectConfig.experts.phaseRequiredHint', fallback.phaseRequiredHint),
+      phaseConfigureAction: pick('projectConfig.experts.phaseConfigureAction', fallback.phaseConfigureAction),
+      phaseConfigureLocation: pick('projectConfig.experts.phaseConfigureLocation', fallback.phaseConfigureLocation),
+      saveError: pick('projectConfig.experts.saveError', fallback.saveError),
     };
   }, [i18n.language, t]);
 
@@ -349,6 +389,18 @@ export function ProjectConfig() {
       primary,
       secondary: secondary && secondary !== primary ? secondary : '',
     };
+  };
+
+  const expertsMissingPhase = useMemo(
+    () => experts.filter((expert) => !expert.phase?.trim()),
+    [experts],
+  );
+
+  const buildMissingPhaseEnableMessage = (expert: ExpertConfig) => {
+    const { primary } = getExpertDisplayNames(expert);
+    return isZh
+      ? `“${primary}” 尚未归属任何 phase，暂时不能启用。请前往“专家中心 > System Tools > Phase Orchestration”完成归属配置后再回来启用。`
+      : `"${primary}" is not assigned to any phase yet, so it cannot be enabled for this project. Go to "Expert Center > System Tools > Phase Orchestration" first, then come back and enable it.`;
   };
 
   const llmCopy = useMemo(() => {
@@ -432,16 +484,23 @@ export function ProjectConfig() {
     if (!projectId) return;
     setLoading(true);
     try {
-      const [projectsRes, repoRes, dbRes, kbRes, expertRes, _llmRes, modelRes, debugRes] = await Promise.all([
+      const [projectsRes, repoRes, dbRes, kbRes, expertRes, phaseRes, _llmRes, modelRes, debugRes] = await Promise.all([
         api.getProjects(),
         api.getRepositoryConfigs(projectId),
         api.getDatabaseConfigs(projectId),
         api.getKnowledgeBaseConfigs(projectId),
         api.getExpertConfigs(projectId),
+        api.getExpertPhaseOrchestration().catch(() => ({ experts: [] } as PhaseOrchestrationPayload)),
         api.getProjectLlmConfig(projectId),
         api.getProjectModels(projectId),
         api.getProjectDebugConfig(projectId),
       ]);
+      const phaseByExpert = Object.fromEntries(
+        ((phaseRes.experts || []) as NonNullable<PhaseOrchestrationPayload['experts']>).map((item) => [
+          item.id,
+          item.phase || '',
+        ]),
+      );
       const matchedProject = Array.isArray(projectsRes)
         ? projectsRes.find((project: { id?: string; name?: string }) => project.id === projectId)
         : null;
@@ -449,7 +508,12 @@ export function ProjectConfig() {
       setRepositories(repoRes.repositories || []);
       setDatabases(dbRes.databases || []);
       setKnowledgeBases(kbRes.knowledge_bases || []);
-      setExperts(expertRes.experts || []);
+      setExperts(
+        (expertRes.experts || []).map((expert: ExpertConfig) => ({
+          ...expert,
+          phase: phaseByExpert[expert.id] || '',
+        })),
+      );
       setModels(modelRes.models || []);
       setDebugConfig({
         llm_interaction_logging_enabled: Boolean(debugRes.llm_interaction_logging_enabled),
@@ -465,6 +529,12 @@ export function ProjectConfig() {
   useEffect(() => {
     void loadAll();
   }, [projectId]);
+
+  useEffect(() => {
+    if (activeTab !== 'experts' && expertNotice) {
+      setExpertNotice(null);
+    }
+  }, [activeTab, expertNotice]);
 
   const loadAssetsSummary = async () => {
     if (!projectId) return;
@@ -561,6 +631,23 @@ export function ProjectConfig() {
     }
   };
 
+  const handleExpertToggle = (index: number) => {
+    const expert = experts[index];
+    if (!expert) {
+      return;
+    }
+
+    const nextEnabled = !expert.enabled;
+    if (nextEnabled && !expert.phase?.trim()) {
+      setExpertNotice({ type: 'warning', text: buildMissingPhaseEnableMessage(expert) });
+      return;
+    }
+
+    setExpertNotice(null);
+    setIsSaved(false);
+    setExperts((prev) => prev.map((item, i) => (i === index ? { ...item, enabled: nextEnabled } : item)));
+  };
+
   const saveExperts = async () => {
     if (!projectId) return;
     setSaving(true);
@@ -578,10 +665,15 @@ export function ProjectConfig() {
           }),
         ),
       );
+      setExpertNotice(null);
       setIsSaved(true);
       await loadAll();
       setTimeout(() => setIsSaved(false), 2000);
-    } catch {
+    } catch (error: unknown) {
+      setExpertNotice({
+        type: 'error',
+        text: extractApiErrorDetail(error) || expertCopy.saveError,
+      });
     } finally {
       setSaving(false);
     }
@@ -1214,6 +1306,7 @@ export function ProjectConfig() {
                   <div>
                     <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">{expertCopy.eyebrow}</div>
                     <h2 className="text-xl font-black text-gray-900">{expertCopy.title}</h2>
+                    <p className="mt-1 max-w-3xl text-sm text-gray-500">{expertCopy.description}</p>
                   </div>
                   <button
                     onClick={() => void saveExperts()}
@@ -1225,6 +1318,42 @@ export function ProjectConfig() {
                   </button>
 
                 </div>
+
+                {expertNotice && (
+                  <div className={`flex items-start gap-3 rounded-2xl border px-4 py-3 text-sm ${
+                    expertNotice.type === 'error'
+                      ? 'border-rose-200 bg-rose-50 text-rose-700'
+                      : 'border-amber-200 bg-amber-50 text-amber-800'
+                  }`}>
+                    <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+                    <div className="min-w-0">{expertNotice.text}</div>
+                  </div>
+                )}
+
+                {expertsMissingPhase.length > 0 && (
+                  <div className="rounded-2xl border border-amber-200 bg-amber-50/80 px-4 py-3">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="flex items-start gap-3">
+                        <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-700" />
+                        <div className="min-w-0">
+                          <div className="text-sm font-semibold text-amber-900">{expertCopy.phaseRequiredHint}</div>
+                          <div className="mt-1 text-xs text-amber-700">
+                            {isZh
+                              ? `当前有 ${expertsMissingPhase.length} 位专家尚未配置 phase 归属。`
+                              : `${expertsMissingPhase.length} experts still need a phase assignment.`}
+                          </div>
+                          <div className="mt-1 text-xs text-amber-700">{expertCopy.phaseConfigureLocation}</div>
+                        </div>
+                      </div>
+                      <Link
+                        to="/management"
+                        className="inline-flex items-center justify-center rounded-xl border border-amber-300 bg-white px-4 py-2 text-xs font-black uppercase text-amber-800 transition-all hover:border-amber-400 hover:bg-amber-100"
+                      >
+                        {expertCopy.phaseConfigureAction}
+                      </Link>
+                    </div>
+                  </div>
+                )}
 
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                   {experts.map((expert, index) => {
@@ -1239,8 +1368,19 @@ export function ProjectConfig() {
                                 {expertNames.secondary}
                               </div>
                             )}
-                            <div className={`mt-1.5 text-[10px] font-black uppercase tracking-wider ${expert.enabled ? 'text-emerald-600' : 'text-gray-400'}`}>
-                              {expert.enabled ? expertCopy.enabled : expertCopy.disabled}
+                            <div className="mt-2 flex flex-wrap items-center gap-2">
+                              <div className={`text-[10px] font-black uppercase tracking-wider ${expert.enabled ? 'text-emerald-600' : 'text-gray-400'}`}>
+                                {expert.enabled ? expertCopy.enabled : expertCopy.disabled}
+                              </div>
+                              {expert.phase?.trim() ? (
+                                <span className="inline-flex items-center rounded-full bg-indigo-50 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-indigo-700">
+                                  {expertCopy.phasePrefix}: {expert.phase}
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-amber-700">
+                                  {expertCopy.phaseMissing}
+                                </span>
+                              )}
                             </div>
                           </div>
                           <button
@@ -1248,7 +1388,7 @@ export function ProjectConfig() {
                             role="switch"
                             aria-checked={expert.enabled}
                             aria-label={`${expertNames.primary} ${expert.enabled ? expertCopy.enabled : expertCopy.disabled}`}
-                            onClick={() => setExperts((prev) => prev.map((item, i) => i === index ? { ...item, enabled: !item.enabled } : item))}
+                            onClick={() => handleExpertToggle(index)}
                             className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 ${expert.enabled ? 'bg-emerald-500' : 'bg-gray-300'}`}
                           >
                             <span

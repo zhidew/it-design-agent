@@ -92,6 +92,16 @@ interface DependencyValidationReport {
   findings: DependencyFinding[];
 }
 
+interface PhaseOption {
+  id: string;
+  label: string;
+  label_zh: string;
+  label_en: string;
+  executable: boolean;
+  order: number;
+  experts: string[];
+}
+
 interface WorkbenchSection {
   tab: WorkbenchTab;
   title: string;
@@ -101,6 +111,14 @@ interface WorkbenchSection {
 
 const TAB_ORDER: WorkbenchTab[] = ['profile', 'skill', 'templates', 'references', 'scripts', 'tools'];
 const PHASE_ORCHESTRATION_ID = '__phase-orchestration__';
+const DEFAULT_CREATE_PHASE = 'INTERFACE';
+
+function pickDefaultCreatePhase(phases: PhaseOption[]): string {
+  if (!phases.length) {
+    return DEFAULT_CREATE_PHASE;
+  }
+  return phases.find((phase) => phase.id === DEFAULT_CREATE_PHASE)?.id || phases[0].id;
+}
 
 function extractApiErrorDetail(error: unknown): string {
   if (typeof error !== 'object' || error === null || !('response' in error)) {
@@ -132,6 +150,8 @@ export function ExpertCenter() {
   const [newExpertNameZh, setNewExpertNameZh] = useState('');
   const [newExpertNameEn, setNewExpertNameEn] = useState('');
   const [newExpertDescription, setNewExpertDescription] = useState('');
+  const [newExpertPhase, setNewExpertPhase] = useState(DEFAULT_CREATE_PHASE);
+  const [createPhaseOptions, setCreatePhaseOptions] = useState<PhaseOption[]>([]);
   const [generationStep, setGenerationStep] = useState(0);
   
   // File management states
@@ -156,6 +176,11 @@ export function ExpertCenter() {
     t('management.generationSteps.3'),
     t('management.generationSteps.4'),
   ];
+  const isZh = i18n.language.toLowerCase().startsWith('zh');
+
+  const getPhaseDisplayName = React.useCallback((phase: PhaseOption) => {
+    return isZh ? (phase.label_zh || phase.label || phase.id) : (phase.label_en || phase.label || phase.id);
+  }, [isZh]);
 
   useEffect(() => {
     let interval: ReturnType<typeof setInterval> | undefined;
@@ -174,14 +199,22 @@ export function ExpertCenter() {
   const loadExpertCenter = React.useCallback(async () => {
     setLoading(true);
     try {
-      const [expertsRes, treeRes] = await Promise.all([
+      const [expertsRes, treeRes, phasesRes] = await Promise.all([
         apiClient.get('/expert-center/experts'),
         apiClient.get('/expert-center/file-tree'),
+        apiClient.get('/expert-center/phases'),
       ]);
 
       const nextExperts = expertsRes.data as Expert[];
+      const nextPhases = (phasesRes.data as PhaseOption[]).filter((phase) => phase.executable);
       setExperts(nextExperts);
       setTree(treeRes.data as FileNode[]);
+      setCreatePhaseOptions(nextPhases);
+      setNewExpertPhase((prev) => (
+        nextPhases.some((phase) => phase.id === prev)
+          ? prev
+          : pickDefaultCreatePhase(nextPhases)
+      ));
 
       if (!selectedExpertId && nextExperts.length > 0) {
         setSelectedExpertId(nextExperts[0].id);
@@ -480,11 +513,13 @@ export function ExpertCenter() {
         name_zh: newExpertNameZh.trim(),
         name_en: newExpertNameEn.trim(),
         description: newExpertDescription.trim(),
+        phase: newExpertPhase || pickDefaultCreatePhase(createPhaseOptions),
       });
       setMessage({ type: 'success', text: t('management.createExpertSuccess') });
       setNewExpertNameZh('');
       setNewExpertNameEn('');
       setNewExpertDescription('');
+      setNewExpertPhase(pickDefaultCreatePhase(createPhaseOptions));
       setShowCreateModal(false);
       await loadExpertCenter();
       setSelectedExpertId(response.data.id);
@@ -1278,8 +1313,23 @@ export function ExpertCenter() {
                       value={newExpertDescription}
                       onChange={(e) => setNewExpertDescription(e.target.value)}
                       placeholder={t('management.searchExperts')}
-                      className="w-full rounded-2xl border-2 border-gray-100 bg-gray-50 px-5 py-4 text-sm font-medium outline-none focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/5 transition-all min-h-[120px] resize-none"
-                    />
+                        className="w-full rounded-2xl border-2 border-gray-100 bg-gray-50 px-5 py-4 text-sm font-medium outline-none focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/5 transition-all min-h-[120px] resize-none"
+                      />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">{t('management.expertPhaseLabel')}</label>
+                    <select
+                      value={newExpertPhase}
+                      onChange={(e) => setNewExpertPhase(e.target.value)}
+                      className="w-full rounded-2xl border-2 border-gray-100 bg-gray-50 px-5 py-4 text-sm font-medium outline-none focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/5 transition-all"
+                    >
+                      {createPhaseOptions.map((phase) => (
+                        <option key={phase.id} value={phase.id}>
+                          {getPhaseDisplayName(phase)} ({phase.id})
+                        </option>
+                      ))}
+                    </select>
                   </div>
 
                   <div className="flex gap-4 pt-2">
@@ -1289,13 +1339,14 @@ export function ExpertCenter() {
                         setNewExpertNameZh('');
                         setNewExpertNameEn('');
                         setNewExpertDescription('');
+                        setNewExpertPhase(pickDefaultCreatePhase(createPhaseOptions));
                       }}
                       className="flex-1 px-6 py-4 rounded-2xl border-2 border-gray-100 text-sm font-black uppercase text-gray-400 hover:bg-gray-50 hover:text-gray-600 transition-all"
                     >
                       {t('management.back')}
                     </button>
                     <button
-                      disabled={(!newExpertNameZh.trim() && !newExpertNameEn.trim()) || creating}
+                      disabled={(!newExpertNameZh.trim() && !newExpertNameEn.trim()) || creating || createPhaseOptions.length === 0}
                       onClick={handleCreateExpert}
                       className="flex-[2] px-8 py-4 rounded-2xl bg-indigo-600 text-white text-sm font-black uppercase tracking-widest hover:bg-indigo-700 disabled:opacity-50 shadow-xl shadow-indigo-200 transition-all flex items-center justify-center gap-3 group"
                     >

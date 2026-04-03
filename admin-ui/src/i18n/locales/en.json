@@ -420,6 +420,7 @@
     "expertNameZhPlaceholder": "e.g., 模块化设计专家",
     "expertNameEnPlaceholder": "e.g., Modular Design Expert",
     "expertDescLabel": "Description (Optional)",
+    "expertPhaseLabel": "Execution Phase",
     "back": "Back",
     "startGeneration": "Start AI Generation"
   },

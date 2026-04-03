@@ -423,6 +423,7 @@
     "expertNameZhPlaceholder": "如：模块化设计专家",
     "expertNameEnPlaceholder": "如：Modular Design Expert",
     "expertDescLabel": "职责描述（可选）",
+    "expertPhaseLabel": "所属阶段",
     "back": "返回",
     "startGeneration": "开始智能生成"
   },

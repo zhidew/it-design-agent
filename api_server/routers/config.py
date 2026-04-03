@@ -10,6 +10,7 @@ try:
         test_database_connection,
         test_knowledge_base_connection,
     )
+    from api_server.services.orchestrator_service import get_phase_orchestration
 except ModuleNotFoundError:
     from services.db_service import metadata_db
     from services.llm_service import test_llm_connectivity
@@ -18,6 +19,7 @@ except ModuleNotFoundError:
         test_database_connection,
         test_knowledge_base_connection,
     )
+    from services.orchestrator_service import get_phase_orchestration
 
 
 router = APIRouter(
@@ -36,6 +38,45 @@ def _require_project(project_id: str):
     if project is None:
         raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found.")
     return project
+
+
+def _get_expert_phase_assignment(expert_id: str) -> str:
+    try:
+        orchestration = get_phase_orchestration()
+    except Exception:
+        return ""
+
+    for expert in orchestration.get("experts", []):
+        if expert.get("id") == expert_id:
+            return str(expert.get("phase") or "").strip().upper()
+    return ""
+
+
+def _ensure_phase_assignment_for_enabled_expert(project_id: str, payload: dict):
+    if not payload.get("enabled", True):
+        return
+
+    existing = metadata_db.get_project_expert(project_id, payload["id"]) or {}
+    if existing.get("enabled"):
+        return
+
+    if _get_expert_phase_assignment(payload["id"]):
+        return
+
+    expert_label = (
+        payload.get("name_zh")
+        or payload.get("name_en")
+        or payload.get("name")
+        or payload["id"]
+    )
+    raise HTTPException(
+        status_code=422,
+        detail=(
+            f"Expert '{expert_label}' is not assigned to any phase yet. "
+            "Configure it in Expert Center > System Tools > Phase Orchestration "
+            "before enabling it for this project."
+        ),
+    )
 
 
 @router.post("/repositories")
@@ -108,6 +149,7 @@ async def delete_knowledge_base_config(project_id: str, kb_id: str):
 async def save_project_expert_config(project_id: str, req: ExpertConfig):
     _require_project(project_id)
     payload = req.model_dump() if hasattr(req, "model_dump") else req.dict()
+    _ensure_phase_assignment_for_enabled_expert(project_id, payload)
     return metadata_db.upsert_project_expert(project_id, payload)
 
 

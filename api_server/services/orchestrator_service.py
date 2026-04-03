@@ -2175,7 +2175,10 @@ def update_phase_orchestration(phases: list[dict]):
 
     for phase in phases:
         phase_id = str(phase.get("id") or "").strip().upper()
-        order = int(phase.get("order", 0))
+        current_phase = phase_config.get_phase(phase_id)
+        if current_phase is None:
+            raise ValueError(f"Unknown phase '{phase_id}'.")
+        order = int(phase.get("order", current_phase.order))
         experts = [str(item).strip() for item in (phase.get("experts") or []) if str(item).strip()]
         unknown = sorted({expert_id for expert_id in experts if expert_id not in valid_experts})
         if unknown:
@@ -2292,6 +2295,7 @@ def create_expert(
         f"[ExpertCreate:{request_tag}] Starting generation flow "
         f"expert_id='{expert_id}' display_name='{display_name}' target_phase='{target_phase}'."
     )
+    result = None
     try:
         from skills.expert_creator.scripts.generate_expert import create_expert as generate_expert
         result = generate_expert(
@@ -2302,27 +2306,29 @@ def create_expert(
             use_llm=True,
             name_zh=name_zh,
             name_en=name_en,
-            phase="",
+            phase=target_phase,
             request_id=request_tag,
         )
-        if result:
-            print(
-                f"[ExpertCreate:{request_tag}] Expert asset generation succeeded with generated_id='{result['id']}'. "
-                f"Updating phase orchestration."
-            )
-            update_phase_orchestration(
-                [
-                    {
-                        "id": item["id"],
-                        "experts": list(item.get("experts") or []) + ([result["id"]] if item["id"] == target_phase else []),
-                    }
-                    for item in get_phase_orchestration()["phases"]
-                ]
-            )
-            print(f"[ExpertCreate:{request_tag}] Phase orchestration updated for expert '{result['id']}'.")
-            return get_expert(result["id"])
     except Exception as e:
         print(f"[ExpertCreate:{request_tag}] Expert generation script failed: {e}. Using inline fallback.")
+
+    if result:
+        print(
+            f"[ExpertCreate:{request_tag}] Expert asset generation succeeded with generated_id='{result['id']}'. "
+            f"Updating phase orchestration."
+        )
+        update_phase_orchestration(
+            [
+                {
+                    "id": item["id"],
+                    "order": item.get("order"),
+                    "experts": list(item.get("experts") or []) + ([result["id"]] if item["id"] == target_phase else []),
+                }
+                for item in get_phase_orchestration()["phases"]
+            ]
+        )
+        print(f"[ExpertCreate:{request_tag}] Phase orchestration updated for expert '{result['id']}'.")
+        return get_expert(result["id"])
     
     # Fallback: inline generation with rich structure
     print(f"[ExpertCreate:{request_tag}] Entering inline fallback generation path.")
@@ -2363,6 +2369,7 @@ inputs:
     - constraints
     - context
 scheduling:
+  phase: {target_phase}
   priority: 50
   dependencies: []
 upstream_artifacts: {{}}
@@ -2437,6 +2444,7 @@ keywords: []
         [
             {
                 "id": item["id"],
+                "order": item.get("order"),
                 "experts": list(item.get("experts") or []) + ([final_id] if item["id"] == target_phase else []),
             }
             for item in get_phase_orchestration()["phases"]
@@ -2466,6 +2474,7 @@ def delete_expert(expert_id: str) -> bool:
         [
             {
                 "id": item["id"],
+                "order": item.get("order"),
                 "experts": [item_id for item_id in (item.get("experts") or []) if item_id != expert_id],
             }
             for item in get_phase_orchestration()["phases"]

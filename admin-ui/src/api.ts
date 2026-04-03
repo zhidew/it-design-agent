@@ -134,6 +134,8 @@ export const api = {
     apiClient.delete(`/projects/${projectId}/config/knowledge-bases/${kbId}`).then(res => res.data),
   getExpertConfigs: (projectId: string) =>
     apiClient.get(`/projects/${projectId}/config/experts`).then(res => res.data),
+  getExpertPhaseOrchestration: () =>
+    apiClient.get('/expert-center/phase-orchestration').then(res => res.data),
   saveExpertConfig: (projectId: string, payload: {
     id: string;
     name: string;
