@@ -9,10 +9,7 @@ interface LlmConfigState {
   openai_api_key: string;
   openai_base_url: string;
   openai_model_name: string;
-  gemini_api_key: string;
-  gemini_model_name: string;
   has_openai_api_key?: boolean;
-  has_gemini_api_key?: boolean;
 }
 
 const EMPTY_CONFIG: LlmConfigState = {
@@ -20,8 +17,6 @@ const EMPTY_CONFIG: LlmConfigState = {
   openai_api_key: '',
   openai_base_url: '',
   openai_model_name: '',
-  gemini_api_key: '',
-  gemini_model_name: '',
 };
 
 export function LlmConfig() {
@@ -39,10 +34,7 @@ export function LlmConfig() {
         openai_api_key: '',
         openai_base_url: data.openai_base_url || '',
         openai_model_name: data.openai_model_name || '',
-        gemini_api_key: '',
-        gemini_model_name: data.gemini_model_name || '',
         has_openai_api_key: data.has_openai_api_key || false,
-        has_gemini_api_key: data.has_gemini_api_key || false,
       });
     } catch {
       setMessage({ type: 'error', text: 'Failed to load LLM config.' });
@@ -88,8 +80,8 @@ export function LlmConfig() {
 
         {message && (
           <div className={`mb-6 rounded-xl border p-4 text-sm shadow-sm ${
-            message.type === 'success' 
-              ? 'border-green-200 bg-green-50 text-green-800' 
+            message.type === 'success'
+              ? 'border-green-200 bg-green-50 text-green-800'
               : 'border-red-200 bg-red-50 text-red-800'
           }`}>
             {message.text}
@@ -105,65 +97,38 @@ export function LlmConfig() {
             <div className="md:col-span-2">
               <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Provider</div>
               <input
-                value={config.llm_provider === 'openai' ? 'OpenAI Compatible' : 'Gemini'}
+                value="OpenAI Compatible"
                 disabled
                 className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-600"
               />
             </div>
-            
-            {config.llm_provider === 'openai' && (
-              <>
-                <div>
-                  <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">OpenAI Base URL</div>
-                  <input
-                    value={config.openai_base_url || '(not set)'}
-                    disabled
-                    className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-600"
-                  />
-                </div>
-                <div>
-                  <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">OpenAI Model</div>
-                  <input
-                    value={config.openai_model_name || '(not set)'}
-                    disabled
-                    className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-600"
-                  />
-                </div>
-                <div className="md:col-span-2">
-                  <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">
-                    OpenAI API Key
-                  </div>
-                  <input
-                    value={config.has_openai_api_key ? '•••••••• (configured)' : '(not configured)'}
-                    disabled
-                    className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-600"
-                  />
-                </div>
-              </>
-            )}
-            
-            {config.llm_provider === 'gemini' && (
-              <>
-                <div>
-                  <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Gemini Model</div>
-                  <input
-                    value={config.gemini_model_name || '(not set)'}
-                    disabled
-                    className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-600"
-                  />
-                </div>
-                <div className="md:col-span-2">
-                  <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">
-                    Gemini API Key
-                  </div>
-                  <input
-                    value={config.has_gemini_api_key ? '•••••••• (configured)' : '(not configured)'}
-                    disabled
-                    className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-600"
-                  />
-                </div>
-              </>
-            )}
+
+            <div>
+              <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">OpenAI Base URL</div>
+              <input
+                value={config.openai_base_url || '(not set)'}
+                disabled
+                className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-600"
+              />
+            </div>
+            <div>
+              <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">OpenAI Model</div>
+              <input
+                value={config.openai_model_name || '(not set)'}
+                disabled
+                className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-600"
+              />
+            </div>
+            <div className="md:col-span-2">
+              <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">
+                OpenAI API Key
+              </div>
+              <input
+                value={config.has_openai_api_key ? '•••••••• (configured)' : '(not configured)'}
+                disabled
+                className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-600"
+              />
+            </div>
           </div>
         </section>
       </div>

@@ -220,8 +220,6 @@ class MetadataDB:
                     openai_api_key TEXT,
                     openai_base_url TEXT,
                     openai_model_name TEXT,
-                    gemini_api_key TEXT,
-                    gemini_model_name TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
@@ -407,21 +405,19 @@ class MetadataDB:
     def get_system_llm_defaults(self, include_secrets: bool = False) -> Dict[str, Any]:
         env = self._parse_env()
         openai_api_key = env.get("OPENAI_API_KEY") or None
-        gemini_api_key = env.get("GEMINI_API_KEY") or None
+        llm_provider = (env.get("LLM_PROVIDER") or "openai").strip().lower() or "openai"
+        if llm_provider != "openai":
+            llm_provider = "openai"
         result: Dict[str, Any] = {
-            "llm_provider": env.get("LLM_PROVIDER", "openai"),
+            "llm_provider": llm_provider,
             "openai_base_url": env.get("OPENAI_BASE_URL", ""),
             "openai_model_name": env.get("OPENAI_MODEL_NAME", ""),
-            "gemini_model_name": env.get("GEMINI_MODEL_NAME", ""),
             "has_openai_api_key": bool(openai_api_key),
-            "has_gemini_api_key": bool(gemini_api_key),
         }
         if include_secrets:
             result["openai_api_key"] = openai_api_key
-            result["gemini_api_key"] = gemini_api_key
         else:
             result["openai_api_key"] = self.codec.mask(openai_api_key)
-            result["gemini_api_key"] = self.codec.mask(gemini_api_key)
         return result
 
     def upsert_project_model(self, project_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -469,7 +465,7 @@ class MetadataDB:
                     model_id,
                     project_id,
                     payload.get("name"),
-                    payload.get("provider"),
+                    "openai",
                     encrypted_api_key,
                     payload.get("base_url"),
                     encrypted_headers,
@@ -518,7 +514,7 @@ class MetadataDB:
             "id": row["id"],
             "project_id": row["project_id"],
             "name": row["name"],
-            "provider": row["provider"],
+            "provider": "openai",
             "base_url": row["base_url"],
             "model_name": row["model_name"],
             "is_default": bool(row["is_default"]),
@@ -1469,43 +1465,39 @@ class MetadataDB:
         existing = self.get_project_llm_config(project_id, include_secrets=True, merge_defaults=False)
 
         openai_api_key = payload.get("openai_api_key")
-        gemini_api_key = payload.get("gemini_api_key")
+        llm_provider = str(
+            payload.get("llm_provider")
+            or (existing.get("llm_provider") if existing else "")
+            or "openai"
+        ).strip().lower()
+        if llm_provider != "openai":
+            llm_provider = "openai"
 
         encrypted_openai_api_key = (
             self.codec.encrypt(openai_api_key)
             if openai_api_key not in (None, "")
             else (existing.get("_openai_api_key_encrypted") if existing else None)
         )
-        encrypted_gemini_api_key = (
-            self.codec.encrypt(gemini_api_key)
-            if gemini_api_key not in (None, "")
-            else (existing.get("_gemini_api_key_encrypted") if existing else None)
-        )
 
         with self._get_connection() as conn:
             conn.execute(
                 """
                 INSERT INTO project_llm_configs (
-                    project_id, llm_provider, openai_api_key, openai_base_url, openai_model_name,
-                    gemini_api_key, gemini_model_name, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    project_id, llm_provider, openai_api_key, openai_base_url, openai_model_name, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(project_id) DO UPDATE SET
                     llm_provider=excluded.llm_provider,
                     openai_api_key=excluded.openai_api_key,
                     openai_base_url=excluded.openai_base_url,
                     openai_model_name=excluded.openai_model_name,
-                    gemini_api_key=excluded.gemini_api_key,
-                    gemini_model_name=excluded.gemini_model_name,
                     updated_at=excluded.updated_at
                 """,
                 (
                     project_id,
-                    payload.get("llm_provider") or (existing.get("llm_provider") if existing else None),
+                    llm_provider,
                     encrypted_openai_api_key,
                     payload.get("openai_base_url"),
                     payload.get("openai_model_name"),
-                    encrypted_gemini_api_key,
-                    payload.get("gemini_model_name"),
                     (existing.get("created_at") if existing and existing.get("created_at") else now),
                     now,
                 ),
@@ -1530,14 +1522,11 @@ class MetadataDB:
         if not merge_defaults:
             return project_config or {
                 "project_id": project_id,
-                "llm_provider": None,
+                "llm_provider": "openai",
                 "openai_api_key": None if include_secrets else None,
                 "openai_base_url": None,
                 "openai_model_name": None,
-                "gemini_api_key": None if include_secrets else None,
-                "gemini_model_name": None,
                 "has_openai_api_key": False,
-                "has_gemini_api_key": False,
             }
 
         defaults = self.get_system_llm_defaults(include_secrets=include_secrets)
@@ -1546,22 +1535,15 @@ class MetadataDB:
             "llm_provider": (project_config or {}).get("llm_provider") or defaults.get("llm_provider") or "openai",
             "openai_base_url": (project_config or {}).get("openai_base_url") or defaults.get("openai_base_url") or "",
             "openai_model_name": (project_config or {}).get("openai_model_name") or defaults.get("openai_model_name") or "",
-            "gemini_model_name": (project_config or {}).get("gemini_model_name") or defaults.get("gemini_model_name") or "",
             "has_openai_api_key": bool((project_config or {}).get("has_openai_api_key") or defaults.get("has_openai_api_key")),
-            "has_gemini_api_key": bool((project_config or {}).get("has_gemini_api_key") or defaults.get("has_gemini_api_key")),
         }
 
         if include_secrets:
             result["openai_api_key"] = (project_config or {}).get("openai_api_key") or defaults.get("openai_api_key")
-            result["gemini_api_key"] = (project_config or {}).get("gemini_api_key") or defaults.get("gemini_api_key")
         else:
             result["openai_api_key"] = (
                 (project_config or {}).get("openai_api_key")
                 or defaults.get("openai_api_key")
-            )
-            result["gemini_api_key"] = (
-                (project_config or {}).get("gemini_api_key")
-                or defaults.get("gemini_api_key")
             )
 
         if project_config:
@@ -1571,29 +1553,22 @@ class MetadataDB:
 
     def _row_to_project_llm_config(self, row: Dict[str, Any], include_secrets: bool) -> Dict[str, Any]:
         encrypted_openai_api_key = row.pop("openai_api_key", None)
-        encrypted_gemini_api_key = row.pop("gemini_api_key", None)
         openai_api_key = self.codec.decrypt(encrypted_openai_api_key) if encrypted_openai_api_key else None
-        gemini_api_key = self.codec.decrypt(encrypted_gemini_api_key) if encrypted_gemini_api_key else None
 
         result: Dict[str, Any] = {
             "project_id": row["project_id"],
-            "llm_provider": row["llm_provider"],
+            "llm_provider": "openai",
             "openai_base_url": row["openai_base_url"],
             "openai_model_name": row["openai_model_name"],
-            "gemini_model_name": row["gemini_model_name"],
             "has_openai_api_key": bool(encrypted_openai_api_key),
-            "has_gemini_api_key": bool(encrypted_gemini_api_key),
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
         if include_secrets:
             result["openai_api_key"] = openai_api_key
-            result["gemini_api_key"] = gemini_api_key
             result["_openai_api_key_encrypted"] = encrypted_openai_api_key
-            result["_gemini_api_key_encrypted"] = encrypted_gemini_api_key
         else:
             result["openai_api_key"] = self.codec.mask(openai_api_key)
-            result["gemini_api_key"] = self.codec.mask(gemini_api_key)
         return result
 
     def upsert_project_debug_config(self, project_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:

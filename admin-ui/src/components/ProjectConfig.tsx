@@ -89,8 +89,6 @@ interface ModelConfig {
   description?: string;
 }
 
-const isOpenAICompatibleProvider = (provider?: string) => (provider || 'openai').toLowerCase() !== 'gemini';
-
 const createModel = (): ModelConfig => ({
   id: Math.random().toString(36).substring(2, 9),
   name: '',
@@ -161,13 +159,12 @@ function parseHeadersJson(value?: string): Record<string, string> | undefined {
 }
 
 function normalizeModelPayload(model: ModelConfig) {
-  const isOpenAICompatible = isOpenAICompatibleProvider(model.provider);
-
   return {
     ...model,
+    provider: 'openai',
     api_key: model.api_key?.trim() ? model.api_key.trim() : undefined,
-    base_url: isOpenAICompatible && model.base_url?.trim() ? model.base_url.trim() : undefined,
-    headers: isOpenAICompatible ? parseHeadersJson(model.headers) : undefined,
+    base_url: model.base_url?.trim() ? model.base_url.trim() : undefined,
+    headers: parseHeadersJson(model.headers),
   };
 }
 
@@ -366,15 +363,11 @@ export function ProjectConfig() {
       refresh: isZh ? '刷新配置' : 'Refresh Config',
       provider: isZh ? '模型提供商' : 'Provider',
       openaiBaseUrl: isZh ? 'OpenAI 网关地址' : 'OpenAI Base URL',
-      geminiEndpoint: isZh ? 'Gemini 接口模式' : 'Gemini API Mode',
       openaiModel: isZh ? 'OpenAI 模型名' : 'OpenAI Model',
-      geminiModel: isZh ? 'Gemini 模型名' : 'Gemini Model',
       openaiKey: isZh ? 'OpenAI API Key (选填)' : 'OpenAI API Key (Optional)',
-      geminiKey: isZh ? 'Gemini API Key (选填)' : 'Gemini API Key (Optional)',
       requestHeaders: isZh ? '请求头 JSON' : 'Request Headers JSON',
       requestHeadersPlaceholder: '{"Authorization":"Bearer custom-token"}',
       keepCurrentHeaders: isZh ? '留空则保持当前请求头' : 'Leave blank to keep current headers',
-      geminiNativeApi: isZh ? 'Google Native API（无需 Base URL / Headers）' : 'Google Native API (no Base URL or Headers required)',
       saved: isZh ? '保存' : 'Save',
       keepCurrent: isZh ? '留空则保持当前密钥' : 'Leave blank to keep current key',
       enterKey: isZh ? 'API Key (选填)' : 'API Key (Optional)',
@@ -677,10 +670,9 @@ export function ProjectConfig() {
     }
   };
 
-  const isEditingOpenAICompatible = isOpenAICompatibleProvider(editingModel?.provider);
-  const editingModelIdLabel = isEditingOpenAICompatible ? llmCopy.openaiModel : llmCopy.geminiModel;
-  const editingModelIdPlaceholder = isEditingOpenAICompatible ? 'gpt-4o' : 'gemini-2.5-flash';
-  const editingModelApiKeyLabel = isEditingOpenAICompatible ? llmCopy.openaiKey : llmCopy.geminiKey;
+  const editingModelIdLabel = llmCopy.openaiModel;
+  const editingModelIdPlaceholder = 'gpt-4o';
+  const editingModelApiKeyLabel = llmCopy.openaiKey;
   const projectHeaderLabel = projectDisplayName && projectDisplayName !== projectId
     ? `${projectDisplayName} (${projectId})`
     : (projectDisplayName || projectId);
@@ -1420,20 +1412,12 @@ export function ProjectConfig() {
                       <div>
                         <label className="mb-1 block text-[10px] font-black uppercase tracking-widest text-gray-400">{llmCopy.provider}</label>
                         <select
-                          value={editingModel.provider}
-                          onChange={(e) => {
-                            const nextProvider = e.target.value;
-                            setEditingModel({
-                              ...editingModel,
-                              provider: nextProvider,
-                              base_url: isOpenAICompatibleProvider(nextProvider) ? editingModel.base_url : '',
-                              headers: isOpenAICompatibleProvider(nextProvider) ? editingModel.headers : '',
-                            });
-                          }}
+                          value="openai"
+                          onChange={() => undefined}
+                          disabled
                           className="w-full rounded-xl border border-gray-100 bg-gray-50 p-2.5 outline-none transition-all focus:ring-2 focus:ring-indigo-500"
                         >
                           <option value="openai">OpenAI Compatible</option>
-                          <option value="gemini">Gemini</option>
                         </select>
                       </div>
 
@@ -1447,24 +1431,15 @@ export function ProjectConfig() {
                         />
                       </div>
 
-                      {isEditingOpenAICompatible ? (
-                        <div className="md:col-span-2 xl:col-span-2">
-                          <label className="mb-1 block text-[10px] font-black uppercase tracking-widest text-gray-400">{llmCopy.openaiBaseUrl}</label>
-                          <input
-                            value={editingModel.base_url || ''}
-                            onChange={(e) => setEditingModel({ ...editingModel, base_url: e.target.value })}
-                            placeholder="https://api.openai.com/v1"
-                            className="w-full rounded-xl border border-gray-100 bg-gray-50 p-2.5 outline-none transition-all focus:ring-2 focus:ring-indigo-500"
-                          />
-                        </div>
-                      ) : (
-                        <div className="md:col-span-2 xl:col-span-2">
-                          <label className="mb-1 block text-[10px] font-black uppercase tracking-widest text-gray-400">{llmCopy.geminiEndpoint}</label>
-                          <div className="w-full rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2.5 text-sm text-emerald-700">
-                            {llmCopy.geminiNativeApi}
-                          </div>
-                        </div>
-                      )}
+                      <div className="md:col-span-2 xl:col-span-2">
+                        <label className="mb-1 block text-[10px] font-black uppercase tracking-widest text-gray-400">{llmCopy.openaiBaseUrl}</label>
+                        <input
+                          value={editingModel.base_url || ''}
+                          onChange={(e) => setEditingModel({ ...editingModel, base_url: e.target.value })}
+                          placeholder="https://api.openai.com/v1"
+                          className="w-full rounded-xl border border-gray-100 bg-gray-50 p-2.5 outline-none transition-all focus:ring-2 focus:ring-indigo-500"
+                        />
+                      </div>
 
                       <div className="flex items-center gap-3 rounded-2xl border border-gray-100 bg-gray-50 px-3 py-2.5">
                         <button
@@ -1490,19 +1465,17 @@ export function ProjectConfig() {
                         />
                       </div>
 
-                      {isEditingOpenAICompatible && (
-                        <div className="md:col-span-2 xl:col-span-3">
-                          <label className="mb-1 block text-[10px] font-black uppercase tracking-widest text-gray-400">
-                            {llmCopy.requestHeaders} {editingModel.has_headers ? `(${llmCopy.saved})` : ''}
-                          </label>
-                          <textarea
-                            value={editingModel.headers || ''}
-                            onChange={(e) => setEditingModel({ ...editingModel, headers: e.target.value })}
-                            placeholder={editingModel.has_headers ? llmCopy.keepCurrentHeaders : llmCopy.requestHeadersPlaceholder}
-                            className="min-h-16 w-full resize-none rounded-xl border border-gray-100 bg-gray-50 p-2.5 font-mono text-xs outline-none transition-all focus:ring-2 focus:ring-indigo-500"
-                          />
-                        </div>
-                      )}
+                      <div className="md:col-span-2 xl:col-span-3">
+                        <label className="mb-1 block text-[10px] font-black uppercase tracking-widest text-gray-400">
+                          {llmCopy.requestHeaders} {editingModel.has_headers ? `(${llmCopy.saved})` : ''}
+                        </label>
+                        <textarea
+                          value={editingModel.headers || ''}
+                          onChange={(e) => setEditingModel({ ...editingModel, headers: e.target.value })}
+                          placeholder={editingModel.has_headers ? llmCopy.keepCurrentHeaders : llmCopy.requestHeadersPlaceholder}
+                          className="min-h-16 w-full resize-none rounded-xl border border-gray-100 bg-gray-50 p-2.5 font-mono text-xs outline-none transition-all focus:ring-2 focus:ring-indigo-500"
+                        />
+                      </div>
                     </div>
                   </ConfigEditorModal>
                 )}

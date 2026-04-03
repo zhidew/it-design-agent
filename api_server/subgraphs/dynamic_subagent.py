@@ -24,8 +24,8 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
+from graphs.tools.permissions import DEFAULT_READ_TOOLS, DEFAULT_WRITE_TOOLS, build_effective_tools
 from services.llm_service import SubagentOutput, resolve_runtime_llm_settings
-from tool_permissions import DEFAULT_READ_TOOLS, DEFAULT_WRITE_TOOLS, build_effective_tools
 
 if TYPE_CHECKING:
     from registry.agent_registry import AgentFullConfig

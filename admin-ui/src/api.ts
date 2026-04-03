@@ -25,10 +25,7 @@ export interface LlmConfig {
   openai_api_key?: string;
   openai_base_url?: string;
   openai_model_name?: string;
-  gemini_api_key?: string;
-  gemini_model_name?: string;
   has_openai_api_key?: boolean;
-  has_gemini_api_key?: boolean;
 }
 
 export interface DebugConfig {
@@ -154,8 +151,6 @@ export const api = {
     openai_api_key?: string;
     openai_base_url?: string;
     openai_model_name?: string;
-    gemini_api_key?: string;
-    gemini_model_name?: string;
   }) => apiClient.post(`/projects/${projectId}/config/llm`, payload).then(res => res.data),
   saveProjectDebugConfig: (projectId: string, payload: DebugConfig) =>
     apiClient.post(`/projects/${projectId}/config/debug`, payload).then(res => res.data),

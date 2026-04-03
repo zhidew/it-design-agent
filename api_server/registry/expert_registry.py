@@ -17,7 +17,7 @@ import yaml
 
 from .errors import AgentNotFoundError, ConfigLoadError, ValidationError
 from .skill_parser import SkillParser
-from tool_permissions import build_effective_tools, has_effective_tool_permission
+from graphs.tools.permissions import build_effective_tools, has_effective_tool_permission
 
 
 def _ensure_list(value: Any) -> List[str]:

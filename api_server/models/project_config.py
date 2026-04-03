@@ -111,8 +111,6 @@ class LlmConfig(BaseModel):
     openai_api_key: Optional[str] = None
     openai_base_url: Optional[str] = None
     openai_model_name: Optional[str] = None
-    gemini_api_key: Optional[str] = None
-    gemini_model_name: Optional[str] = None
 
 
 class DebugConfig(BaseModel):

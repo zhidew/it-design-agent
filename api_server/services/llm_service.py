@@ -124,13 +124,6 @@ def resolve_runtime_llm_settings(design_context: dict | None) -> dict | None:
     if not provider or not model_name:
         return None
 
-    if provider == "gemini":
-        return {
-            "llm_provider": "gemini",
-            "gemini_api_key": api_key,
-            "gemini_model_name": model_name,
-        }
-
     return {
         "llm_provider": "openai",
         "openai_api_key": api_key,
@@ -153,7 +146,10 @@ def generate_with_llm(
     """
     Generic LLM generator that enforces output containing reasoning log and specified file contents in JSON.
     """
-    provider = _resolve_llm_setting(llm_settings, "llm_provider", "LLM_PROVIDER", "openai").lower()
+    configured_provider = _resolve_llm_setting(llm_settings, "llm_provider", "LLM_PROVIDER", "openai").lower()
+    provider = "openai"
+    if configured_provider not in ("", "openai"):
+        print("[LLM Service] Unsupported provider configured; using openai-compatible mode.")
     
     # Dynamically build output constraints
     file_schema_desc = "Generated artifact file contents. Must include the following keys: " + ", ".join(expected_files)
@@ -177,10 +173,7 @@ def generate_with_llm(
     debug_config = metadata_db.get_project_debug_config(project_id) if project_id else None
     llm_interaction_logging_enabled = bool((debug_config or {}).get("llm_interaction_logging_enabled"))
     llm_full_payload_logging_enabled = bool((debug_config or {}).get("llm_full_payload_logging_enabled"))
-    if provider == "gemini":
-        model_name = _resolve_llm_setting(llm_settings, "gemini_model_name", "GEMINI_MODEL_NAME", "gemini-2.0-flash")
-    else:
-        model_name = _resolve_llm_setting(llm_settings, "openai_model_name", "OPENAI_MODEL_NAME", "gpt-4o")
+    model_name = _resolve_llm_setting(llm_settings, "openai_model_name", "OPENAI_MODEL_NAME", "gpt-4o")
     timeout_seconds = _get_llm_request_timeout_seconds()
 
     for attempt in range(max_retries + 1):
@@ -192,11 +185,7 @@ def generate_with_llm(
                 f"provider='{provider}' model='{model_name}' timeout={_format_timeout_seconds(timeout_seconds)} "
                 f"expected_files={_summarize_expected_files(expected_files)}."
             )
-            raw_data = None
-            if provider == "gemini":
-                raw_data = _call_gemini_raw(enhanced_system_prompt, user_prompt, llm_settings=llm_settings)
-            else:
-                raw_data = _call_openai_raw(enhanced_system_prompt, user_prompt, llm_settings=llm_settings)
+            raw_data = _call_openai_raw(enhanced_system_prompt, user_prompt, llm_settings=llm_settings)
             
             # Log interaction if project info is provided
             if project_id and version and llm_interaction_logging_enabled:
@@ -381,46 +370,6 @@ def _parse_llm_response_to_dict(completion) -> dict:
         )
     return json.loads(cleaned)
 
-def _call_gemini_raw(system_prompt: str, user_prompt: str, llm_settings: dict | None = None) -> dict:
-    import google.generativeai as genai
-    api_key = _resolve_llm_setting(llm_settings, "gemini_api_key", "GEMINI_API_KEY")
-    model_name = _resolve_llm_setting(llm_settings, "gemini_model_name", "GEMINI_MODEL_NAME", "gemini-2.0-flash")
-    timeout_seconds = _get_llm_request_timeout_seconds()
-    
-    # Use placeholder if key is missing to support local/no-auth gateways
-    genai.configure(api_key=api_key or "not-required")
-    
-    model = genai.GenerativeModel(
-        model_name,
-        system_instruction=system_prompt,
-        generation_config={"response_mime_type": "application/json"}
-    )
-    _throttle_llm_request()
-    started_at = time.monotonic()
-    print(
-        f"[LLM Service] Gemini request starting model='{model_name}' "
-        f"timeout={_format_timeout_seconds(timeout_seconds)}."
-    )
-    request_kwargs = {}
-    if timeout_seconds > 0:
-        request_kwargs["request_options"] = {"timeout": timeout_seconds}
-    try:
-        response = model.generate_content(user_prompt, **request_kwargs)
-    except TypeError as exc:
-        if request_kwargs:
-            print(
-                "[LLM Service] Gemini SDK rejected request_options timeout; "
-                f"retrying without explicit timeout. error={exc}"
-            )
-            response = model.generate_content(user_prompt)
-        else:
-            raise
-    elapsed = time.monotonic() - started_at
-    print(f"[LLM Service] Gemini request completed model='{model_name}' elapsed={elapsed:.2f}s.")
-    # Use robust parsing
-    return _parse_llm_response_to_dict(response.text)
-
-
 def _build_connectivity_probe_prompts() -> tuple[str, str]:
     system_prompt = (
         "You are a connectivity probe. "
@@ -441,14 +390,6 @@ def _build_connectivity_probe_prompts() -> tuple[str, str]:
 
 
 def _normalize_connectivity_llm_settings(llm_settings: dict) -> dict:
-    provider = str(llm_settings.get("provider", "openai")).lower()
-    if provider == "gemini":
-        return {
-            "llm_provider": "gemini",
-            "gemini_api_key": llm_settings.get("api_key"),
-            "gemini_model_name": llm_settings.get("model_name", "gemini-2.0-flash"),
-        }
-
     return {
         "llm_provider": "openai",
         "openai_api_key": llm_settings.get("api_key"),
@@ -462,20 +403,15 @@ def test_llm_connectivity(llm_settings: dict) -> dict:
     Test the connectivity and availability of an LLM configuration.
     Returns a dict with success status and message.
     """
-    provider = llm_settings.get("provider", "openai").lower()
     try:
         system_prompt, user_prompt = _build_connectivity_probe_prompts()
         normalized_settings = _normalize_connectivity_llm_settings(llm_settings)
-
-        if provider == "gemini":
-            res_dict = _call_gemini_raw(system_prompt, user_prompt, llm_settings=normalized_settings)
-        else:
-            res_dict = _call_openai_raw(system_prompt, user_prompt, llm_settings=normalized_settings)
+        res_dict = _call_openai_raw(system_prompt, user_prompt, llm_settings=normalized_settings)
 
         if isinstance(res_dict, dict):
             return {
                 "success": True,
-                "message": f"Connected successfully to {provider.upper()} compatible API.",
+                "message": "Connected successfully to OpenAI-compatible API.",
             }
         return {"success": False, "message": f"Invalid response format: {type(res_dict).__name__}"}
     except Exception as e:
