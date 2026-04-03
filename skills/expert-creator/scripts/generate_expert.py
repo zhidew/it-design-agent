@@ -226,6 +226,18 @@ class ExpertGenerator:
         if "dependencies" not in sched or not sched.get("dependencies"):
             sched["dependencies"] = []
             enriched = True
+
+        # Ensure inputs.required follows the standard runtime contract
+        inputs = profile.get("inputs", {})
+        if not isinstance(inputs, dict):
+            inputs = {}
+        if not inputs.get("required"):
+            inputs["required"] = ["requirements", "existing_assets", "output_root"]
+            enriched = True
+        if "optional" not in inputs:
+            inputs["optional"] = ["constraints", "context"]
+            enriched = True
+        profile["inputs"] = inputs
         
         # Ensure upstream_artifacts if dependencies exist
         deps = sched.get("dependencies", [])
@@ -241,6 +253,18 @@ class ExpertGenerator:
         if not profile["tools"].get("allowed"):
             profile["tools"]["allowed"] = tools_allowed
             enriched = True
+
+        # Ensure outputs include both expected artifacts and execution evidence
+        outputs = profile.get("outputs", {})
+        if not isinstance(outputs, dict):
+            outputs = {}
+        if not outputs.get("expected"):
+            outputs["expected"] = [f"{expert_id}-design.md"]
+            enriched = True
+        if not outputs.get("evidence"):
+            outputs["evidence"] = [f"{expert_id}.json"]
+            enriched = True
+        profile["outputs"] = outputs
         
         if enriched:
             return yaml.safe_dump(profile, allow_unicode=True, sort_keys=False)
@@ -377,11 +401,13 @@ Study the **Reference Expert Examples** above carefully and follow the SAME leve
 
 1. **profile.yaml** must include ALL of these fields (not just the basic ones):
    - `name`, `name_en`, `name_zh`, `capability`, `description`, `version`, `skills`
+   - `inputs.required` (usually `requirements`, `existing_assets`, `output_root`)
    - `scheduling.priority`, `scheduling.dependencies` (list relevant expert IDs or [])
    - `upstream_artifacts` (map of dependency expert IDs to their expected output files)
    - `keywords` (list of domain keywords)
    - `tools.allowed` (list of allowed tools)
-   - `outputs.expected` (list of specific output file names)
+   - `outputs.expected` (list of specific output file names under `artifacts/`)
+   - `outputs.evidence` (list of evidence file names under `evidence/`)
    - `metadata.boundary_contract` with `owns`, `excludes`, `upstream_inputs`
    - `policies` with `asset_baseline_required`, `evidence_required`, `output_must_be_structured`, `manual_override_forbidden`, `descriptions_prefer_chinese`
    - `error_handling` with `on_missing_required_input`, `on_validation_failure`, `on_partial_generation`
@@ -529,6 +555,14 @@ description: "{description}"
 version: 0.1.0
 skills:
   - {expert_id}
+inputs:
+  required:
+    - requirements
+    - existing_assets
+    - output_root
+  optional:
+    - constraints
+    - context
 scheduling:
   priority: 50
   dependencies: []
@@ -537,6 +571,7 @@ tools:
   allowed: {json.dumps(recommended_tools)}
 outputs:
   expected: ["{expert_id}-design.md"]
+  evidence: ["{expert_id}.json"]
 metadata:
   boundary_contract:
     owns:
@@ -641,16 +676,16 @@ keywords: {json.dumps(domain_keywords)}
 ## 返回格式
 
 ```json
-{{{{
+{{
   "done": false,
-  "thought": "为什么需要这一步",
+  "thought": "Why this step is needed.",
   "tool_name": "grep_search | read_file_chunk | write_file | patch_file | none",
-  "tool_input": {{{}}},
+  "tool_input": {{}},
   "actions": [
-    {{{{ "tool_name": "read_file_chunk", "tool_input": {{{{ "path": "baseline/original-requirements.md", "start_line": 1, "end_line": 120 }}}} }}}}
+    {{ "tool_name": "read_file_chunk", "tool_input": {{ "path": "baseline/original-requirements.md", "start_line": 1, "end_line": 120 }} }}
   ],
-  "evidence_note": "这一步应该确认或产出什么"
-}}}}
+  "evidence_note": "What this step should confirm or produce."
+}}
 ```
 
 # 最终生成策略 (Final Generation)

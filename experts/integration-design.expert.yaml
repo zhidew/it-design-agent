@@ -1,29 +1,47 @@
 name: Integration Design Expert
+name_en: Integration Design Expert
+name_zh: 集成设计专家
 capability: integration-design
-description: Design cross-service and external system integration protocols, including async event contracts (AsyncAPI) and compensation strategies.
+description: 负责跨服务与外部系统的集成协议、异步事件、幂等重试与补偿策略设计，确保集成边界清晰且可实现。
 version: 0.1.1
 skills:
   - integration-design
+keywords:
+  - 集成设计
+  - AsyncAPI
+  - 幂等
+  - 补偿
+  - 重试策略
+inputs:
+  required:
+    - requirements
+    - existing_assets
+    - output_root
+  optional:
+    - constraints
+    - context
+    - provider
 scheduling:
   priority: 85
   dependencies:
-    - architecture-mapping
+    - modular-design
 upstream_artifacts:
-  architecture-mapping:
+  modular-design:
     - architecture.md
     - module-map.json
-policies:
-  asset_baseline_required: true
-  evidence_required: true
-  output_must_be_structured: true
-  descriptions_prefer_chinese: true
-error_handling:
-  on_missing_required_input: fail
-  on_validation_failure: fail
 tools:
-  allowed: [clone_repository, query_database, query_knowledge_base, write_file, patch_file]
+  allowed:
+    - clone_repository
+    - query_database
+    - query_knowledge_base
+    - write_file
+    - patch_file
 outputs:
-  expected: [integration.md, asyncapi.yaml]
+  expected:
+    - integration.md
+    - asyncapi.yaml
+  evidence:
+    - integration-design.json
 metadata:
   boundary_contract:
     owns:
@@ -34,4 +52,14 @@ metadata:
       - detailed DDL or index design
       - config matrix, ops, and test design
     upstream_inputs:
-      - architecture-mapping
+      - modular-design
+policies:
+  asset_baseline_required: true
+  evidence_required: true
+  output_must_be_structured: true
+  manual_override_forbidden: true
+  descriptions_prefer_chinese: true
+error_handling:
+  on_missing_required_input: fail
+  on_validation_failure: fail
+  on_partial_generation: emit_evidence_and_fail

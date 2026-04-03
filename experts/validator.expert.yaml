@@ -1,9 +1,25 @@
 name: Validation Expert
+name_en: Validation Expert
+name_zh: 验证专家
 capability: validator
-description: Validate the completeness and consistency of all design artifacts and generate validation reports.
+description: 负责验证设计产物的完整性、一致性与可交付性，输出验证报告、问题清单和证据说明。
 version: 0.1.1
 skills:
   - validator
+keywords:
+  - 验证
+  - 一致性检查
+  - 设计评审
+  - 质量门禁
+  - 验证报告
+inputs:
+  required:
+    - requirements
+    - existing_assets
+    - output_root
+  optional:
+    - constraints
+    - context
 scheduling:
   priority: 10
   dependencies:
@@ -13,14 +29,6 @@ upstream_artifacts:
     - detailed-design.md
     - traceability.json
     - review-checklist.md
-policies:
-  asset_baseline_required: true
-  evidence_required: true
-  output_must_be_structured: true
-  descriptions_prefer_chinese: true
-error_handling:
-  on_missing_required_input: fail
-  on_validation_failure: warn
 tools:
   allowed:
     - run_command
@@ -30,9 +38,23 @@ tools:
 outputs:
   expected:
     - validation-report.md
+  evidence:
+    - validator.json
 metadata:
   boundary_contract:
     owns:
       - validation findings, consistency checks, and gap reporting
     excludes:
       - generating replacement design content
+    upstream_inputs:
+      - design-assembler
+policies:
+  asset_baseline_required: true
+  evidence_required: true
+  output_must_be_structured: true
+  manual_override_forbidden: true
+  descriptions_prefer_chinese: true
+error_handling:
+  on_missing_required_input: fail
+  on_validation_failure: warn
+  on_partial_generation: emit_evidence_and_fail

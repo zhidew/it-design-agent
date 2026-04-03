@@ -24,8 +24,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 # Agent aliases for normalization (kept for backward compatibility)
 AGENT_ALIASES = {
-    "architect-map": "architecture-mapping",
-    "architecture-map": "architecture-mapping",
+    "architect-map": "modular-design",
+    "architecture-map": "modular-design",
     "quality": "ops-design",
     "ops": "ops-design",
     "tests": "test-design",
@@ -297,7 +297,7 @@ def _get_supported_agent_ids() -> set:
     except RuntimeError:
         # Fallback to hardcoded list if registry not initialized
         return {
-            "architecture-mapping",
+            "modular-design",
             "integration-design",
             "data-design",
             "ddd-structure",
@@ -333,7 +333,7 @@ EXECUTION_PHASES: List[str] = _phase_cfg.execution_phases
 # always include `scheduling.phase` so this dict can eventually be removed.
 AGENT_PHASE_MAP: Dict[str, str] = {
     "planner": "PLANNING",
-    "architecture-mapping": "ARCHITECTURE",
+    "modular-design": "ARCHITECTURE",
     "integration-design": "ARCHITECTURE",
     "data-design": "MODELING",
     "ddd-structure": "MODELING",
@@ -763,15 +763,15 @@ def _build_task_queue(active_agents: set[str]) -> List[Task]:
     except RuntimeError:
         # Fallback: registry not initialized, use default ordering
         default_order = [
-            ("architecture-mapping", 90, []),
-            ("data-design", 80, ["architecture-mapping"]),
+            ("modular-design", 90, []),
+            ("data-design", 80, ["modular-design"]),
             ("ddd-structure", 75, ["data-design"]),
             ("api-design", 70, ["data-design", "ddd-structure"]),
             ("config-design", 65, []),
             ("flow-design", 60, []),
             ("test-design", 50, ["flow-design"]),
             ("ops-design", 45, ["config-design"]),
-            ("integration-design", 85, ["architecture-mapping"]),
+            ("integration-design", 85, ["modular-design"]),
         ]
         
         active_defaults = [(agent, priority, deps) for agent, priority, deps in default_order if agent in active_agents]
@@ -1272,10 +1272,10 @@ Output JSON format:
         elif isinstance(decision_data, list):
             active_agents = set(decision_data)
         else:
-            active_agents = {"architecture-mapping"}
+            active_agents = {"modular-design"}
     except Exception as exc:
         print(f"[ERROR] Planner LLM failed: {exc}. Falling back to default.")
-        active_agents = {"architecture-mapping"}
+        active_agents = {"modular-design"}
 
     active_agents = _normalize_active_agents(active_agents)
     print(f"[DEBUG] Planner: active_agents after normalization: {sorted(active_agents)}")

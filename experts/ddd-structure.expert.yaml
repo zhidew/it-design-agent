@@ -1,9 +1,26 @@
-﻿name: DDD Structure Expert
+name: DDD Structure Expert
+name_en: DDD Structure Expert
+name_zh: 领域结构专家
 capability: ddd-structure
-description: Perform domain modeling and structural design, producing class diagrams, DDD structure descriptions, and context mappings.
+description: 负责领域建模、聚合边界、上下文映射与领域结构说明设计，确保业务概念、职责边界和术语体系稳定一致。
 version: 0.1.1
 skills:
   - ddd-structure
+keywords:
+  - 领域建模
+  - DDD
+  - 聚合
+  - 上下文映射
+  - 类图
+inputs:
+  required:
+    - requirements
+    - existing_assets
+    - output_root
+  optional:
+    - constraints
+    - context
+    - domain_name
 scheduling:
   priority: 75
   dependencies:
@@ -25,6 +42,8 @@ outputs:
     - class-diagram.md
     - ddd-structure.md
     - context-map.md
+  evidence:
+    - ddd-structure.json
 metadata:
   boundary_contract:
     owns:
@@ -39,7 +58,9 @@ policies:
   asset_baseline_required: true
   evidence_required: true
   output_must_be_structured: true
+  manual_override_forbidden: true
   descriptions_prefer_chinese: true
 error_handling:
   on_missing_required_input: fail
   on_validation_failure: fail
+  on_partial_generation: emit_evidence_and_fail

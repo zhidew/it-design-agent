@@ -1,17 +1,34 @@
 name: API Design Expert
+name_en: API Design Expert
+name_zh: API设计专家
 capability: api-design
-description: Generate project-level API design artifacts based on requirements baseline, existing interface assets, and constraint policies. Automatically determine audience (internal/external/both) and produce corresponding API designs with validation evidence.
+description: 负责同步 API 契约、请求响应结构、错误模型与枚举规范设计，确保接口定义一致、可演进且可验证。
 version: 0.1.2
 skills:
   - api-design
+keywords:
+  - 接口设计
+  - API
+  - OpenAPI
+  - 错误模型
+  - 枚举规范
+inputs:
+  required:
+    - requirements
+    - existing_assets
+    - output_root
+  optional:
+    - constraints
+    - context
+    - audience
 scheduling:
   priority: 70
   dependencies:
-    - architecture-mapping
+    - modular-design
     - data-design
     - ddd-structure
 upstream_artifacts:
-  architecture-mapping:
+  modular-design:
     - architecture.md
     - module-map.json
   data-design:
@@ -33,6 +50,13 @@ outputs:
   expected:
     - api-design.md
     - errors-rfc9457.json
+  evidence:
+    - api-design.json
+  conditional:
+    - when: audience in [internal, both]
+      path: api-internal.yaml
+    - when: audience in [external, both]
+      path: api-public.yaml
 metadata:
   boundary_contract:
     owns:
@@ -42,7 +66,7 @@ metadata:
       - schema/index redesign
       - ops runbooks and test inventory
     upstream_inputs:
-      - architecture-mapping
+      - modular-design
       - data-design
       - ddd-structure
 policies:

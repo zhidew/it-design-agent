@@ -420,89 +420,16 @@
     "expertNameLabel": "专家名称",
     "expertNameZhLabel": "中文名称",
     "expertNameEnLabel": "英文名称",
-    "expertNameZhPlaceholder": "如：架构设计专家",
-    "expertNameEnPlaceholder": "如：Architecture Mapping Expert",
+    "expertNameZhPlaceholder": "如：模块化设计专家",
+    "expertNameEnPlaceholder": "如：Modular Design Expert",
     "expertDescLabel": "职责描述（可选）",
     "back": "返回",
     "startGeneration": "开始智能生成"
   },
-  "experts": {
-    "expert-creator": {
-      "name": "专家构建器",
-      "description": "智能构建新的设计专家，包括完整的配置、技能指南、模板和脚本。"
-    },
-    "api-design": {
-      "name": "API 设计专家",
-      "description": "设计内部与外部 API 契约、请求响应模型以及错误规范。"
-    },
-    "architecture-mapping": {
-      "name": "架构映射专家",
-      "description": "梳理模块边界、依赖关系与架构级协作路径。"
-    },
-    "config-design": {
-      "name": "配置设计专家",
-      "description": "规划运行时配置、开关策略和密钥规范。"
-    },
-    "data-design": {
-      "name": "数据设计专家",
-      "description": "设计业务数据的模式、迁移规划与持久化结构。"
-    },
-    "ddd-structure": {
-      "name": "领域结构专家",
-      "description": "设计领域边界、聚合关系与领域模型结构。"
-    },
-    "design-assembler": {
-      "name": "设计汇编专家",
-      "description": "将各专家产物汇编为完整一致的设计包。"
-    },
-    "flow-design": {
-      "name": "流程设计专家",
-      "description": "设计时序流程、状态转换与关键业务交互。"
-    },
-    "integration-design": {
-      "name": "集成设计专家",
-      "description": "设计服务集成契约、异步事件与协同机制。"
-    },
-    "ops-design": {
-      "name": "运行就绪专家",
-      "description": "设计 SLO、可观测性、告警与运行准备材料。"
-    },
-    "test-design": {
-      "name": "测试设计专家",
-      "description": "定义测试覆盖策略、用例输入与质量验证结构。"
-    },
-    "validator": {
-      "name": "验证专家",
-      "description": "验证设计一致性、完整性和质量门禁结果。"
-    }
-  },
-  "stages": {
-  "ANALYSIS": "需求分析",
-  "ARCHITECTURE": "架构设计",
-  "MODELING": "领域建模",
-  "INTERFACE": "流程与集成",
-  "QUALITY": "测试与运维",
-  "DELIVERY": "聚合与审核",
-  "initializing": "正在激活...",
-  "waiting": "准备就绪"
-  },
   "pipeline": {
-  "preparing": "编排引擎启动中...",
-  "expertsWaiting": "流水线就绪，待输入需求激活专家..."
-  },
-
-  "agents": {
-    "planner": "任务分解",
-    "architecture-mapping": "模块架构分析",
-    "integration-design": "集成设计",
-    "data-design": "数据模型设计",
-    "ddd-structure": "领域模型设计",
-    "flow-design": "流程图设计",
-    "api-design": "API接口设计",
-    "config-design": "配置设计",
-    "test-design": "测试设计",
-    "ops-design": "运维设计",
-    "design-assembler": "设计文档聚合",
-    "validator": "设计质量门禁"
+    "preparing": "编排引擎启动中...",
+    "initializing": "正在激活...",
+    "waiting": "准备就绪",
+    "expertsWaiting": "流水线就绪，待激活专家..."
   }
 }

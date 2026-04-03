@@ -1,0 +1,59 @@
+name: Modular Design Expert
+name_en: Modular Design Expert
+name_zh: 模块化设计专家
+capability: modular-design
+description: 负责系统上下文、容器划分、模块边界和允许依赖关系设计，为后续专家提供统一的结构约束。
+version: 0.1.1
+skills:
+  - modular-design
+keywords:
+  - 模块化设计
+  - 系统上下文
+  - 容器划分
+  - 依赖映射
+  - 架构边界
+inputs:
+  required:
+    - requirements
+    - existing_assets
+    - output_root
+  optional:
+    - constraints
+    - context
+scheduling:
+  priority: 90
+  dependencies: []
+upstream_artifacts: {}
+tools:
+  allowed:
+    - clone_repository
+    - query_database
+    - query_knowledge_base
+    - write_file
+    - patch_file
+outputs:
+  expected:
+    - architecture.md
+    - module-map.json
+  evidence:
+    - modular-design.json
+metadata:
+  boundary_contract:
+    owns:
+      - system context and container decomposition
+      - module ownership and allowed dependencies
+    excludes:
+      - async event contract details
+      - detailed schema or index design
+      - config matrix, ops runbook, and test case design
+    upstream_inputs: []
+policies:
+  asset_baseline_required: true
+  evidence_required: true
+  output_must_be_structured: true
+  manual_override_forbidden: true
+  descriptions_prefer_chinese: true
+error_handling:
+  on_missing_required_input: fail
+  on_validation_failure: fail
+  on_partial_generation: emit_evidence_and_fail

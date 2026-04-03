@@ -1,15 +1,31 @@
-﻿name: Data Design Expert
+name: Data Design Expert
+name_en: Data Design Expert
+name_zh: 数据设计专家
 capability: data-design
-description: Generate project-level data and migration design artifacts based on requirements baseline and existing DDL assets, including table structures (SQL), entity relationships (ER diagrams), and data migration/rollback plans.
+description: 负责数据库表结构、索引、实体关系与迁移回滚方案设计，确保数据模型稳定、可演进且便于实施。
 version: 0.1.1
 skills:
   - data-design
+keywords:
+  - 数据设计
+  - DDL
+  - ER
+  - 迁移方案
+  - 索引设计
+inputs:
+  required:
+    - requirements
+    - existing_assets
+    - output_root
+  optional:
+    - constraints
+    - context
 scheduling:
   priority: 80
   dependencies:
-    - architecture-mapping
+    - modular-design
 upstream_artifacts:
-  architecture-mapping:
+  modular-design:
     - architecture.md
     - module-map.json
 tools:
@@ -24,6 +40,8 @@ outputs:
     - schema.sql
     - er.md
     - migration-plan.md
+  evidence:
+    - data-design.json
 metadata:
   boundary_contract:
     owns:
@@ -33,7 +51,7 @@ metadata:
       - detailed API or async contract design
       - config, ops, and test design
     upstream_inputs:
-      - architecture-mapping
+      - modular-design
 policies:
   asset_baseline_required: true
   evidence_required: true

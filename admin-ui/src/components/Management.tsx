@@ -242,34 +242,27 @@ export function ExpertCenter() {
     }
     const term = searchTerm.toLowerCase();
     return experts.filter((expert) => {
-      // Search in both i18n translations and raw data
-      const expertI18n = t(`experts.${expert.id}`, { returnObjects: true }) as { name?: string; description?: string } | undefined;
       const searchable = [
         expert.id,
         expert.name,
         expert.name_zh || '',
         expert.name_en || '',
         expert.description,
-        expertI18n?.name || '',
-        expertI18n?.description || '',
         ...(expert.expertise ?? []),
       ].join(' ').toLowerCase();
       return searchable.includes(term);
     });
-  }, [experts, searchTerm, t]);
+  }, [experts, searchTerm]);
 
   const getExpertDisplayName = (expert: Expert | null) => {
     if (!expert) {
       return '';
     }
     const locale = i18n.language.toLowerCase().startsWith('zh') ? 'zh' : 'en';
-    const localeKey = `experts.${expert.id}.name`;
-    const localeName = t(localeKey, { lng: locale, defaultValue: '' });
-    const localizedFromI18n = localeName && localeName !== localeKey ? localeName : '';
     if (locale === 'zh') {
-      return expert.name_zh || localizedFromI18n || expert.name_en || expert.name || expert.id;
+      return expert.name_zh || expert.name_en || expert.name || expert.id;
     }
-    return expert.name_en || localizedFromI18n || expert.name || expert.name_zh || expert.id;
+    return expert.name_en || expert.name || expert.name_zh || expert.id;
   };
 
   const translateExpertName = (expert: Expert | null) => {
@@ -283,8 +276,7 @@ export function ExpertCenter() {
     if (!expert) {
       return t('management.selectExpertHint');
     }
-    // Prefer i18n translation, fallback to API data
-    return t(`experts.${expert.id}.description`, expert.description);
+    return expert.description || t('management.selectExpertHint');
   };
 
   const displayRelativePath = (path: string) => {

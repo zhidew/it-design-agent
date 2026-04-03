@@ -26,7 +26,7 @@ phases:
     executable: true
     order: 3
     experts:
-      - architecture-mapping
+      - modular-design
       - integration-design
 
   - id: MODELING

@@ -417,88 +417,16 @@
     "expertNameLabel": "Expert Name",
     "expertNameZhLabel": "Chinese Name",
     "expertNameEnLabel": "English Name",
-    "expertNameZhPlaceholder": "e.g., 架构设计专家",
-    "expertNameEnPlaceholder": "e.g., Architecture Mapping Expert",
+    "expertNameZhPlaceholder": "e.g., 模块化设计专家",
+    "expertNameEnPlaceholder": "e.g., Modular Design Expert",
     "expertDescLabel": "Description (Optional)",
     "back": "Back",
     "startGeneration": "Start AI Generation"
   },
-  "experts": {
-    "expert-creator": {
-      "name": "Expert Creator",
-      "description": "Intelligently generate new design experts with complete profiles, skill guides, templates, and scripts."
-    },
-    "api-design": {
-      "name": "API Design Expert",
-      "description": "Design public and internal API contracts, request-response models, and error specifications."
-    },
-    "architecture-mapping": {
-      "name": "Architecture Mapping Expert",
-      "description": "Map module boundaries, dependencies, and architecture-level collaboration paths."
-    },
-    "config-design": {
-      "name": "Configuration Design Expert",
-      "description": "Define runtime configuration, switches, environment strategy, and config governance."
-    },
-    "data-design": {
-      "name": "Data Design Expert",
-      "description": "Model schemas, migration plans, and persistence structures for business data."
-    },
-    "ddd-structure": {
-      "name": "DDD Structure Expert",
-      "description": "Shape domain boundaries, aggregates, and domain model structures."
-    },
-    "design-assembler": {
-      "name": "Design Assembly Expert",
-      "description": "Assemble outputs from all experts into a cohesive design package."
-    },
-    "flow-design": {
-      "name": "Flow Design Expert",
-      "description": "Design sequence flows, state transitions, and key business interactions."
-    },
-    "integration-design": {
-      "name": "Integration Design Expert",
-      "description": "Plan service integration contracts, async events, and coordination mechanisms."
-    },
-    "ops-design": {
-      "name": "Ops Design Expert",
-      "description": "Prepare SLOs, observability, alerting, and operational readiness assets."
-    },
-    "test-design": {
-      "name": "Test Design Expert",
-      "description": "Define test coverage strategy, case inputs, and quality verification structure."
-    },
-    "validator": {
-      "name": "Validation Expert",
-      "description": "Validate design consistency, completeness, and quality gate outcomes."
-    }
-  },
-  "stages": {
-    "ANALYSIS": "Requirement Analysis",
-    "ARCHITECTURE": "Structural Design",
-    "MODELING": "Domain & Data Modeling",
-    "INTERFACE": "Flow & Integration",
-    "QUALITY": "Test & Ops",
-    "DELIVERY": "Assembly & Review",
-    "initializing": "Initializing...",
-    "waiting": "Waiting..."
-  },
   "pipeline": {
     "preparing": "Preparing pipeline...",
+    "initializing": "Initializing...",
+    "waiting": "Waiting...",
     "expertsWaiting": "Design experts are waiting to load..."
-  },
-  "agents": {
-    "planner": "Mission Decomposition",
-    "architecture-mapping": "Module Arch Analysis",
-    "integration-design": "Integration Design",
-    "data-design": "Data Design",
-    "ddd-structure": "DDD Design",
-    "flow-design": "Flow Design",
-    "api-design": "API Design",
-    "config-design": "Config Design",
-    "test-design": "Test Design",
-    "ops-design": "Ops Design",
-    "design-assembler": "Document Assembly",
-    "validator": "Design Quality Gate"
   }
 }

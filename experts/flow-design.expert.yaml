@@ -1,29 +1,46 @@
 name: Flow Design Expert
+name_en: Flow Design Expert
+name_zh: 流程设计专家
 capability: flow-design
-description: Generate system interaction sequence diagrams and state machines based on business requirements, covering main flows and exception handling paths.
+description: 负责核心业务流程的时序图、状态流转和异常路径设计，确保交互顺序、参与方职责和生命周期表达清晰。
 version: 0.1.1
 skills:
   - flow-design
+keywords:
+  - 流程设计
+  - 时序图
+  - 状态机
+  - 生命周期
+  - 异常路径
+inputs:
+  required:
+    - requirements
+    - existing_assets
+    - output_root
+  optional:
+    - constraints
+    - context
 scheduling:
   priority: 60
   dependencies:
-    - architecture-mapping
+    - modular-design
 upstream_artifacts:
-  architecture-mapping:
+  modular-design:
     - architecture.md
     - module-map.json
-policies:
-  asset_baseline_required: true
-  evidence_required: true
-  output_must_be_structured: true
-  descriptions_prefer_chinese: true
-error_handling:
-  on_missing_required_input: fail
-  on_validation_failure: fail
 tools:
-  allowed: [clone_repository, query_database, query_knowledge_base, write_file, patch_file]
+  allowed:
+    - clone_repository
+    - query_database
+    - query_knowledge_base
+    - write_file
+    - patch_file
 outputs:
-  expected: [sequence.md, state.md]
+  expected:
+    - sequence.md
+    - state.md
+  evidence:
+    - flow-design.json
 metadata:
   boundary_contract:
     owns:
@@ -33,4 +50,14 @@ metadata:
       - DDL and config design
       - ops and test design
     upstream_inputs:
-      - architecture-mapping
+      - modular-design
+policies:
+  asset_baseline_required: true
+  evidence_required: true
+  output_must_be_structured: true
+  manual_override_forbidden: true
+  descriptions_prefer_chinese: true
+error_handling:
+  on_missing_required_input: fail
+  on_validation_failure: fail
+  on_partial_generation: emit_evidence_and_fail

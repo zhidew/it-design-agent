@@ -11,6 +11,9 @@ DB_DIR = BASE_DIR / "projects" / ".orchestrator"
 DB_PATH = DB_DIR / "metadata.sqlite"
 KEY_PATH = DB_DIR / "metadata.key"
 ENV_PATH = BASE_DIR / ".env"
+LEGACY_EXPERT_ID_MIGRATIONS = {
+    "architecture-mapping": "modular-design",
+}
 
 try:
     from cryptography.fernet import Fernet, InvalidToken
@@ -349,6 +352,7 @@ class MetadataDB:
                 "CREATE INDEX IF NOT EXISTS idx_scheduled_runs_project_version ON scheduled_runs(project_id, version_id)"
             )
             self._ensure_column(conn, "project_model_configs", "headers", "TEXT")
+            self._migrate_legacy_project_experts(conn)
             conn.commit()
 
     @staticmethod
@@ -359,6 +363,32 @@ class MetadataDB:
         }
         if column_name not in columns:
             conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}")
+
+    def _migrate_legacy_project_experts(self, conn: sqlite3.Connection) -> None:
+        now = self._utcnow()
+        for legacy_id, canonical_id in LEGACY_EXPERT_ID_MIGRATIONS.items():
+            conn.execute(
+                """
+                INSERT INTO project_experts (
+                    expert_id, project_id, enabled, description, created_at, updated_at
+                )
+                SELECT ?, project_id, enabled, description, created_at, ?
+                FROM project_experts
+                WHERE expert_id = ?
+                ON CONFLICT(project_id, expert_id) DO UPDATE SET
+                    enabled = CASE
+                        WHEN project_experts.enabled = 1 OR excluded.enabled = 1 THEN 1
+                        ELSE 0
+                    END,
+                    description = COALESCE(project_experts.description, excluded.description),
+                    updated_at = excluded.updated_at
+                """,
+                (canonical_id, now, legacy_id),
+            )
+            conn.execute(
+                "DELETE FROM project_experts WHERE expert_id = ?",
+                (legacy_id,),
+            )
 
     def _load_env_lines(self) -> List[str]:
         if not self.env_path.exists():
@@ -1404,23 +1434,24 @@ class MetadataDB:
                 }
             )
 
-        for expert_id, row in stored.items():
-            if expert_id in system_experts:
-                continue
+        if not manifests:
+            for expert_id, row in stored.items():
+                if expert_id in system_experts:
+                    continue
 
-            experts.append(
-                {
-                    "id": expert_id,
-                    "project_id": project_id,
-                    "name": expert_id,
-                    "name_zh": None,
-                    "name_en": expert_id,
-                    "enabled": bool(row["enabled"]),
-                    "description": row.get("description"),
-                    "created_at": row["created_at"],
-                    "updated_at": row["updated_at"],
-                }
-            )
+                experts.append(
+                    {
+                        "id": expert_id,
+                        "project_id": project_id,
+                        "name": expert_id,
+                        "name_zh": None,
+                        "name_en": expert_id,
+                        "enabled": bool(row["enabled"]),
+                        "description": row.get("description"),
+                        "created_at": row["created_at"],
+                        "updated_at": row["updated_at"],
+                    }
+                )
 
         return experts
 

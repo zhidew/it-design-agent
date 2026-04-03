@@ -341,14 +341,9 @@ export function ProjectConfig() {
     };
   }, [i18n.language, t]);
 
-  const getTranslatedValue = (lang: 'zh' | 'en', key: string) => {
-    const value = t(key, { lng: lang, defaultValue: '' });
-    return value && value !== key ? value : '';
-  };
-
   const getExpertDisplayNames = (expert: ExpertConfig) => {
-    const zhName = expert.name_zh || getTranslatedValue('zh', `experts.${expert.id}.name`);
-    const enName = expert.name_en || getTranslatedValue('en', `experts.${expert.id}.name`) || expert.name || expert.id;
+    const zhName = expert.name_zh || expert.name_en || expert.name || expert.id;
+    const enName = expert.name_en || expert.name || expert.name_zh || expert.id;
     const fallbackName = expert.name || enName || expert.id;
     const isZh = i18n.language.toLowerCase().startsWith('zh');
     const primary = (isZh ? zhName : enName) || fallbackName;

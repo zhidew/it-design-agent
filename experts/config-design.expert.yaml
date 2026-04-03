@@ -1,29 +1,46 @@
 name: Configuration Design Expert
+name_en: Configuration Design Expert
+name_zh: 配置设计专家
 capability: config-design
-description: Plan multi-environment configurations, feature flags, and secret management policies.
+description: 负责多环境配置键、功能开关、敏感信息治理与环境差异矩阵设计，确保配置策略清晰、可审计、可落地。
 version: 0.1.1
 skills:
   - config-design
+keywords:
+  - 配置设计
+  - 环境矩阵
+  - 功能开关
+  - 密钥治理
+  - 配置目录
+inputs:
+  required:
+    - requirements
+    - existing_assets
+    - output_root
+  optional:
+    - constraints
+    - context
 scheduling:
   priority: 65
   dependencies:
-    - architecture-mapping
+    - modular-design
 upstream_artifacts:
-  architecture-mapping:
+  modular-design:
     - architecture.md
     - module-map.json
-policies:
-  asset_baseline_required: true
-  evidence_required: true
-  output_must_be_structured: true
-  descriptions_prefer_chinese: true
-error_handling:
-  on_missing_required_input: fail
-  on_validation_failure: fail
 tools:
-  allowed: [clone_repository, query_database, query_knowledge_base, write_file, patch_file]
+  allowed:
+    - clone_repository
+    - query_database
+    - query_knowledge_base
+    - write_file
+    - patch_file
 outputs:
-  expected: [config-catalog.yaml, config-matrix.md]
+  expected:
+    - config-catalog.yaml
+    - config-matrix.md
+  evidence:
+    - config-design.json
 metadata:
   boundary_contract:
     owns:
@@ -33,4 +50,14 @@ metadata:
       - schema/index design
       - observability runbooks and test plans
     upstream_inputs:
-      - architecture-mapping
+      - modular-design
+policies:
+  asset_baseline_required: true
+  evidence_required: true
+  output_must_be_structured: true
+  manual_override_forbidden: true
+  descriptions_prefer_chinese: true
+error_handling:
+  on_missing_required_input: fail
+  on_validation_failure: fail
+  on_partial_generation: emit_evidence_and_fail

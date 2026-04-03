@@ -49,8 +49,8 @@ OUTPUT_CHAR_BUDGET_BY_SUFFIX = {
 }
 
 OUTPUT_CHAR_BUDGET_BY_FILE = {
-    ("architecture-mapping", "architecture.md"): 24000,
-    ("architecture-mapping", "module-map.json"): 12000,
+    ("modular-design", "architecture.md"): 24000,
+    ("modular-design", "module-map.json"): 12000,
     ("integration-design", "integration.md"): 18000,
     ("integration-design", "asyncapi.yaml"): 14000,
 }
@@ -64,14 +64,14 @@ OUTPUT_MUST_COVER_LIMIT_BY_SUFFIX = {
 }
 
 OUTPUT_MUST_COVER_LIMIT_BY_FILE = {
-    ("architecture-mapping", "architecture.md"): 4,
-    ("architecture-mapping", "module-map.json"): 4,
+    ("modular-design", "architecture.md"): 4,
+    ("modular-design", "module-map.json"): 4,
     ("integration-design", "integration.md"): 4,
     ("integration-design", "asyncapi.yaml"): 4,
 }
 
 CAPABILITY_SCOPE_NOTES = {
-    "architecture-mapping": (
+    "modular-design": (
         "Focus on system boundary, container decomposition, module ownership, and allowed dependencies only. "
         "Do not absorb downstream experts' detailed integration protocols, event payloads, schema/index design, "
         "configuration matrices, deployment/ops plans, or test cases."
@@ -118,7 +118,7 @@ CAPABILITY_SCOPE_NOTES = {
     ),
 }
 
-SHARED_CONTEXT_OWNER_CAPABILITIES = {"architecture-mapping", "design-assembler"}
+SHARED_CONTEXT_OWNER_CAPABILITIES = {"modular-design", "design-assembler"}
 GENERIC_SHARED_CONTEXT_HEADING_MARKERS = (
     "背景",
     "概述",
@@ -143,7 +143,7 @@ DEFAULT_SHARED_CONTEXT_TOPICS = [
     "target_outcomes",
 ]
 DEFAULT_CAPABILITY_TOPICS = {
-    "architecture-mapping": ["shared_context", "system_boundary", "container_decomposition", "module_ownership", "reuse_points"],
+    "modular-design": ["shared_context", "system_boundary", "container_decomposition", "module_ownership", "reuse_points"],
     "data-design": ["schema", "entity_relationships", "indexes", "migration", "rollback"],
     "ddd-structure": ["aggregates", "entities", "value_objects", "bounded_contexts", "domain_commands"],
     "api-design": ["endpoint_contracts", "request_response_models", "error_model", "query_and_recalc_interfaces"],
@@ -504,7 +504,7 @@ def _scope_boundary_note(capability: str) -> str:
 
 def _filter_scope_items_for_capability(capability: str, items: List[str]) -> List[str]:
     normalized_items = [str(item).strip() for item in items if str(item).strip()]
-    if capability != "architecture-mapping":
+    if capability != "modular-design":
         return normalized_items
 
     filtered = [item for item in normalized_items if not ARCHITECTURE_SCOPE_EXCLUSION_RE.search(item)]
@@ -1120,7 +1120,7 @@ def _extract_bullet_items(section_body: str, max_items: int = 8) -> List[str]:
 def _capability_keywords(capability: str) -> List[str]:
     base_keywords = capability.replace("-", " ").split()
     capability_map = {
-        "architecture-mapping": ["架构", "模块", "边界", "交互", "容器", "上下文", "复用点"],
+        "modular-design": ["模块化", "模块", "边界", "交互", "容器", "上下文", "复用点"],
         "data-design": ["数据", "表", "字段", "索引", "迁移", "兼容", "约束", "审计"],
         "integration-design": ["集成", "协议", "异步", "消息", "回调", "审批", "考勤", "通知", "组织"],
         "ddd-structure": ["聚合", "实体", "值对象", "领域", "命令", "DDD"],
@@ -1206,7 +1206,7 @@ def _build_expected_file_guidance(capability: str, expected_files: List[str]) ->
     }
     capability_hint = {
         "data-design": "重点回答表结构、字段、唯一键、索引、迁移/回滚。",
-        "architecture-mapping": "重点回答模块边界、复用点、上下文/容器职责。",
+        "modular-design": "重点回答模块边界、复用点、上下文/容器职责。",
         "integration-design": "重点回答外部系统交互、消息契约、异常补偿与幂等。",
         "api-design": "重点回答接口路径、入参出参、幂等与权限边界。",
     }.get(capability, "重点回答该专家负责的核心设计问题，并确保内容可落地。")
@@ -1236,7 +1236,7 @@ def _build_capability_delivery_checklist(capability: str, expected_files: List[s
                 "迁移方案要说明增量上线顺序、历史数据兼容、失败回滚。",
             ],
         },
-        "architecture-mapping": {
+        "modular-design": {
             "must_answer": [
                 "新老模块边界如何划分，哪些容器/模块复用，哪些需要新增。",
                 "前后端交互链路与上下文边界是否清晰。",
@@ -4665,24 +4665,24 @@ def _load_templates_for_capability(
 # Note: This is a fallback when registry is not available; prefer registry configuration
 UPSTREAM_ARTIFACT_MAPPING_FALLBACK: Dict[str, Dict[str, List[str]]] = {
     "config-design": {
-        "architecture-mapping": ["architecture.md", "module-map.json"],
+        "modular-design": ["architecture.md", "module-map.json"],
     },
     "data-design": {
-        "architecture-mapping": ["architecture.md", "module-map.json"],
+        "modular-design": ["architecture.md", "module-map.json"],
     },
     "ddd-structure": {
         "data-design": ["schema.sql", "er.md", "migration-plan.md"],
     },
     "api-design": {
-        "architecture-mapping": ["architecture.md", "module-map.json"],
+        "modular-design": ["architecture.md", "module-map.json"],
         "data-design": ["schema.sql", "er.md", "migration-plan.md"],
         "ddd-structure": ["class-diagram.md", "ddd-structure.md", "context-map.md"],
     },
     "flow-design": {
-        "architecture-mapping": ["architecture.md", "module-map.json"],
+        "modular-design": ["architecture.md", "module-map.json"],
     },
     "integration-design": {
-        "architecture-mapping": ["architecture.md", "module-map.json"],
+        "modular-design": ["architecture.md", "module-map.json"],
     },
     "ops-design": {
         "config-design": ["config-catalog.yaml", "config-matrix.md"],

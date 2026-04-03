@@ -22,7 +22,7 @@ _DEFAULT_DATA = {
         {"id": "INIT", "label_zh": "初始化", "label_en": "Init", "executable": False, "order": 0, "experts": []},
         {"id": "PLANNING", "label_zh": "设计规划", "label_en": "Design Planning", "executable": True, "order": 1, "experts": []},
         {"id": "ANALYSIS", "label_zh": "需求分析", "label_en": "Analysis", "executable": True, "order": 2, "experts": []},
-        {"id": "ARCHITECTURE", "label_zh": "架构设计", "label_en": "Architecture", "executable": True, "order": 3, "experts": ["architecture-mapping", "integration-design"]},
+        {"id": "ARCHITECTURE", "label_zh": "架构设计", "label_en": "Architecture", "executable": True, "order": 3, "experts": ["modular-design", "integration-design"]},
         {"id": "MODELING", "label_zh": "建模设计", "label_en": "Modeling", "executable": True, "order": 4, "experts": ["data-design", "ddd-structure"]},
         {"id": "INTERFACE", "label_zh": "接口设计", "label_en": "Interface", "executable": True, "order": 5, "experts": ["api-design", "config-design", "flow-design"]},
         {"id": "DFX", "label_zh": "DFX设计", "label_en": "DFX", "executable": True, "order": 6, "experts": ["ops-design"]},

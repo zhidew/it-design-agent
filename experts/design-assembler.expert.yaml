@@ -1,20 +1,29 @@
 name: Design Assembly Expert
+name_en: Design Assembly Expert
+name_zh: 设计聚合专家
 capability: design-assembler
-description: Assemble all structured design artifacts into a cohesive final design document and requirements traceability matrix.
+description: 负责聚合所有上游结构化设计产物，输出最终详细设计、需求追踪关系和评审检查清单。
 version: 0.1.1
 skills:
   - design-assembler
+keywords:
+  - 设计聚合
+  - 详细设计
+  - 追踪矩阵
+  - 评审清单
+  - 汇总编排
+inputs:
+  required:
+    - requirements
+    - existing_assets
+    - output_root
+  optional:
+    - constraints
+    - context
 scheduling:
   priority: 20
   dependencies: []  # Dynamically set to all active agents
-policies:
-  asset_baseline_required: true
-  evidence_required: true
-  output_must_be_structured: true
-  descriptions_prefer_chinese: true
-error_handling:
-  on_missing_required_input: fail
-  on_validation_failure: fail
+upstream_artifacts: {}
 tools:
   allowed:
     - write_file
@@ -24,9 +33,22 @@ outputs:
     - detailed-design.md
     - traceability.json
     - review-checklist.md
+  evidence:
+    - design-assembler.json
 metadata:
   boundary_contract:
     owns:
       - synthesis, cross-artifact alignment, and traceability
     excludes:
       - invention of new detailed designs beyond upstream artifacts
+    upstream_inputs: []
+policies:
+  asset_baseline_required: true
+  evidence_required: true
+  output_must_be_structured: true
+  manual_override_forbidden: true
+  descriptions_prefer_chinese: true
+error_handling:
+  on_missing_required_input: fail
+  on_validation_failure: fail
+  on_partial_generation: emit_evidence_and_fail

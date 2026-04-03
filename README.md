@@ -1,365 +1,236 @@
 # IT Design Agent
 
-> 企业级IT详细设计自动化平台 - 基于LangGraph的多智能体编排系统
+IT Design Agent is a multi-expert detailed design platform for enterprise software projects. It combines FastAPI, React, LangGraph, and YAML-defined experts to turn requirements plus project assets into structured design deliverables.
 
-[![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-green.svg)](https://fastapi.tiangolo.com/)
-[![React](https://img.shields.io/badge/React-19+-blue.svg)](https://react.dev/)
-[![LangGraph](https://img.shields.io/badge/LangGraph-latest-orange.svg)](https://github.com/langchain-ai/langgraph)
+## What It Does
 
-## 📋 项目简介
+- Generates design artifacts through a planner plus multiple domain experts
+- Uses backend expert YAML as the single source of truth for expert metadata
+- Supports project-level configuration for repositories, databases, knowledge bases, models, and enabled experts
+- Streams workflow progress to the UI through SSE
+- Stores project metadata and workflow state locally under `projects/.orchestrator/`
 
-IT Design Agent 是一个基于大语言模型（LLM）的企业级IT详细设计自动化平台。通过多智能体协作，自动生成符合企业规范的详细设计文档，包括：
+## Core Stack
 
-- **架构设计** - 模块边界、依赖关系、架构图
-- **领域建模** - DDD结构、聚合定义、领域模型
-- **数据设计** - 数据库schema、迁移计划、ER图
-- **接口设计** - OpenAPI规范、错误码体系、接口文档
-- **流程设计** - 时序图、状态机、业务流程
-- **集成设计** - 外部系统对接、事件契约
-- **配置设计** - 配置矩阵、开关策略
-- **测试设计** - 测试策略、用例设计
-- **运维就绪** - SLO定义、可观测性方案
+- Backend: FastAPI
+- Frontend: React + Vite
+- Orchestration: LangGraph
+- Expert registry: YAML manifests in `experts/`
+- Expert skills: prompt/templates/assets in `skills/`
+- Metadata store: SQLite
 
-## ✨ 核心特性
+## Repository Layout
 
-- 🤖 **多智能体协作** - 基于LangGraph的专家编排系统，支持并行执行和依赖管理
-- 📝 **设计产物自动生成** - 自动生成符合企业标准的详细设计文档
-- 🔄 **版本管理** - 支持设计迭代和版本回溯
-- 🎯 **质量门禁** - 内置设计验证和质量检查
-- 🌐 **Web界面** - 现代化的管理界面，支持实时预览和交互
-- 🔌 **可扩展** - 灵活的专家配置系统，支持自定义技能
-- 🌍 **国际化** - 支持中文/英文双语界面
-
-## 🏗️ 系统架构
-
-```
-┌─────────────────────────────────────────────────────┐
-│                   Frontend (React)                   │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐         │
-│  │ 项目管理  │  │ 专家中心  │  │ 设计工作台│         │
-│  └──────────┘  └──────────┘  └──────────┘         │
-└─────────────────────┬───────────────────────────────┘
-                      │ HTTP/SSE
-┌─────────────────────┴───────────────────────────────┐
-│                Backend (FastAPI)                     │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐         │
-│  │   API    │  │ Orchestrator│ │ Registry │         │
-│  │ Routers  │  │   Service   │ │ Service  │         │
-│  └──────────┘  └──────────┘  └──────────┘         │
-└─────────────────────┬───────────────────────────────┘
-                      │
-┌─────────────────────┴───────────────────────────────┐
-│              LangGraph Agent System                  │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐         │
-│  │ Planner  │─▶│ Experts  │─▶│Validator │         │
-│  └──────────┘  └──────────┘  └──────────┘         │
-└─────────────────────────────────────────────────────┘
-                      │
-┌─────────────────────┴───────────────────────────────┐
-│            External Resources & Tools                │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐         │
-│  │Database  │  │ Git Repo │  │Knowledge │         │
-│  └──────────┘  └──────────┘  └──────────┘         │
-└─────────────────────────────────────────────────────┘
-```
-
-## 📦 项目结构
-
-```
+```text
 it-design-agent/
-├── api_server/           # 后端服务
-│   ├── main.py          # FastAPI应用入口
-│   ├── graphs/          # LangGraph图定义
-│   ├── routers/         # API路由
-│   ├── services/        # 业务逻辑
-│   ├── registry/        # 专家注册中心
-│   └── models/          # 数据模型
-├── admin-ui/            # 前端应用
-│   ├── src/            # 源代码
-│   ├── public/         # 静态资源
-│   └── package.json    # 依赖配置
-├── skills/              # 专家技能定义
-│   ├── api-design/     # API设计专家
-│   ├── data-design/    # 数据设计专家
-│   └── ...             # 其他专家
-├── experts/             # 专家配置文件
-├── projects/            # 项目数据目录
-├── scripts/             # 工具脚本
-├── docs/                # 文档
-└── schemas/             # Schema定义
+|-- api_server/              # FastAPI backend and orchestration runtime
+|-- admin-ui/                # React frontend
+|-- config/                  # Phase orchestration config
+|-- experts/                 # Expert YAML manifests
+|-- skills/                  # Expert skill packages
+|-- projects/                # Generated project data and local metadata
+|-- start-backend.bat        # Windows backend bootstrap
+|-- start-frontend.bat       # Windows frontend bootstrap
+|-- start-all.bat            # Windows all-in-one bootstrap
+|-- .env.example             # Backend/system environment example
+`-- README.md
 ```
 
-## 🚀 快速开始
+## Expert Source Of Truth
 
-### 前置要求
+Expert names, IDs, descriptions, dependencies, and expected outputs are defined in backend YAML manifests under `experts/`.
 
-- **Python** 3.11 或更高版本
-- **Node.js** 18 或更高版本
-- **PostgreSQL** / **MySQL** / **SQLite** (可选，用于数据库元数据)
+Examples:
 
-### Windows快速启动
+- `experts/modular-design.expert.yaml`
+- `experts/api-design.expert.yaml`
 
-1. **克隆项目**
-```bash
-git clone <repository-url>
-cd it-design-agent
-```
+Frontend i18n files are not the source of expert metadata.
 
-2. **配置环境变量**
-```bash
-# 复制环境变量模板
-copy .env.example .env
+## Built-in Experts
 
-# 编辑.env文件，配置必要的参数
-# LLM_PROVIDER=openai  # 或 gemini
-# OPENAI_API_KEY=your-api-key
-# OPENAI_MODEL=gpt-4
-```
+| Expert ID | Display Name | Primary Outputs |
+|---|---|---|
+| `modular-design` | 模块化设计专家 / Modular Design Expert | `architecture.md`, `module-map.json` |
+| `data-design` | 数据设计专家 / Data Design Expert | `schema.sql`, `er.md`, `migration-plan.md` |
+| `ddd-structure` | 领域建模专家 / DDD Structure Expert | `ddd-structure.md`, `class-diagram.md`, `context-map.md` |
+| `api-design` | API 设计专家 / API Design Expert | `api-design.md`, `errors-rfc9457.json` |
+| `integration-design` | 集成设计专家 / Integration Design Expert | `integration.md`, `asyncapi.yaml` |
+| `flow-design` | 流程设计专家 / Flow Design Expert | `sequence.md`, `state.md` |
+| `config-design` | 配置设计专家 / Configuration Design Expert | `config-catalog.yaml`, `config-matrix.md` |
+| `ops-design` | 运维设计专家 / Ops Design Expert | `slo.yaml`, `observability-spec.yaml`, `deployment-runbook.md` |
+| `test-design` | 测试设计专家 / Test Design Expert | `test-inputs.md`, `coverage-map.json` |
+| `design-assembler` | 设计组装专家 / Design Assembler | `detailed-design.md`, `traceability.json`, `review-checklist.md` |
+| `validator` | 校验专家 / Validator | validation findings and workflow validation output |
 
-3. **一键启动**
-```bash
-# 双击运行
-start-all.bat
+## Quick Start
 
-# 或单独启动
-start-backend.bat   # 启动后端
-start-frontend.bat  # 启动前端
-```
+### Prerequisites
 
-4. **访问应用**
-- 前端界面: http://localhost:5173
-- 后端API: http://localhost:8000
-- API文档: http://localhost:8000/docs
+- Python 3.11+
+- Node.js 18+
+- Windows batch scripts are provided, but manual startup also works cross-platform
 
-### 手动启动（跨平台）
-
-#### 后端
+### 1. Install Backend Dependencies
 
 ```bash
-# 创建虚拟环境
 python -m venv venv
-
-# 激活虚拟环境
-# Windows
 venv\Scripts\activate
-# Linux/Mac
-source venv/bin/activate
-
-# 安装依赖
 pip install -r api_server/requirements.txt
+```
 
-# 启动服务
+### 2. Configure Backend Environment
+
+```bash
+copy .env.example .env
+```
+
+Edit `.env` and at minimum set:
+
+- `LLM_PROVIDER`
+- `OPENAI_API_KEY`
+- `OPENAI_MODEL_NAME`
+
+### 3. Install Frontend Dependencies
+
+```bash
+cd admin-ui
+npm install
+```
+
+### 4. Configure Frontend API Address
+
+```bash
+copy admin-ui\.env.example admin-ui\.env.development
+```
+
+The frontend reads `VITE_API_BASE_URL` from `admin-ui/.env.development`.
+
+### 5. Start Services
+
+Windows:
+
+```bash
+start-all.bat
+```
+
+Or separately:
+
+```bash
+start-backend.bat
+start-frontend.bat
+```
+
+Manual startup:
+
+```bash
 cd api_server
 python main.py
 ```
 
-#### 前端
-
 ```bash
 cd admin-ui
-
-# 安装依赖
-npm install
-
-# 启动开发服务器
 npm run dev
 ```
 
-## 📖 使用指南
+### 6. Open the App
 
-### 1. 创建项目
+- Frontend: [http://localhost:5173](http://localhost:5173)
+- Backend API: [http://localhost:8000](http://localhost:8000)
+- Swagger UI: [http://localhost:8000/docs](http://localhost:8000/docs)
 
-1. 访问前端界面，点击"创建项目"
-2. 输入项目名称和描述
-3. 进入项目工作空间
+## Environment Variables
 
-### 2. 配置资源
+### Backend/System `.env`
 
-在项目配置页面设置：
-- **代码仓库** - Git仓库访问配置
-- **数据库** - 数据库连接配置
-- **知识库** - 参考文档和术语表
-- **专家启用** - 选择需要启用的设计专家
+The backend loads the root `.env` file from the repository root.
 
-### 3. 启动设计
+| Variable | Default | Required | Description |
+|---|---|---|---|
+| `LLM_PROVIDER` | `openai` | Yes | Current documented provider selector |
+| `OPENAI_API_KEY` | empty | Yes | API key for OpenAI-compatible gateways |
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | No | Base URL for OpenAI-compatible APIs |
+| `OPENAI_MODEL_NAME` | `gpt-4o` | Yes | Model name for OpenAI-compatible APIs |
+| `IT_DESIGN_AGENT_METADATA_KEY` | auto-generated if absent | No | Encrypts secrets stored in metadata SQLite |
+| `LLM_MIN_CALL_INTERVAL_SECONDS` | `0` | No | Minimum delay between LLM request starts |
+| `USE_DYNAMIC_SUBAGENT` | `true` | No | Enables dynamic expert execution path |
+| `USE_MARKDOWN_UPSERT_TOOL` | `true` | No | Enables markdown upsert behavior in dynamic subagent finalization |
+| `ORCHESTRATOR_MAX_PARALLEL` | `2` | No | Max parallel executable tasks in orchestration |
+| `ORCHESTRATOR_STALE_TIMEOUT_SECONDS` | `180` | No | Timeout for stale running workflow detection |
+| `AGENT_MAX_REACT_STEPS` | `99` | No | Max ReAct steps per expert |
+| `AGENT_MAX_ACTIONS_PER_STEP` | `2` | No | Max read-only actions per ReAct step |
+| `AGENT_MAX_FINALIZATION_STEPS` | `16` | No | Max finalization refinement steps |
+| `AGENT_REACT_PLATEAU_WINDOW` | `4` | No | Plateau detection window for expert iteration |
+| `AGENT_REACT_MIN_STEPS_BEFORE_PLATEAU` | `8` | No | Minimum steps before plateau detection activates |
+| `AGENT_PATH_NOT_FOUND_REPEAT_LIMIT` | `2` | No | Repeat limit for missing-path tool errors |
 
-1. 创建新的设计版本
-2. 输入需求描述或上传需求文档
-3. 点击"启动设计"
-4. 实时查看专家执行过程
-5. 查看生成的设计产物
+### `AGENT_*` Parameter Definitions
 
-### 4. 专家中心
+These parameters control how each expert iterates during dynamic execution.
 
-在专家中心管理设计专家：
-- 查看专家配置和技能
-- 编辑专家模板和参考文档
-- 查看工具清单（expert-creator）
-- 创建新的自定义专家
+| Variable | What It Controls | Practical Effect |
+|---|---|---|
+| `AGENT_MAX_REACT_STEPS` | Upper bound of ReAct loop iterations for one expert | Increase it when experts stop too early on complex projects; decrease it to cap runtime and token cost |
+| `AGENT_MAX_ACTIONS_PER_STEP` | Max number of batched read-only actions in one step | Higher values improve evidence gathering speed, but can make each step noisier and less focused |
+| `AGENT_MAX_FINALIZATION_STEPS` | Max number of artifact refinement/finalization rounds | Increase it if outputs often need multiple polish passes before stabilizing |
+| `AGENT_REACT_PLATEAU_WINDOW` | Number of recent steps inspected for “no progress” detection | Smaller values make plateau detection more aggressive; larger values make it more tolerant |
+| `AGENT_REACT_MIN_STEPS_BEFORE_PLATEAU` | Minimum loop count before plateau detection can trigger | Prevents early termination on tasks that need several exploratory steps up front |
+| `AGENT_PATH_NOT_FOUND_REPEAT_LIMIT` | How many repeated missing-path failures are tolerated | Prevents the same bad file/path lookup from being retried indefinitely |
 
-## 🛠️ 配置说明
+Recommended tuning guidance:
 
-### 环境变量
+- Keep defaults unless you have observed repeated early stops or excessive runtime.
+- Raise `AGENT_MAX_REACT_STEPS` and `AGENT_MAX_FINALIZATION_STEPS` for larger, messier codebases.
+- Lower `AGENT_MAX_ACTIONS_PER_STEP` if expert behavior becomes too broad or unstable.
+- Lower `AGENT_PATH_NOT_FOUND_REPEAT_LIMIT` if runs waste time on repeated nonexistent paths.
 
-```bash
-# LLM配置
-LLM_PROVIDER=openai           # LLM提供商: openai | gemini
-OPENAI_API_KEY=sk-xxx        # OpenAI API密钥
-OPENAI_MODEL=gpt-4           # 模型名称
-OPENAI_BASE_URL=             # 自定义API地址（可选）
+### Frontend `admin-ui/.env.development`
 
-# Gemini配置（如果使用Gemini）
-GOOGLE_API_KEY=xxx           # Google API密钥
+| Variable | Default | Required | Description |
+|---|---|---|---|
+| `VITE_API_BASE_URL` | `http://127.0.0.1:8000/api/v1` | No | Frontend API base URL |
 
-# 项目配置
-PROJECTS_DIR=./projects       # 项目数据目录
+## Configuration Notes
 
-# 安全配置（可选）
-IT_DESIGN_AGENT_METADATA_KEY= # 元数据加密密钥
-```
+- Backend metadata database: `projects/.orchestrator/metadata.sqlite`
+- LangGraph checkpoints: `projects/.orchestrator/langgraph-checkpoints.sqlite`
+- Backend currently starts on `0.0.0.0:8000` in `api_server/main.py`
+- Frontend Vite dev server defaults to port `5173`
 
-### 专家配置
+## Expert Development
 
-每个专家包含以下配置文件：
+To add a new expert:
 
-```yaml
-experts/
-  api-design.expert.yaml      # 专家元数据
-skills/
-  api-design/
-    SKILL.md                  # 技能定义和工作流
-    templates/                # 输出模板
-    references/               # 参考文档
-    scripts/                  # 辅助脚本
-```
+1. Add a YAML manifest under `experts/`
+2. Add a matching skill package under `skills/<expert-id>/`
+3. Define expected outputs, dependencies, and boundary contract in YAML
+4. Reload experts from the backend management API or restart the backend
 
-## 🔧 开发指南
+New expert manifests should follow the same pattern as `experts/modular-design.expert.yaml`.
 
-### 添加新专家
+## Common Commands
 
-1. 创建专家目录：`skills/your-expert/`
-2. 编写技能定义：`SKILL.md`
-3. 创建配置文件：`experts/your-expert.expert.yaml`
-4. 添加模板和参考文档
-
-### 扩展工具
-
-在 `api_server/graphs/tools/` 下添加新工具：
-
-```python
-# my_tool.py
-from .protocol import ToolResult
-
-def execute_my_tool(param: str) -> ToolResult:
-    """工具描述"""
-    # 实现工具逻辑
-    return ToolResult(output="result")
-```
-
-### API开发
-
-参考现有的router实现：
-
-```python
-# api_server/routers/my_router.py
-from fastapi import APIRouter
-
-router = APIRouter(prefix="/api/v1/my-resource", tags=["MyResource"])
-
-@router.get("")
-async def list_items():
-    return {"items": []}
-```
-
-## 📊 核心概念
-
-### 专家 (Expert)
-
-专家是具备特定设计能力的智能体，每个专家负责一个设计领域。系统内置专家包括：
-
-| 专家 | 职责 | 输出产物 |
-|------|------|----------|
-| api-design | API接口设计 | api-internal.yaml, errors-rfc9457.json |
-| data-design | 数据模型设计 | schema.sql, er.md, migration-plan.md |
-| ddd-structure | 领域模型设计 | ddd-structure.md |
-| architecture-mapping | 架构设计 | architecture.md |
-| flow-design | 流程设计 | sequence-*.md, state-*.md |
-| integration-design | 集成设计 | integration-*.md |
-| config-design | 配置设计 | config-matrix.md |
-| test-design | 测试设计 | test-strategy.md |
-| ops-design | 运维就绪 | slo.yaml, observability.yaml |
-| design-assembler | 设计汇编 | detailed-design.md |
-| validator | 设计验证 | validation-report.json |
-
-### 编排流程
-
-```
-需求输入 → Planner分解 → 专家并行执行 → Validator验证 → 产物输出
-```
-
-### 工具系统
-
-专家可使用的内置工具：
-- `clone_repository` - 克隆代码仓库
-- `query_database` - 查询数据库元数据
-- `query_knowledge_base` - 查询知识库
-- `read_file_chunk` - 读取文件片段
-- `write_file` - 写入文件
-- `patch_file` - 修改文件
-- `list_files` - 列出文件
-- `grep_search` - 搜索文件内容
-- `run_command` - 执行命令
-
-## 🧪 测试
+Backend syntax check:
 
 ```bash
-# 运行后端测试
-cd api_server
-pytest tests/
+python -m py_compile api_server\\main.py
+```
 
-# 运行前端测试
+Frontend build:
+
+```bash
 cd admin-ui
-npm run test
+npm run build
 ```
 
-## 📝 更新日志
+Search expert references:
 
-### v0.1.0 (2026-03)
-- ✨ 初始版本发布
-- ✅ 实现多智能体编排系统
-- ✅ 完成前端管理界面
-- ✅ 支持设计产物自动生成
-- ✅ 实现专家配置系统
+```bash
+rg -n "modular-design|api-design|data-design" .
+```
 
-## 🤝 贡献指南
+## Notes
 
-欢迎贡献代码、报告问题或提出建议！
-
-1. Fork本项目
-2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
-3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
-4. 推送到分支 (`git push origin feature/AmazingFeature`)
-5. 创建Pull Request
-
-## 📄 许可证
-
-本项目采用 MIT 许可证 - 详见 [LICENSE](LICENSE) 文件
-
-## 🙏 致谢
-
-- [LangChain](https://github.com/langchain-ai/langchain) - LLM应用框架
-- [LangGraph](https://github.com/langchain-ai/langgraph) - 智能体编排
-- [FastAPI](https://fastapi.tiangolo.com/) - Web框架
-- [React](https://react.dev/) - 前端框架
-- [Tailwind CSS](https://tailwindcss.com/) - UI框架
-
-## 📞 联系方式
-
-- 项目主页: <repository-url>
-- 问题反馈: <repository-url>/issues
-- 文档: <repository-url>/wiki
-
----
-
-**注意**: 本项目仅供学习和研究使用，生产环境使用请谨慎评估。
+- Project-level expert enablement is stored in the local metadata database
+- Historical project data lives under `projects/`
+- `.env` is ignored by git; use `.env.example` as the shared template

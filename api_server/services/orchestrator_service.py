@@ -47,6 +47,49 @@ def _extract_localized_expert_names(config: dict) -> tuple[str, str]:
     return name_zh, name_en
 
 
+def _normalize_expert_profile_yaml(content: str, *, expert_id: str, existing_profile_path: Path | None = None) -> str:
+    """Normalize expert profile YAML so bilingual name fields stay present."""
+    try:
+        profile = yaml.safe_load(content) or {}
+    except Exception as exc:
+        raise ValueError(f"Invalid YAML: {exc}") from exc
+
+    if not isinstance(profile, dict):
+        raise ValueError("Expert profile YAML must be a mapping object.")
+
+    existing_profile: dict = {}
+    if existing_profile_path and existing_profile_path.exists():
+        try:
+            existing_profile = yaml.safe_load(existing_profile_path.read_text(encoding="utf-8")) or {}
+        except Exception:
+            existing_profile = {}
+        if not isinstance(existing_profile, dict):
+            existing_profile = {}
+
+    existing_name = str(existing_profile.get("name") or "").strip()
+    existing_name_en = str(existing_profile.get("name_en") or existing_name or "").strip()
+    existing_name_zh = str(existing_profile.get("name_zh") or "").strip()
+
+    name = str(profile.get("name") or profile.get("name_en") or existing_name_en or expert_id).strip()
+    name_en = str(profile.get("name_en") or name or existing_name_en or expert_id).strip()
+    name_zh = str(profile.get("name_zh") or existing_name_zh or "").strip()
+    capability = str(profile.get("capability") or existing_profile.get("capability") or expert_id).strip()
+
+    if not capability:
+        capability = expert_id
+    if not name:
+        name = name_en or capability
+    if not name_en:
+        name_en = name or capability
+
+    profile["name"] = name
+    profile["name_en"] = name_en
+    profile["name_zh"] = name_zh
+    profile["capability"] = capability
+
+    return yaml.safe_dump(profile, allow_unicode=True, sort_keys=False)
+
+
 def _resolve_localized_expert_names(expert_id: str, config: dict) -> tuple[str, str]:
     name_zh, name_en = _extract_localized_expert_names(config)
     try:
@@ -328,7 +371,7 @@ def _build_legacy_task_queue(project_id: str, version: str) -> list[dict]:
     if baseline_file.exists():
         try:
             base_data = json.loads(baseline_file.read_text(encoding="utf-8"))
-            active_agents = set(base_data.get("active_agents", []))
+            active_agents = {str(agent) for agent in base_data.get("active_agents", [])}
         except Exception:
             active_agents = set()
 
@@ -339,7 +382,7 @@ def _build_legacy_task_queue(project_id: str, version: str) -> list[dict]:
             registry = ExpertRegistry.get_instance()
             active_agents = {"planner"} | set(registry.get_capabilities())
         except RuntimeError:
-            active_agents = {"planner", "architecture-mapping", "design-assembler", "validator"}
+            active_agents = {"planner", "modular-design", "design-assembler", "validator"}
 
     validator_status = "todo"
     val_log_path = logs_dir / "validator.log"
@@ -2209,7 +2252,15 @@ def get_expert(expert_id: str):
 
 def update_expert(expert_id: str, new_profile_yaml: str):
     profile_path = _resolve_expert_profile_path(expert_id)
-    return _write_versioned_file(profile_path, new_profile_yaml, validate_yaml=True)
+    try:
+        normalized_profile_yaml = _normalize_expert_profile_yaml(
+            new_profile_yaml,
+            expert_id=expert_id,
+            existing_profile_path=profile_path,
+        )
+    except ValueError:
+        return False
+    return _write_versioned_file(profile_path, normalized_profile_yaml, validate_yaml=True)
 
 
 # System experts that cannot be deleted
@@ -2264,7 +2315,7 @@ def create_expert(expert_id: str, name: str, description: str = "", *, name_zh: 
     (skill_dir / "references").mkdir(parents=True, exist_ok=True)
     (skill_dir / "scripts").mkdir(parents=True, exist_ok=True)
 
-    yaml_name = name_en or final_id.replace("-", " ").title()
+    yaml_name = name_en or normalized_name or final_id.replace("-", " ").title()
     profile_content = f"""name: {json.dumps(yaml_name, ensure_ascii=False)}
 name_en: {json.dumps(yaml_name, ensure_ascii=False)}
 name_zh: {json.dumps(name_zh, ensure_ascii=False)}
@@ -2273,6 +2324,14 @@ description: {json.dumps(description or normalized_name, ensure_ascii=False)}
 version: 0.1.0
 skills:
   - {final_id}
+inputs:
+  required:
+    - requirements
+    - existing_assets
+    - output_root
+  optional:
+    - constraints
+    - context
 scheduling:
   priority: 50
   dependencies: []
@@ -2282,6 +2341,7 @@ tools:
   allowed: ["list_files", "read_file_chunk", "grep_search", "write_file", "patch_file"]
 outputs:
   expected: ["{final_id}-design.md"]
+  evidence: ["{final_id}.json"]
 metadata:
   boundary_contract:
     owns:

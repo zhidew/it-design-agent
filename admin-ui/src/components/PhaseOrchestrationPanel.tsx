@@ -42,6 +42,8 @@ interface PhaseOrchestrationPanelProps {
 }
 
 const FIXED_PHASES = new Set(['INIT', 'PLANNING', 'DONE']);
+const FIXED_PHASE_CARD_WIDTH = 143;
+const CONFIGURABLE_PHASE_CARD_WIDTH = 165;
 
 function clonePhases(phases: PhaseItem[]): PhaseItem[] {
   return phases.map((phase) => ({ ...phase, experts: [...phase.experts] }));
@@ -312,7 +314,9 @@ export function PhaseOrchestrationPanel({ expertVersionKey }: PhaseOrchestration
             {orderedPhases.map((phase, index) => {
               const configurable = isConfigurablePhase(phase);
               const active = configurable && selectedPhaseId === phase.id;
-              const cardWidthClass = configurable ? 'w-[220px]' : 'w-[110px]';
+              const cardWidthClass = configurable
+                ? `w-[${CONFIGURABLE_PHASE_CARD_WIDTH}px]`
+                : `w-[${FIXED_PHASE_CARD_WIDTH}px]`;
               const cardClasses = active
                 ? 'border-indigo-500 bg-indigo-600 text-white shadow-lg shadow-indigo-100'
                 : configurable

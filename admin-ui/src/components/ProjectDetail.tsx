@@ -12,7 +12,7 @@ import { Mermaid } from './Mermaid';
 
 const AGENT_MAPPING: Record<string, string[]> = {
   planner: ['requirements.json', 'input-requirements.md', 'original-requirements.md'],
-  'architecture-mapping': ['architecture.md', 'module-map.json'],
+  'modular-design': ['architecture.md', 'module-map.json'],
   'integration-design': ['integration-', 'asyncapi.yaml'],
   'config-design': ['config-catalog.yaml', 'config-matrix.md'],
   'data-design': ['schema.sql', 'er.md', 'migration-plan.md'],
@@ -351,14 +351,21 @@ export function ProjectDetail() {
 
   const getExpertDisplayName = (expert: ExpertResourceSummary) => {
     const isZh = i18n.language.toLowerCase().startsWith('zh');
-    const locale = isZh ? 'zh' : 'en';
-    const localeKey = `experts.${expert.id}.name`;
-    const localeName = t(localeKey, { lng: locale, defaultValue: '' });
-    const localizedFromI18n = localeName && localeName !== localeKey ? localeName : '';
     if (isZh) {
-      return expert.name_zh || localizedFromI18n || expert.name_en || expert.name || expert.id;
+      return expert.name_zh || expert.name_en || expert.name || expert.id;
     }
-    return expert.name_en || localizedFromI18n || expert.name || expert.name_zh || expert.id;
+    return expert.name_en || expert.name || expert.name_zh || expert.id;
+  };
+
+  const getWorkflowNodeDisplayName = (nodeId: string) => {
+    if (nodeId === 'planner') {
+      return t('projectDetail.planner') || 'Planner';
+    }
+    const expert = resourceSummary.experts.find((item) => item.id === nodeId);
+    if (expert) {
+      return getExpertDisplayName(expert);
+    }
+    return nodeId;
   };
 
   const loadProjectModels = async () => {
@@ -1167,7 +1174,7 @@ export function ProjectDetail() {
     if (nonPlannerTasks.length > 0) {
       nonPlannerTasks.forEach((task) => {
         const nodeId = toNodeId(task.agent_type);
-        const label = t(`agents.${task.agent_type}`);
+        const label = getWorkflowNodeDisplayName(task.agent_type);
         lines.push(`${nodeId}["${label}"]`);
       });
 
@@ -1193,7 +1200,7 @@ export function ProjectDetail() {
       // Preview mode: use configured dependencies instead of linear order
       selectedPipeline.forEach((agentId) => {
         const nodeId = toNodeId(agentId);
-        const label = t(`agents.${agentId}`);
+        const label = getWorkflowNodeDisplayName(agentId);
         lines.push(`${nodeId}["${label}"]`);
       });
 

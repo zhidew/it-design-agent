@@ -9,6 +9,7 @@ import {
   Sparkles,
   XCircle,
 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { apiClient } from '../api';
 
 export type NodeStatus = 'todo' | 'running' | 'waiting_human' | 'success' | 'failed' | 'skipped' | 'idle';
@@ -34,6 +35,11 @@ interface TaskKanbanProps {
   showPlannedStages?: boolean;
 }
 
+interface PhaseOrchestrationPayload {
+  phases: Array<{ id: string; label: string; agents?: string[]; experts?: string[] }>;
+  experts: Array<{ id: string; name: string; name_zh?: string | null; name_en?: string | null }>;
+}
+
 /** Minimum width per pipeline column (px) */
 const COLUMN_MIN_WIDTH = 140;
 
@@ -49,18 +55,29 @@ const TaskKanbanComponent: React.FC<TaskKanbanProps> = ({
   isInitializing,
   showPlannedStages = false,
 }) => {
+  const { i18n } = useTranslation();
   // ---------- Dynamic phase stages from backend API ----------
   const [phaseLabels, setPhaseLabels] = useState<Record<string, string>>({});
   const [allStages, setAllStages] = useState<Array<{ id: string; agents: string[] }>>([]);
+  const [expertNames, setExpertNames] = useState<Record<string, { name: string; name_zh?: string | null; name_en?: string | null }>>({});
 
   useEffect(() => {
     apiClient
-      .get('/expert-center/phases', { params: { executable_only: true } })
+      .get<PhaseOrchestrationPayload>('/expert-center/phase-orchestration')
       .then((res) => {
         const labelMap: Record<string, string> = {};
         const stages: Array<{ id: string; agents: string[] }> = [];
-        for (const p of res.data) {
-          const agents = Array.isArray(p.agents) ? [...p.agents] : [];
+        const names: Record<string, { name: string; name_zh?: string | null; name_en?: string | null }> = {};
+        for (const expert of res.data.experts || []) {
+          names[expert.id] = {
+            name: expert.name,
+            name_zh: expert.name_zh,
+            name_en: expert.name_en,
+          };
+        }
+        for (const p of res.data.phases || []) {
+          const rawAgents = Array.isArray(p.agents) ? p.agents : p.experts;
+          const agents = Array.isArray(rawAgents) ? [...rawAgents] : [];
           if (p.id === 'PLANNING' && !agents.includes('planner')) {
             agents.unshift('planner');
           }
@@ -72,14 +89,33 @@ const TaskKanbanComponent: React.FC<TaskKanbanProps> = ({
         }
         setPhaseLabels(labelMap);
         setAllStages(stages);
+        setExpertNames(names);
       })
       .catch(() => {});
   }, []);
 
   /** Resolve phase display label: prefer API-fetched label, fallback to i18n key */
   const getPhaseLabel = useCallback(
-    (phaseId: string) => phaseLabels[phaseId] || t(`stages.${phaseId}`) || phaseId,
-    [phaseLabels, t],
+    (phaseId: string) => phaseLabels[phaseId] || phaseId,
+    [phaseLabels],
+  );
+
+  const getNodeLabel = useCallback(
+    (nodeId: string) => {
+      if (nodeId === 'planner') {
+        return t('projectDetail.planner') || 'Planner';
+      }
+      const expert = expertNames[nodeId];
+      const isZh = i18n.language.toLowerCase().startsWith('zh');
+      if (!expert) {
+        return nodeId;
+      }
+      if (isZh) {
+        return expert.name_zh || expert.name_en || expert.name || nodeId;
+      }
+      return expert.name_en || expert.name || expert.name_zh || nodeId;
+    },
+    [expertNames, i18n.language, t],
   );
 
   // ---------- Horizontal drag-scroll refs & state ----------
@@ -303,7 +339,7 @@ const TaskKanbanComponent: React.FC<TaskKanbanProps> = ({
         <Sparkles size={14} className="relative text-indigo-500 animate-pulse" />
       </div>
       <span className="text-[9px] font-black uppercase tracking-tight text-center leading-tight text-indigo-400 animate-pulse">
-        {t('stages.initializing') || 'Initializing...'}
+        {t('pipeline.initializing') || 'Initializing...'}
       </span>
     </div>
   );
@@ -329,7 +365,7 @@ const TaskKanbanComponent: React.FC<TaskKanbanProps> = ({
         <LucideLoader size={14} className="relative text-gray-400 animate-spin" />
       </div>
       <span className="text-[9px] font-black uppercase tracking-tight text-center leading-tight text-gray-400 animate-pulse">
-        {t('stages.waiting') || 'Waiting...'}
+        {t('pipeline.waiting') || 'Waiting...'}
       </span>
     </div>
   );
@@ -460,7 +496,7 @@ const TaskKanbanComponent: React.FC<TaskKanbanProps> = ({
                           className="flex items-center gap-2 w-full p-2.5 rounded-xl border border-dashed border-gray-100 bg-white/40 text-gray-300 text-[9px] uppercase tracking-tighter font-black"
                         >
                           <Circle size={10} className="opacity-30" />
-                          <span className="truncate">{t(`agents.${agentId}`)}</span>
+                          <span className="truncate">{getNodeLabel(agentId)}</span>
                         </div>
                       ))}
                     </div>
@@ -480,13 +516,13 @@ const TaskKanbanComponent: React.FC<TaskKanbanProps> = ({
                     }`}
                   style={{ width: COLUMN_MIN_WIDTH }}
                 >
-                  <div className="flex flex-col gap-1.5">
-                    {stageAgentsInQueue.map((agentId) => {
-                      const isLoading = agentId === 'planner' && (showInitMode || !hasConfirmedPipeline);
-                      return renderNode(agentId, t(`agents.${agentId}`), isActive, isLoading);
-                    })}
+                    <div className="flex flex-col gap-1.5">
+                      {stageAgentsInQueue.map((agentId) => {
+                        const isLoading = agentId === 'planner' && (showInitMode || !hasConfirmedPipeline);
+                        return renderNode(agentId, getNodeLabel(agentId), isActive, isLoading);
+                      })}
+                    </div>
                   </div>
-                </div>
               );
             })}
 

@@ -250,7 +250,7 @@ tools:
       - "分析现有代码"
       - "参考已有实现"
     recommended_for:
-      - "architecture-mapping"
+      - "modular-design"
       - "api-design"
       - "integration-design"
 
@@ -276,7 +276,7 @@ tools:
       - "分析代码架构"
       - "理解模块结构"
     recommended_for:
-      - "architecture-mapping"
+      - "modular-design"
       - "ddd-structure"
 
   - name: extract_lookup_values
