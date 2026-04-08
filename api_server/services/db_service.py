@@ -1387,6 +1387,8 @@ class MetadataDB:
             "name_en": payload.get("name_en", payload.get("name", payload["id"])),
             "enabled": bool(payload.get("enabled", True)),
             "description": payload.get("description"),
+            "dependencies": list(payload.get("dependencies") or []),
+            "lifecycle_status": payload.get("lifecycle_status", "active"),
             "created_at": (existing.get("created_at") if existing and existing.get("created_at") else now),
             "updated_at": now,
         }
@@ -1425,6 +1427,8 @@ class MetadataDB:
                     "name_en": manifest.name_en or manifest.name or manifest.capability,
                     "enabled": bool(row["enabled"]) if row else False,
                     "description": row["description"] if row and row.get("description") else manifest.description,
+                    "dependencies": list(getattr(manifest, "dependencies", []) or []),
+                    "lifecycle_status": getattr(manifest, "lifecycle_status", "active"),
                     "created_at": row["created_at"] if row else None,
                     "updated_at": row["updated_at"] if row else None,
                 }
@@ -1444,6 +1448,8 @@ class MetadataDB:
                         "name_en": expert_id,
                         "enabled": bool(row["enabled"]),
                         "description": row.get("description"),
+                        "dependencies": [],
+                        "lifecycle_status": "active",
                         "created_at": row["created_at"],
                         "updated_at": row["updated_at"],
                     }
@@ -1458,7 +1464,11 @@ class MetadataDB:
         return None
 
     def list_enabled_expert_ids(self, project_id: str) -> List[str]:
-        return [expert["id"] for expert in self.list_project_experts(project_id) if expert.get("enabled")]
+        return [
+            expert["id"]
+            for expert in self.list_project_experts(project_id)
+            if expert.get("enabled") and str(expert.get("lifecycle_status") or "active").strip().lower() == "active"
+        ]
 
     def upsert_project_llm_config(self, project_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         now = self._utcnow()

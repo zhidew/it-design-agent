@@ -18,6 +18,8 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 
+NEW_EXPERT_LIFECYCLE_STATUS = "draft"
+
 
 class ToolRegistry:
     """System tool registry manager."""
@@ -265,6 +267,10 @@ class ExpertGenerator:
             outputs["evidence"] = [f"{expert_id}.json"]
             enriched = True
         profile["outputs"] = outputs
+
+        if profile.get("lifecycle_status") != NEW_EXPERT_LIFECYCLE_STATUS:
+            profile["lifecycle_status"] = NEW_EXPERT_LIFECYCLE_STATUS
+            enriched = True
         
         if enriched:
             return yaml.safe_dump(profile, allow_unicode=True, sort_keys=False)
@@ -528,6 +534,7 @@ Return each file in a code block with the filename as header.
         profile["name_en"] = str(profile.get("name_en") or normalized_en)
         profile["name_zh"] = str(profile.get("name_zh") or normalized_zh)
         profile["capability"] = str(profile.get("capability") or expert_id)
+        profile["lifecycle_status"] = NEW_EXPERT_LIFECYCLE_STATUS
 
         return yaml.safe_dump(profile, allow_unicode=True, sort_keys=False)
 
@@ -547,6 +554,19 @@ Return each file in a code block with the filename as header.
 
         return yaml.safe_dump(profile, allow_unicode=True, sort_keys=False)
 
+    @staticmethod
+    def _inject_lifecycle_status(profile_yaml: str, lifecycle_status: str) -> str:
+        try:
+            profile = yaml.safe_load(profile_yaml) or {}
+        except Exception:
+            profile = {}
+
+        if not isinstance(profile, dict):
+            profile = {}
+
+        profile["lifecycle_status"] = str(lifecycle_status or NEW_EXPERT_LIFECYCLE_STATUS).strip().lower() or NEW_EXPERT_LIFECYCLE_STATUS
+        return yaml.safe_dump(profile, allow_unicode=True, sort_keys=False)
+
     def _generate_fallback_content(self, expert_id: str, name: str, description: str, *, name_zh: str = "", name_en: str = "") -> Dict[str, Any]:
         """Generate fallback content when LLM fails."""
         
@@ -564,6 +584,7 @@ name_zh: {name_zh}
 capability: {expert_id}
 description: "{description}"
 version: 0.1.0
+lifecycle_status: {NEW_EXPERT_LIFECYCLE_STATUS}
 skills:
   - {expert_id}
 inputs:
@@ -865,6 +886,7 @@ keywords: {json.dumps(domain_keywords)}
             # Inject scheduling.phase if provided
             if phase:
                 profile_content = self._inject_phase(profile_content, phase)
+            profile_content = self._inject_lifecycle_status(profile_content, NEW_EXPERT_LIFECYCLE_STATUS)
 
         if profile_content:
             profile_path.write_text(profile_content, encoding="utf-8")

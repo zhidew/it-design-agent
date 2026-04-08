@@ -5,70 +5,70 @@ capability: api-design
 description: 负责同步 API 契约、请求响应结构、错误模型与枚举规范设计，确保接口定义一致、可演进且可验证。
 version: 0.1.2
 skills:
-  - api-design
+- api-design
 keywords:
-  - 接口设计
-  - API
-  - OpenAPI
-  - 错误模型
-  - 枚举规范
+- 接口设计
+- API
+- OpenAPI
+- 错误模型
+- 枚举规范
 inputs:
   required:
-    - requirements
-    - existing_assets
-    - output_root
+  - requirements
+  - existing_assets
+  - output_root
   optional:
-    - constraints
-    - context
-    - audience
+  - constraints
+  - context
+  - audience
 scheduling:
   priority: 70
   dependencies:
-    - modular-design
-    - data-design
-    - ddd-structure
+  - modular-design
+  - data-design
+  - ddd-structure
 upstream_artifacts:
   modular-design:
-    - architecture.md
-    - module-map.json
+  - architecture.md
+  - module-map.json
   data-design:
-    - schema.sql
-    - er.md
-    - migration-plan.md
+  - schema.sql
+  - er.md
+  - migration-plan.md
   ddd-structure:
-    - class-diagram.md
-    - ddd-structure.md
-    - context-map.md
+  - class-diagram.md
+  - ddd-structure.md
+  - context-map.md
 tools:
   allowed:
-    - clone_repository
-    - query_database
-    - query_knowledge_base
-    - write_file
-    - patch_file
+  - clone_repository
+  - query_database
+  - query_knowledge_base
+  - write_file
+  - patch_file
 outputs:
   expected:
-    - api-design.md
-    - errors-rfc9457.json
+  - api-design.md
+  - errors-rfc9457.json
   evidence:
-    - api-design.json
+  - api-design.json
   conditional:
-    - when: audience in [internal, both]
-      path: api-internal.yaml
-    - when: audience in [external, both]
-      path: api-public.yaml
+  - when: audience in [internal, both]
+    path: api-internal.yaml
+  - when: audience in [external, both]
+    path: api-public.yaml
 metadata:
   boundary_contract:
     owns:
-      - synchronous API contracts and error models
+    - synchronous API contracts and error models
     excludes:
-      - detailed async event contracts
-      - schema/index redesign
-      - ops runbooks and test inventory
+    - detailed async event contracts
+    - schema/index redesign
+    - ops runbooks and test inventory
     upstream_inputs:
-      - modular-design
-      - data-design
-      - ddd-structure
+    - modular-design
+    - data-design
+    - ddd-structure
 policies:
   asset_baseline_required: true
   evidence_required: true
@@ -79,3 +79,4 @@ error_handling:
   on_missing_required_input: fail
   on_validation_failure: fail
   on_partial_generation: emit_evidence_and_fail
+lifecycle_status: active

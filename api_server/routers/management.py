@@ -42,6 +42,10 @@ class ExpertUpdateRequest(BaseModel):
     profile_yaml: str
 
 
+class ExpertStatusUpdateRequest(BaseModel):
+    lifecycle_status: str
+
+
 class ExpertCreateRequest(BaseModel):
     expert_id: str
     name: str = ""
@@ -80,7 +84,10 @@ async def get_agent(agent_id: str):
 
 @management_router.post("/agents/{agent_id}")
 async def update_agent(agent_id: str, req: AgentUpdateRequest):
-    success = orch.update_agent(agent_id, req.config_yaml)
+    try:
+        success = orch.update_agent(agent_id, req.config_yaml)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
     if not success:
         raise HTTPException(status_code=400, detail="Failed to update agent")
     return {"status": "success", "message": f"Agent {agent_id} updated."}
@@ -224,10 +231,24 @@ async def get_expert(expert_id: str):
 
 @expert_center_router.put("/experts/{expert_id}")
 async def update_expert(expert_id: str, req: ExpertUpdateRequest):
-    success = orch.update_expert(expert_id, req.profile_yaml)
+    try:
+        success = orch.update_expert(expert_id, req.profile_yaml)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
     if not success:
         raise HTTPException(status_code=400, detail="Failed to update expert profile")
     return {"status": "success", "message": f"Expert {expert_id} updated."}
+
+
+@expert_center_router.put("/experts/{expert_id}/status", response_model=ExpertMetadata)
+async def update_expert_status(expert_id: str, req: ExpertStatusUpdateRequest):
+    try:
+        expert = orch.update_expert_lifecycle_status(expert_id, req.lifecycle_status)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    if not expert:
+        raise HTTPException(status_code=404, detail="Expert not found")
+    return expert
 
 
 @expert_center_router.delete("/experts/{expert_id}")
@@ -253,7 +274,10 @@ async def get_file_content(path: str):
 
 @expert_center_router.put("/files/{path:path}/content")
 async def update_file_content(path: str, req: FileContentUpdateRequest):
-    success = orch.update_file_content(path, req.content)
+    try:
+        success = orch.update_file_content(path, req.content)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
     if not success:
         raise HTTPException(status_code=400, detail="Failed to update file content")
     return {"status": "success", "message": f"File {path} updated."}

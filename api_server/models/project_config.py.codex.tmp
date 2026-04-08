@@ -84,7 +84,6 @@ class ExpertConfig(BaseModel):
     name_en: Optional[str] = None
     enabled: bool = True
     description: Optional[str] = None
-    dependencies: List[str] = Field(default_factory=list)
     lifecycle_status: str = "active"
 
 

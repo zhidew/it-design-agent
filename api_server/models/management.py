@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Any, List, Optional, Dict
 
 class AgentVersion(BaseModel):
@@ -51,6 +51,7 @@ class ExpertMetadata(BaseModel):
     name_en: Optional[str] = None
     description: Optional[str] = None
     expertise: List[str] = []
+    lifecycle_status: str = "active"
     profile_path: str
     skill_path: Optional[str] = None
     current_profile: str
@@ -89,12 +90,29 @@ class ExpertDependencyFinding(BaseModel):
     details: Dict[str, Any] = {}
 
 
+class ExpertImpactOverlap(BaseModel):
+    related_expert_id: str
+    shared_outputs: List[str] = Field(default_factory=list)
+    shared_boundary_owns: List[str] = Field(default_factory=list)
+
+
+class ExpertReverseImpact(BaseModel):
+    expert_id: str
+    direct_downstream_expert_ids: List[str] = Field(default_factory=list)
+    all_downstream_expert_ids: List[str] = Field(default_factory=list)
+    artifact_consumer_expert_ids: List[str] = Field(default_factory=list)
+    output_overlap: List[ExpertImpactOverlap] = Field(default_factory=list)
+    boundary_overlap: List[ExpertImpactOverlap] = Field(default_factory=list)
+    review_required: bool = False
+
+
 class ExpertDependencyValidationResponse(BaseModel):
     ok: bool
     expert_count: int
     dependency_edges: int
     summary: Dict[str, int]
-    findings: List[ExpertDependencyFinding] = []
+    expert_impacts: List[ExpertReverseImpact] = Field(default_factory=list)
+    findings: List[ExpertDependencyFinding] = Field(default_factory=list)
 
 
 class PhaseExpertOption(BaseModel):

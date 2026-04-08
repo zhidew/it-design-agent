@@ -7,6 +7,7 @@ name_zh: {{ expert_name_zh | default('') }}
 capability: {{ expert_id }}
 description: "{{ description }}"
 version: 0.1.0
+lifecycle_status: {{ lifecycle_status | default("draft") }}
 skills:
   - {{ expert_id }}
 inputs:

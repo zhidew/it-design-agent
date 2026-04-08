@@ -47,6 +47,37 @@ def _contains_cjk(value: str) -> bool:
     return bool(re.search(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]", value or ""))
 
 
+EXPERT_LIFECYCLE_DRAFT = "draft"
+EXPERT_LIFECYCLE_BOUNDARY_CONFIRMED = "boundary_confirmed"
+EXPERT_LIFECYCLE_DEPENDENCY_REVIEWED = "dependency_reviewed"
+EXPERT_LIFECYCLE_CANARY_PASSED = "canary_passed"
+EXPERT_LIFECYCLE_ACTIVE = "active"
+EXPERT_LIFECYCLE_STATUSES = (
+    EXPERT_LIFECYCLE_DRAFT,
+    EXPERT_LIFECYCLE_BOUNDARY_CONFIRMED,
+    EXPERT_LIFECYCLE_DEPENDENCY_REVIEWED,
+    EXPERT_LIFECYCLE_CANARY_PASSED,
+    EXPERT_LIFECYCLE_ACTIVE,
+)
+DEFAULT_EXPERT_LIFECYCLE_STATUS = EXPERT_LIFECYCLE_ACTIVE
+NEW_EXPERT_DEFAULT_LIFECYCLE_STATUS = EXPERT_LIFECYCLE_DRAFT
+
+
+def normalize_expert_lifecycle_status(
+    value: Any,
+    *,
+    default: str = DEFAULT_EXPERT_LIFECYCLE_STATUS,
+) -> str:
+    normalized_default = str(default or DEFAULT_EXPERT_LIFECYCLE_STATUS).strip().lower()
+    if normalized_default not in EXPERT_LIFECYCLE_STATUSES:
+        normalized_default = DEFAULT_EXPERT_LIFECYCLE_STATUS
+
+    normalized = str(value or "").strip().lower()
+    if normalized in EXPERT_LIFECYCLE_STATUSES:
+        return normalized
+    return normalized_default
+
+
 @dataclass
 class ExpertProfile:
     """Lightweight expert metadata used for discovery and routing."""
@@ -66,8 +97,11 @@ class ExpertProfile:
     dependencies: List[str] = field(default_factory=list)
     upstream_artifacts: Dict[str, List[str]] = field(default_factory=dict)
     boundary_upstream_inputs: List[str] = field(default_factory=list)
+    boundary_owns: List[str] = field(default_factory=list)
+    boundary_excludes: List[str] = field(default_factory=list)
     priority: int = 50
     phase: str = ""  # Explicit phase declaration from scheduling.phase (e.g. "ARCHITECTURE")
+    lifecycle_status: str = DEFAULT_EXPERT_LIFECYCLE_STATUS
 
     @property
     def expertise(self) -> List[str]:
@@ -294,9 +328,11 @@ class ExpertRegistry:
         if not phase:
             phase = str(scheduling.get("phase", "")).strip().upper() if scheduling.get("phase") else ""
         upstream_artifacts = _normalize_artifact_mapping(data.get("upstream_artifacts", {}))
-        boundary_upstream_inputs = _ensure_list(
-            data.get("metadata", {}).get("boundary_contract", {}).get("upstream_inputs", [])
-        )
+        boundary_contract = data.get("metadata", {}).get("boundary_contract", {})
+        boundary_upstream_inputs = _ensure_list(boundary_contract.get("upstream_inputs", []))
+        boundary_owns = _ensure_list(boundary_contract.get("owns", []))
+        boundary_excludes = _ensure_list(boundary_contract.get("excludes", []))
+        lifecycle_status = normalize_expert_lifecycle_status(data.get("lifecycle_status"))
 
         return ExpertProfile(
             capability=capability,
@@ -313,8 +349,11 @@ class ExpertRegistry:
             dependencies=list(dependencies),
             upstream_artifacts=upstream_artifacts,
             boundary_upstream_inputs=boundary_upstream_inputs,
+            boundary_owns=boundary_owns,
+            boundary_excludes=boundary_excludes,
             priority=int(priority),
             phase=phase,
+            lifecycle_status=lifecycle_status,
         )
 
     def get_all_manifests(self) -> List[ExpertProfile]:
@@ -614,14 +653,146 @@ class ExpertRegistry:
             if visit_state.get(capability, 0) == 0:
                 walk(capability)
 
+        reverse_graph: Dict[str, Set[str]] = {
+            capability: set()
+            for capability in manifests
+        }
+        artifact_consumers: Dict[str, Set[str]] = {
+            capability: set()
+            for capability in manifests
+        }
+        for capability, manifest in manifests.items():
+            for dependency in manifest.dependencies:
+                if dependency in manifests and dependency != capability:
+                    reverse_graph.setdefault(dependency, set()).add(capability)
+            for upstream_id in manifest.upstream_artifacts:
+                if upstream_id in manifests and upstream_id != capability:
+                    artifact_consumers.setdefault(upstream_id, set()).add(capability)
+
+        output_overlap_by_expert: Dict[str, Dict[str, Set[str]]] = {
+            capability: {}
+            for capability in manifests
+        }
         for output_name, owners in sorted(output_owners.items()):
-            if len(owners) > 1:
+            unique_owners = sorted(set(owners))
+            if len(unique_owners) < 2:
+                continue
+            for index, owner in enumerate(unique_owners):
+                for peer in unique_owners[index + 1:]:
+                    owner_overlap = output_overlap_by_expert.setdefault(owner, {})
+                    owner_overlap.setdefault(peer, set()).add(output_name)
+                    peer_overlap = output_overlap_by_expert.setdefault(peer, {})
+                    peer_overlap.setdefault(owner, set()).add(output_name)
+                    add_finding(
+                        "warning",
+                        "DUPLICATE_EXPECTED_OUTPUT",
+                        "Experts declare overlapping expected output file names.",
+                        expert_id=owner,
+                        related_expert_id=peer,
+                        details={"outputs": sorted(owner_overlap[peer])},
+                    )
+
+        boundary_overlap_by_expert: Dict[str, Dict[str, Set[str]]] = {
+            capability: {}
+            for capability in manifests
+        }
+        normalized_boundary_owns = {
+            capability: {
+                item.strip().lower(): item.strip()
+                for item in manifest.boundary_owns
+                if item.strip()
+            }
+            for capability, manifest in manifests.items()
+        }
+        capabilities = sorted(manifests)
+        for index, capability in enumerate(capabilities):
+            for peer in capabilities[index + 1:]:
+                shared_keys = sorted(
+                    set(normalized_boundary_owns.get(capability, {}))
+                    .intersection(normalized_boundary_owns.get(peer, {}))
+                )
+                if not shared_keys:
+                    continue
+                shared_items = [
+                    normalized_boundary_owns.get(capability, {}).get(key)
+                    or normalized_boundary_owns.get(peer, {}).get(key)
+                    or key
+                    for key in shared_keys
+                ]
+                capability_overlap = boundary_overlap_by_expert.setdefault(capability, {})
+                capability_overlap.setdefault(peer, set()).update(shared_items)
+                peer_overlap = boundary_overlap_by_expert.setdefault(peer, {})
+                peer_overlap.setdefault(capability, set()).update(shared_items)
                 add_finding(
                     "warning",
-                    "DUPLICATE_EXPECTED_OUTPUT",
-                    "Multiple experts declare the same expected output file name.",
-                    details={"output": output_name, "owners": owners},
+                    "BOUNDARY_OWNERSHIP_OVERLAP",
+                    "Experts declare overlapping boundary ownership items.",
+                    expert_id=capability,
+                    related_expert_id=peer,
+                    details={"shared_boundary_owns": sorted(shared_items)},
                 )
+
+        all_downstream_cache: Dict[str, List[str]] = {}
+
+        def collect_all_downstream(expert_id: str) -> List[str]:
+            if expert_id in all_downstream_cache:
+                return list(all_downstream_cache[expert_id])
+
+            visited: Set[str] = set()
+            pending = list(sorted(reverse_graph.get(expert_id, set())))
+            while pending:
+                current = pending.pop(0)
+                if current in visited:
+                    continue
+                visited.add(current)
+                for downstream in sorted(reverse_graph.get(current, set())):
+                    if downstream not in visited:
+                        pending.append(downstream)
+
+            ordered = sorted(visited)
+            all_downstream_cache[expert_id] = ordered
+            return list(ordered)
+
+        expert_impacts = []
+        for capability in sorted(manifests):
+            direct_downstream = sorted(reverse_graph.get(capability, set()))
+            all_downstream = collect_all_downstream(capability)
+            artifact_consumer_ids = sorted(artifact_consumers.get(capability, set()))
+            output_overlap = [
+                {
+                    "related_expert_id": peer,
+                    "shared_outputs": sorted(shared_outputs),
+                    "shared_boundary_owns": [],
+                }
+                for peer, shared_outputs in sorted(output_overlap_by_expert.get(capability, {}).items())
+                if shared_outputs
+            ]
+            boundary_overlap = [
+                {
+                    "related_expert_id": peer,
+                    "shared_outputs": [],
+                    "shared_boundary_owns": sorted(shared_items),
+                }
+                for peer, shared_items in sorted(boundary_overlap_by_expert.get(capability, {}).items())
+                if shared_items
+            ]
+            review_required = bool(
+                direct_downstream
+                or artifact_consumer_ids
+                or output_overlap
+                or boundary_overlap
+            )
+            expert_impacts.append(
+                {
+                    "expert_id": capability,
+                    "direct_downstream_expert_ids": direct_downstream,
+                    "all_downstream_expert_ids": all_downstream,
+                    "artifact_consumer_expert_ids": artifact_consumer_ids,
+                    "output_overlap": output_overlap,
+                    "boundary_overlap": boundary_overlap,
+                    "review_required": review_required,
+                }
+            )
 
         # --- Phase dependency validation ---
         # Build a phase map: expert_id -> phase for all schedulable experts.
@@ -709,6 +880,7 @@ class ExpertRegistry:
             "expert_count": schedulable_count,
             "dependency_edges": dependency_edges,
             "summary": summary,
+            "expert_impacts": expert_impacts,
             "findings": findings,
         }
 

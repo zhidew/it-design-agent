@@ -6,6 +6,12 @@ import { api, type DebugConfig } from '../api';
 import { LanguageSwitcher } from './LanguageSwitcher';
 
 type TabKey = 'repositories' | 'databases' | 'knowledge' | 'experts' | 'llm' | 'danger';
+type ExpertLifecycleStatus =
+  | 'draft'
+  | 'boundary_confirmed'
+  | 'dependency_reviewed'
+  | 'canary_passed'
+  | 'active';
 
 interface AssetsSummary {
   exists: boolean;
@@ -73,10 +79,23 @@ interface ExpertConfig {
   name_en?: string | null;
   enabled: boolean;
   description?: string;
+  dependencies?: string[];
   phase?: string | null;
+  lifecycle_status?: string | null;
+}
+
+interface PhaseItem {
+  id: string;
+  label?: string;
+  label_zh?: string;
+  label_en?: string;
+  executable?: boolean;
+  order?: number;
+  experts?: string[];
 }
 
 interface PhaseOrchestrationPayload {
+  phases?: PhaseItem[];
   experts?: Array<{
     id: string;
     phase?: string | null;
@@ -144,6 +163,14 @@ const createKnowledgeBase = (): KnowledgeBaseConfig => ({
   description: '',
 });
 
+const LIFECYCLE_STATUS_ORDER: ExpertLifecycleStatus[] = [
+  'draft',
+  'boundary_confirmed',
+  'dependency_reviewed',
+  'canary_passed',
+  'active',
+];
+
 function splitMultiline(value: string): string[] {
   return value
     .split(/\r?\n|,/)
@@ -174,6 +201,136 @@ function extractApiErrorDetail(error: unknown): string {
   const response = (error as { response?: { data?: { detail?: unknown } } }).response;
   const detail = response?.data?.detail;
   return typeof detail === 'string' ? detail : '';
+}
+
+function normalizeLifecycleStatus(status?: string | null): ExpertLifecycleStatus {
+  const normalized = String(status || 'active').trim().toLowerCase();
+  return (LIFECYCLE_STATUS_ORDER as string[]).includes(normalized)
+    ? (normalized as ExpertLifecycleStatus)
+    : 'active';
+}
+
+function normalizeExpertDependencies(dependencies?: string[] | null): string[] {
+  const seen = new Set<string>();
+  return (dependencies || [])
+    .map((dependencyId) => String(dependencyId || '').trim())
+    .filter((dependencyId) => {
+      if (!dependencyId || seen.has(dependencyId)) {
+        return false;
+      }
+      seen.add(dependencyId);
+      return true;
+    });
+}
+
+function buildExpertDependencyClosure(experts: ExpertConfig[]): Map<string, string[]> {
+  const expertMap = new Map(experts.map((expert) => [expert.id, expert]));
+  const cache = new Map<string, string[]>();
+
+  const visit = (expertId: string, trail = new Set<string>()): string[] => {
+    const cached = cache.get(expertId);
+    if (cached) {
+      return cached;
+    }
+
+    const nextTrail = new Set(trail);
+    nextTrail.add(expertId);
+    const seen = new Set<string>();
+    const collected: string[] = [];
+
+    normalizeExpertDependencies(expertMap.get(expertId)?.dependencies)
+      .filter((dependencyId) => dependencyId !== expertId && expertMap.has(dependencyId))
+      .forEach((dependencyId) => {
+        if (nextTrail.has(dependencyId) || seen.has(dependencyId)) {
+          return;
+        }
+
+        seen.add(dependencyId);
+        collected.push(dependencyId);
+        visit(dependencyId, nextTrail).forEach((nestedId) => {
+          if (nestedId === expertId || seen.has(nestedId)) {
+            return;
+          }
+          seen.add(nestedId);
+          collected.push(nestedId);
+        });
+      });
+
+    cache.set(expertId, collected);
+    return collected;
+  };
+
+  experts.forEach((expert) => {
+    visit(expert.id);
+  });
+
+  return cache;
+}
+
+function sortExpertIdsByDependencies(
+  expertIds: string[],
+  expertMap: Map<string, ExpertConfig>,
+  orderMap: Map<string, number>,
+): string[] {
+  const selectedIds = new Set(expertIds);
+  const inDegree = new Map<string, number>();
+  const downstreamMap = new Map<string, string[]>();
+  const compareIds = (left: string, right: string) =>
+    (orderMap.get(left) ?? Number.MAX_SAFE_INTEGER) - (orderMap.get(right) ?? Number.MAX_SAFE_INTEGER)
+    || left.localeCompare(right);
+
+  expertIds.forEach((expertId) => {
+    inDegree.set(expertId, 0);
+    downstreamMap.set(expertId, []);
+  });
+
+  expertIds.forEach((expertId) => {
+    const expert = expertMap.get(expertId);
+    if (!expert) {
+      return;
+    }
+
+    normalizeExpertDependencies(expert.dependencies)
+      .filter((dependencyId) => dependencyId !== expertId && selectedIds.has(dependencyId))
+      .forEach((dependencyId) => {
+        inDegree.set(expertId, (inDegree.get(expertId) || 0) + 1);
+        downstreamMap.set(dependencyId, [...(downstreamMap.get(dependencyId) || []), expertId]);
+      });
+  });
+
+  const queue = expertIds
+    .filter((expertId) => (inDegree.get(expertId) || 0) === 0)
+    .sort(compareIds);
+  const orderedIds: string[] = [];
+
+  while (queue.length > 0) {
+    const expertId = queue.shift();
+    if (!expertId) {
+      break;
+    }
+
+    orderedIds.push(expertId);
+    (downstreamMap.get(expertId) || [])
+      .sort(compareIds)
+      .forEach((downstreamId) => {
+        const nextInDegree = (inDegree.get(downstreamId) || 0) - 1;
+        inDegree.set(downstreamId, nextInDegree);
+        if (nextInDegree === 0) {
+          queue.push(downstreamId);
+          queue.sort(compareIds);
+        }
+      });
+  }
+
+  if (orderedIds.length === expertIds.length) {
+    return orderedIds;
+  }
+
+  const orderedSet = new Set(orderedIds);
+  return [
+    ...orderedIds,
+    ...expertIds.filter((expertId) => !orderedSet.has(expertId)).sort(compareIds),
+  ];
 }
 
 function normalizeModelPayload(model: ModelConfig) {
@@ -235,6 +392,7 @@ export function ProjectConfig() {
   const [databases, setDatabases] = useState<DatabaseConfig[]>([]);
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseConfig[]>([]);
   const [experts, setExperts] = useState<ExpertConfig[]>([]);
+  const [expertPhases, setExpertPhases] = useState<PhaseItem[]>([]);
   const [models, setModels] = useState<ModelConfig[]>([]);
   const [debugConfig, setDebugConfig] = useState<DebugConfig>({
     llm_interaction_logging_enabled: false,
@@ -270,7 +428,11 @@ export function ProjectConfig() {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [expertNotice, setExpertNotice] = useState<{ type: 'warning' | 'error'; text: string } | null>(null);
+  const [savedExpertEnabledMap, setSavedExpertEnabledMap] = useState<Record<string, boolean>>({});
   const isZh = i18n.language.toLowerCase().startsWith('zh');
+  const expertDescription = isZh
+    ? '控制当前项目允许哪些专家参与编排。只有已归属 phase、生命周期为 Active，且所需上游专家已启用的专家才能启用。'
+    : 'Control which experts the planner can schedule for this project. Only experts with a phase assignment, Active lifecycle status, and enabled upstream dependencies can be enabled.';
 
   const testModelConfig = async () => {
     if (!projectId || !editingModel) return;
@@ -345,7 +507,7 @@ export function ProjectConfig() {
       disabled: isZh ? '未启用' : 'Disabled',
       description: isZh
         ? '控制当前项目允许哪些专家参与编排。只有已归属 phase 的专家才能启用。'
-        : 'Control which experts the planner can schedule for this project. Only experts with a phase assignment can be enabled.',
+        : 'Control which experts the planner can schedule for this project. Only experts with a phase assignment and Active lifecycle status can be enabled.',
       phaseMissing: isZh ? '未归属 Phase' : 'Phase Required',
       phasePrefix: isZh ? '归属 Phase' : 'Phase',
       phaseRequiredHint: isZh
@@ -365,7 +527,7 @@ export function ProjectConfig() {
       tab: pick('projectConfig.tabs.experts', fallback.tab),
       eyebrow: pick('projectConfig.experts.eyebrow', fallback.eyebrow),
       title: pick('projectConfig.experts.title', fallback.title),
-      description: pick('projectConfig.experts.description', fallback.description),
+      description: expertDescription,
       empty: pick('projectConfig.experts.empty', fallback.empty),
       enabled: pick('projectConfig.experts.enabled', fallback.enabled),
       disabled: pick('projectConfig.experts.disabled', fallback.disabled),
@@ -377,6 +539,36 @@ export function ProjectConfig() {
       saveError: pick('projectConfig.experts.saveError', fallback.saveError),
     };
   }, [i18n.language, t]);
+
+  const lifecycleText = useMemo(() => {
+    const labels: Record<ExpertLifecycleStatus, string> = isZh
+      ? {
+          draft: '草稿',
+          boundary_confirmed: '边界已确认',
+          dependency_reviewed: '依赖已评审',
+          canary_passed: '试运行通过',
+          active: '已激活',
+        }
+      : {
+          draft: 'Draft',
+          boundary_confirmed: 'Boundary Confirmed',
+          dependency_reviewed: 'Dependency Reviewed',
+          canary_passed: 'Canary Passed',
+          active: 'Active',
+        };
+
+    return {
+      prefix: isZh ? '生命周期' : 'Lifecycle',
+      blockedHint: isZh
+        ? '未达到 Active 生命周期状态的专家暂时不能启用，请先到“专家中心 > 选中专家 > Lifecycle Status”完成推进。'
+        : 'Experts that are not Active yet cannot be enabled. Promote them in "Expert Center > select the expert > Lifecycle Status" first.',
+      blockedLocation: isZh
+        ? '配置入口：专家中心 > 选中专家 > Lifecycle Status'
+        : 'Location: Expert Center > select the expert > Lifecycle Status',
+      blockedAction: isZh ? '前往专家中心' : 'Open Expert Center',
+      labels,
+    };
+  }, [isZh]);
 
   const getExpertDisplayNames = (expert: ExpertConfig) => {
     const zhName = expert.name_zh || expert.name_en || expert.name || expert.id;
@@ -391,8 +583,108 @@ export function ProjectConfig() {
     };
   };
 
+  const getLifecycleLabel = (expert: ExpertConfig) => lifecycleText.labels[normalizeLifecycleStatus(expert.lifecycle_status)];
+
+  const getLifecycleBadgeClasses = (expert: ExpertConfig) =>
+    normalizeLifecycleStatus(expert.lifecycle_status) === 'active'
+      ? 'bg-emerald-50 text-emerald-700'
+      : 'bg-amber-50 text-amber-700';
+
+  const getPhaseDisplayName = (phase: PhaseItem) => {
+    if (isZh) {
+      return phase.label_zh || phase.label || phase.id;
+    }
+    return phase.label_en || phase.label || phase.id;
+  };
+
+  const expertMap = useMemo(
+    () => new Map(experts.map((expert) => [expert.id, expert])),
+    [experts],
+  );
+
+  const expertOrderMap = useMemo(
+    () => new Map(experts.map((expert, index) => [expert.id, index])),
+    [experts],
+  );
+
+  const expertDependencyClosureMap = useMemo(
+    () => buildExpertDependencyClosure(experts),
+    [experts],
+  );
+
+  const getExpertPrimaryNameById = (expertId: string) => {
+    const dependencyExpert = expertMap.get(expertId);
+    return dependencyExpert ? getExpertDisplayNames(dependencyExpert).primary : expertId;
+  };
+
+  const getMissingDependencyIdsForEnable = (expert: ExpertConfig) =>
+    (expertDependencyClosureMap.get(expert.id) || []).filter(
+      (dependencyId) => expertMap.get(dependencyId)?.enabled !== true,
+    );
+
+  const getEnabledDependentIdsForDisable = (expert: ExpertConfig) =>
+    experts
+      .filter(
+        (item) =>
+          item.id !== expert.id
+          && item.enabled
+          && (expertDependencyClosureMap.get(item.id) || []).includes(expert.id),
+      )
+      .map((item) => item.id);
+
+  const expertGroupsByPhase = useMemo(() => {
+    const indexedExperts = experts.map((expert, index) => ({ expert, index }));
+    const indexedExpertMap = new Map(indexedExperts.map((item) => [item.expert.id, item]));
+
+    const configuredPhaseGroups = expertPhases
+      .map((phase) => {
+        const configuredItems = (phase.experts || [])
+          .map((expertId) => indexedExpertMap.get(expertId))
+          .filter((item): item is { expert: ExpertConfig; index: number } => Boolean(item));
+        const configuredIds = new Set(configuredItems.map((item) => item.expert.id));
+        const fallbackItems = indexedExperts.filter(
+          (item) => item.expert.phase?.trim() === phase.id && !configuredIds.has(item.expert.id),
+        );
+
+        return {
+          phase,
+          items: [...configuredItems, ...fallbackItems],
+        };
+      })
+      .filter((group) => group.items.length > 0);
+
+    const assignedExpertIds = new Set(
+      configuredPhaseGroups.flatMap((group) => group.items.map((item) => item.expert.id)),
+    );
+
+    const fallbackPhaseIds = Array.from(
+      new Set(
+        indexedExperts
+          .map((item) => item.expert.phase?.trim() || '')
+          .filter((phaseId) => phaseId && !expertPhases.some((phase) => phase.id === phaseId)),
+      ),
+    ).sort((left, right) => left.localeCompare(right));
+
+    const fallbackPhaseGroups = fallbackPhaseIds.map((phaseId) => ({
+      phase: { id: phaseId, label: phaseId } as PhaseItem,
+      items: indexedExperts.filter((item) => item.expert.phase?.trim() === phaseId),
+    }));
+
+    return {
+      groupedPhases: [...configuredPhaseGroups, ...fallbackPhaseGroups],
+      unassignedExperts: indexedExperts.filter(
+        (item) => !assignedExpertIds.has(item.expert.id) && !item.expert.phase?.trim(),
+      ),
+    };
+  }, [expertPhases, experts]);
+
   const expertsMissingPhase = useMemo(
     () => experts.filter((expert) => !expert.phase?.trim()),
+    [experts],
+  );
+
+  const expertsNotActive = useMemo(
+    () => experts.filter((expert) => normalizeLifecycleStatus(expert.lifecycle_status) !== 'active'),
     [experts],
   );
 
@@ -401,6 +693,30 @@ export function ProjectConfig() {
     return isZh
       ? `“${primary}” 尚未归属任何 phase，暂时不能启用。请前往“专家中心 > System Tools > Phase Orchestration”完成归属配置后再回来启用。`
       : `"${primary}" is not assigned to any phase yet, so it cannot be enabled for this project. Go to "Expert Center > System Tools > Phase Orchestration" first, then come back and enable it.`;
+  };
+
+  const buildInactiveLifecycleEnableMessage = (expert: ExpertConfig) => {
+    const { primary } = getExpertDisplayNames(expert);
+    const lifecycleLabel = getLifecycleLabel(expert);
+    return isZh
+      ? `“${primary}” 当前生命周期为“${lifecycleLabel}”，尚未达到 Active，因此暂时不能启用。请先前往“专家中心 > 选中专家 > Lifecycle Status”推进后再返回启用。`
+      : `"${primary}" is currently "${lifecycleLabel}", not Active yet, so it cannot be enabled for this project. Go to "Expert Center > select the expert > Lifecycle Status" first, then come back and enable it.`;
+  };
+
+  const buildMissingDependencyEnableMessage = (expert: ExpertConfig, missingDependencyIds: string[]) => {
+    const { primary } = getExpertDisplayNames(expert);
+    const dependencyNames = missingDependencyIds.map(getExpertPrimaryNameById).join(isZh ? '、' : ', ');
+    return isZh
+      ? `“${primary}” 依赖 ${dependencyNames}，请先在当前页面的“专家启用配置”中启用这些上游专家，再返回启用该专家。`
+      : `"${primary}" depends on ${dependencyNames}. Enable those upstream experts in this page first, then come back and enable it.`;
+  };
+
+  const buildBlockingDependencyDisableMessage = (expert: ExpertConfig, blockingExpertIds: string[]) => {
+    const { primary } = getExpertDisplayNames(expert);
+    const dependentNames = blockingExpertIds.map(getExpertPrimaryNameById).join(isZh ? '、' : ', ');
+    return isZh
+      ? `“${primary}” 仍被 ${dependentNames} 依赖，请先在当前页面停用这些下游专家，再返回停用该专家。`
+      : `"${primary}" is still required by ${dependentNames}. Disable those downstream experts in this page first, then come back and disable it.`;
   };
 
   const llmCopy = useMemo(() => {
@@ -490,7 +806,7 @@ export function ProjectConfig() {
         api.getDatabaseConfigs(projectId),
         api.getKnowledgeBaseConfigs(projectId),
         api.getExpertConfigs(projectId),
-        api.getExpertPhaseOrchestration().catch(() => ({ experts: [] } as PhaseOrchestrationPayload)),
+        api.getExpertPhaseOrchestration().catch(() => ({ experts: [], phases: [] } as PhaseOrchestrationPayload)),
         api.getProjectLlmConfig(projectId),
         api.getProjectModels(projectId),
         api.getProjectDebugConfig(projectId),
@@ -508,12 +824,19 @@ export function ProjectConfig() {
       setRepositories(repoRes.repositories || []);
       setDatabases(dbRes.databases || []);
       setKnowledgeBases(kbRes.knowledge_bases || []);
-      setExperts(
-        (expertRes.experts || []).map((expert: ExpertConfig) => ({
-          ...expert,
-          phase: phaseByExpert[expert.id] || '',
-        })),
+      setExpertPhases(
+        ((phaseRes.phases || []) as PhaseItem[])
+          .filter((phase) => phase.executable !== false)
+          .sort((left, right) => (left.order || 0) - (right.order || 0)),
       );
+      const mappedExperts: ExpertConfig[] = (expertRes.experts || []).map((expert: ExpertConfig) => ({
+        ...expert,
+        dependencies: expert.dependencies || [],
+        phase: phaseByExpert[expert.id] || '',
+        lifecycle_status: normalizeLifecycleStatus(expert.lifecycle_status),
+      }));
+      setExperts(mappedExperts);
+      setSavedExpertEnabledMap(Object.fromEntries(mappedExperts.map((expert) => [expert.id, expert.enabled])));
       setModels(modelRes.models || []);
       setDebugConfig({
         llm_interaction_logging_enabled: Boolean(debugRes.llm_interaction_logging_enabled),
@@ -642,10 +965,81 @@ export function ProjectConfig() {
       setExpertNotice({ type: 'warning', text: buildMissingPhaseEnableMessage(expert) });
       return;
     }
+    if (nextEnabled && normalizeLifecycleStatus(expert.lifecycle_status) !== 'active') {
+      setExpertNotice({ type: 'warning', text: buildInactiveLifecycleEnableMessage(expert) });
+      return;
+    }
+    if (nextEnabled) {
+      const missingDependencyIds = getMissingDependencyIdsForEnable(expert);
+      if (missingDependencyIds.length > 0) {
+        setExpertNotice({
+          type: 'warning',
+          text: buildMissingDependencyEnableMessage(expert, missingDependencyIds),
+        });
+        return;
+      }
+    }
+    if (!nextEnabled) {
+      const blockingExpertIds = getEnabledDependentIdsForDisable(expert);
+      if (blockingExpertIds.length > 0) {
+        setExpertNotice({
+          type: 'warning',
+          text: buildBlockingDependencyDisableMessage(expert, blockingExpertIds),
+        });
+        return;
+      }
+    }
 
     setExpertNotice(null);
     setIsSaved(false);
     setExperts((prev) => prev.map((item, i) => (i === index ? { ...item, enabled: nextEnabled } : item)));
+  };
+
+  const renderExpertEnableCard = (expert: ExpertConfig, index: number) => {
+    const expertNames = getExpertDisplayNames(expert);
+    return (
+      <div key={expert.id} className="rounded-xl border border-gray-200 bg-white p-3 transition-all hover:border-indigo-200 hover:shadow-sm">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex-1 min-w-0">
+            <div className="text-xs font-bold text-gray-900 truncate">{expertNames.primary}</div>
+            {expertNames.secondary && (
+              <div className="mt-1 text-[10px] font-medium text-gray-400 truncate">
+                {expertNames.secondary}
+              </div>
+            )}
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <div className={`text-[10px] font-black uppercase tracking-wider ${expert.enabled ? 'text-emerald-600' : 'text-gray-400'}`}>
+                {expert.enabled ? expertCopy.enabled : expertCopy.disabled}
+              </div>
+              <span className={`inline-flex items-center rounded-full px-2 py-1 text-[10px] font-black uppercase tracking-wider ${getLifecycleBadgeClasses(expert)}`}>
+                {lifecycleText.prefix}: {getLifecycleLabel(expert)}
+              </span>
+              {expert.phase?.trim() ? (
+                <span className="inline-flex items-center rounded-full bg-indigo-50 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-indigo-700">
+                  {expertCopy.phasePrefix}: {expert.phase}
+                </span>
+              ) : (
+                <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-amber-700">
+                  {expertCopy.phaseMissing}
+                </span>
+              )}
+            </div>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={expert.enabled}
+            aria-label={`${expertNames.primary} ${expert.enabled ? expertCopy.enabled : expertCopy.disabled}`}
+            onClick={() => handleExpertToggle(index)}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 ${expert.enabled ? 'bg-emerald-500' : 'bg-gray-300'}`}
+          >
+            <span
+              className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${expert.enabled ? 'translate-x-6' : 'translate-x-1'}`}
+            />
+          </button>
+        </div>
+      </div>
+    );
   };
 
   const saveExperts = async () => {
@@ -653,18 +1047,37 @@ export function ProjectConfig() {
     setSaving(true);
     setIsSaved(false);
     try {
-      await Promise.all(
-        experts.map((item) =>
-          api.saveExpertConfig(projectId, {
-            id: item.id,
-            name: item.name,
-            name_zh: item.name_zh,
-            name_en: item.name_en,
-            enabled: item.enabled,
-            description: item.description,
-          }),
-        ),
+      const changedExperts = experts.filter(
+        (item) => (savedExpertEnabledMap[item.id] ?? item.enabled) !== item.enabled,
       );
+      if (changedExperts.length === 0) {
+        setExpertNotice(null);
+        setIsSaved(true);
+        setTimeout(() => setIsSaved(false), 2000);
+        return;
+      }
+
+      const disableIds = changedExperts.filter((item) => !item.enabled).map((item) => item.id);
+      const enableIds = changedExperts.filter((item) => item.enabled).map((item) => item.id);
+      const orderedDisableIds = [...sortExpertIdsByDependencies(disableIds, expertMap, expertOrderMap)].reverse();
+      const orderedEnableIds = sortExpertIdsByDependencies(enableIds, expertMap, expertOrderMap);
+
+      for (const expertId of [...orderedDisableIds, ...orderedEnableIds]) {
+        const item = expertMap.get(expertId);
+        if (!item) {
+          continue;
+        }
+
+        await api.saveExpertConfig(projectId, {
+          id: item.id,
+          name: item.name,
+          name_zh: item.name_zh,
+          name_en: item.name_en,
+          enabled: item.enabled,
+          description: item.description,
+        });
+      }
+
       setExpertNotice(null);
       setIsSaved(true);
       await loadAll();
@@ -674,6 +1087,7 @@ export function ProjectConfig() {
         type: 'error',
         text: extractApiErrorDetail(error) || expertCopy.saveError,
       });
+      await loadAll();
     } finally {
       setSaving(false);
     }
@@ -1355,51 +1769,67 @@ export function ProjectConfig() {
                   </div>
                 )}
 
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                  {experts.map((expert, index) => {
-                    const expertNames = getExpertDisplayNames(expert);
-                    return (
-                      <div key={expert.id} className="rounded-xl border border-gray-200 bg-white p-3 transition-all hover:border-indigo-200 hover:shadow-sm">
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="flex-1 min-w-0">
-                            <div className="text-xs font-bold text-gray-900 truncate">{expertNames.primary}</div>
-                            {expertNames.secondary && (
-                              <div className="mt-1 text-[10px] font-medium text-gray-400 truncate">
-                                {expertNames.secondary}
-                              </div>
-                            )}
-                            <div className="mt-2 flex flex-wrap items-center gap-2">
-                              <div className={`text-[10px] font-black uppercase tracking-wider ${expert.enabled ? 'text-emerald-600' : 'text-gray-400'}`}>
-                                {expert.enabled ? expertCopy.enabled : expertCopy.disabled}
-                              </div>
-                              {expert.phase?.trim() ? (
-                                <span className="inline-flex items-center rounded-full bg-indigo-50 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-indigo-700">
-                                  {expertCopy.phasePrefix}: {expert.phase}
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-amber-700">
-                                  {expertCopy.phaseMissing}
-                                </span>
-                              )}
-                            </div>
+                {expertsNotActive.length > 0 && (
+                  <div className="rounded-2xl border border-sky-200 bg-sky-50/80 px-4 py-3">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="flex items-start gap-3">
+                        <AlertTriangle size={16} className="mt-0.5 shrink-0 text-sky-700" />
+                        <div className="min-w-0">
+                          <div className="text-sm font-semibold text-sky-900">{lifecycleText.blockedHint}</div>
+                          <div className="mt-1 text-xs text-sky-700">
+                            {isZh
+                              ? `当前有 ${expertsNotActive.length} 位专家尚未达到 Active 生命周期状态。`
+                              : `${expertsNotActive.length} experts are not Active yet.`}
                           </div>
-                          <button
-                            type="button"
-                            role="switch"
-                            aria-checked={expert.enabled}
-                            aria-label={`${expertNames.primary} ${expert.enabled ? expertCopy.enabled : expertCopy.disabled}`}
-                            onClick={() => handleExpertToggle(index)}
-                            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 ${expert.enabled ? 'bg-emerald-500' : 'bg-gray-300'}`}
-                          >
-                            <span
-                              className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${expert.enabled ? 'translate-x-6' : 'translate-x-1'}`}
-                            />
-                          </button>
+                          <div className="mt-1 text-xs text-sky-700">{lifecycleText.blockedLocation}</div>
                         </div>
                       </div>
-                    );
-                  })}
-                  {experts.length === 0 && <div className="col-span-full rounded-2xl border border-dashed border-gray-200 p-6 text-center text-sm text-gray-400">{expertCopy.empty}</div>}
+                      <Link
+                        to="/management"
+                        className="inline-flex items-center justify-center rounded-xl border border-sky-300 bg-white px-4 py-2 text-xs font-black uppercase text-sky-800 transition-all hover:border-sky-400 hover:bg-sky-100"
+                      >
+                        {lifecycleText.blockedAction}
+                      </Link>
+                    </div>
+                  </div>
+                )}
+
+                <div className="space-y-5">
+                  {expertGroupsByPhase.groupedPhases.map(({ phase, items }) => (
+                    <div key={phase.id} className="space-y-3">
+                      <div className="flex items-end justify-between gap-3 border-b border-gray-100 pb-2">
+                        <div>
+                          <div className="text-[10px] font-black uppercase tracking-widest text-gray-400">
+                            {getPhaseDisplayName(phase)}
+                          </div>
+                          <div className="mt-1 text-xs font-semibold text-gray-500">
+                            {phase.id} · {items.length}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                        {items.map(({ expert, index }) => renderExpertEnableCard(expert, index))}
+                      </div>
+                    </div>
+                  ))}
+                  {expertGroupsByPhase.unassignedExperts.length > 0 && (
+                    <div className="space-y-3">
+                      <div className="flex items-end justify-between gap-3 border-b border-amber-100 pb-2">
+                        <div>
+                          <div className="text-[10px] font-black uppercase tracking-widest text-amber-600">
+                            {expertCopy.phaseMissing}
+                          </div>
+                          <div className="mt-1 text-xs font-semibold text-amber-700">
+                            {expertGroupsByPhase.unassignedExperts.length}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                        {expertGroupsByPhase.unassignedExperts.map(({ expert, index }) => renderExpertEnableCard(expert, index))}
+                      </div>
+                    </div>
+                  )}
+                  {experts.length === 0 && <div className="rounded-2xl border border-dashed border-gray-200 p-6 text-center text-sm text-gray-400">{expertCopy.empty}</div>}
                 </div>
               </section>
             )}

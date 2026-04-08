@@ -16,7 +16,15 @@ from graphs.state import merge_artifacts
 from models.events import dump_event, validate_event_payload
 from services.log_service import get_run_log, save_run_log
 from services.db_service import metadata_db
-from registry.expert_registry import ExpertRegistry
+from registry.expert_registry import (
+    DEFAULT_EXPERT_LIFECYCLE_STATUS,
+    EXPERT_LIFECYCLE_ACTIVE,
+    EXPERT_LIFECYCLE_CANARY_PASSED,
+    EXPERT_LIFECYCLE_STATUSES,
+    ExpertRegistry,
+    NEW_EXPERT_DEFAULT_LIFECYCLE_STATUS,
+    normalize_expert_lifecycle_status,
+)
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 PROJECTS_DIR = BASE_DIR / "projects"
@@ -47,6 +55,252 @@ def _extract_localized_expert_names(config: dict) -> tuple[str, str]:
     return name_zh, name_en
 
 
+def _parse_expert_lifecycle_status(
+    value,
+    *,
+    default: str = DEFAULT_EXPERT_LIFECYCLE_STATUS,
+    strict: bool = False,
+) -> str:
+    normalized = normalize_expert_lifecycle_status(value, default=default)
+    if strict:
+        raw_value = str(value or "").strip().lower()
+        if raw_value and raw_value not in EXPERT_LIFECYCLE_STATUSES:
+            allowed = ", ".join(EXPERT_LIFECYCLE_STATUSES)
+            raise ValueError(f"Invalid lifecycle_status '{value}'. Expected one of: {allowed}")
+    return normalized
+
+
+def _get_expert_lifecycle_index(status: str) -> int:
+    return EXPERT_LIFECYCLE_STATUSES.index(_parse_expert_lifecycle_status(status))
+
+
+def _ensure_string_list(value) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str):
+        stripped = value.strip()
+        return [stripped] if stripped else []
+    return []
+
+
+def _details_reference_expert(value, expert_id: str) -> bool:
+    if isinstance(value, str):
+        normalized = value.strip()
+        return normalized == expert_id or f"'{expert_id}'" in value or f'"{expert_id}"' in value
+    if isinstance(value, dict):
+        return any(_details_reference_expert(item, expert_id) for item in value.values())
+    if isinstance(value, list):
+        return any(_details_reference_expert(item, expert_id) for item in value)
+    return False
+
+
+def _find_profile_structure_issues(profile: dict) -> list[str]:
+    issues: list[str] = []
+
+    outputs = profile.get("outputs")
+    if not isinstance(outputs, dict):
+        issues.append("outputs")
+        outputs = {}
+
+    if not _ensure_string_list(outputs.get("expected")):
+        issues.append("outputs.expected")
+    if not _ensure_string_list(outputs.get("evidence")):
+        issues.append("outputs.evidence")
+
+    metadata = profile.get("metadata")
+    if not isinstance(metadata, dict):
+        issues.extend(
+            [
+                "metadata",
+                "metadata.boundary_contract",
+                "metadata.boundary_contract.owns",
+                "metadata.boundary_contract.excludes",
+            ]
+        )
+        return issues
+
+    boundary_contract = metadata.get("boundary_contract")
+    if not isinstance(boundary_contract, dict):
+        issues.extend(
+            [
+                "metadata.boundary_contract",
+                "metadata.boundary_contract.owns",
+                "metadata.boundary_contract.excludes",
+            ]
+        )
+        return issues
+
+    if not _ensure_string_list(boundary_contract.get("owns")):
+        issues.append("metadata.boundary_contract.owns")
+    if "excludes" not in boundary_contract or not isinstance(boundary_contract.get("excludes"), list):
+        issues.append("metadata.boundary_contract.excludes")
+
+    return issues
+
+
+def _dependency_finding_involves_expert(finding: dict, expert_id: str) -> bool:
+    normalized_expert_id = str(expert_id or "").strip()
+    if not normalized_expert_id:
+        return False
+
+    if str(finding.get("expert_id") or "").strip() == normalized_expert_id:
+        return True
+    if str(finding.get("related_expert_id") or "").strip() == normalized_expert_id:
+        return True
+
+    message = str(finding.get("message") or "")
+    if f"'{normalized_expert_id}'" in message or f'"{normalized_expert_id}"' in message:
+        return True
+    return _details_reference_expert(finding.get("details") or {}, normalized_expert_id)
+
+
+def _get_expert_phase_assignment(expert_id: str) -> str:
+    try:
+        orchestration = get_phase_orchestration()
+    except Exception:
+        return ""
+
+    for expert in orchestration.get("experts", []):
+        if expert.get("id") == expert_id:
+            return str(expert.get("phase") or "").strip().upper()
+    return ""
+
+
+def _get_dependency_findings_for_expert(expert_id: str, *, severities: set[str]) -> list[dict]:
+    report = validate_expert_dependencies()
+    findings = report.get("findings") if isinstance(report, dict) else []
+    if not isinstance(findings, list):
+        return []
+
+    return [
+        finding
+        for finding in findings
+        if isinstance(finding, dict)
+        and str(finding.get("severity") or "").strip().lower() in severities
+        and _dependency_finding_involves_expert(finding, expert_id)
+    ]
+
+
+def _validate_expert_lifecycle_transition(
+    expert_id: str,
+    *,
+    current_status: str,
+    target_status: str,
+    profile: Optional[dict] = None,
+) -> None:
+    normalized_current_status = _parse_expert_lifecycle_status(current_status)
+    normalized_target_status = _parse_expert_lifecycle_status(target_status, strict=True)
+    if normalized_current_status == normalized_target_status:
+        return
+
+    current_index = _get_expert_lifecycle_index(normalized_current_status)
+    target_index = _get_expert_lifecycle_index(normalized_target_status)
+    if target_index > current_index + 1:
+        next_status = EXPERT_LIFECYCLE_STATUSES[current_index + 1]
+        raise ValueError(
+            f"Expert '{expert_id}' cannot skip lifecycle status from "
+            f"'{normalized_current_status}' to '{normalized_target_status}'. "
+            f"Promote it to '{next_status}' first."
+        )
+    if target_index < current_index:
+        return
+
+    candidate_profile = profile if isinstance(profile, dict) else {}
+    if normalized_target_status in {
+        "boundary_confirmed",
+        "dependency_reviewed",
+        EXPERT_LIFECYCLE_CANARY_PASSED,
+        EXPERT_LIFECYCLE_ACTIVE,
+    }:
+        missing_fields = _find_profile_structure_issues(candidate_profile)
+        if missing_fields:
+            raise ValueError(
+                f"Expert '{expert_id}' is missing boundary review fields and cannot be promoted to "
+                f"'{normalized_target_status}'. Update the expert profile first. Missing: "
+                f"{', '.join(missing_fields)}."
+            )
+
+    if normalized_target_status == "boundary_confirmed":
+        return
+
+    if normalized_target_status in {
+        "dependency_reviewed",
+        EXPERT_LIFECYCLE_CANARY_PASSED,
+        EXPERT_LIFECYCLE_ACTIVE,
+    }:
+        scheduling = candidate_profile.get("scheduling")
+        missing_fields: list[str] = []
+        if not isinstance(scheduling, dict):
+            missing_fields.extend(["scheduling", "scheduling.dependencies"])
+        elif "dependencies" not in scheduling:
+            missing_fields.append("scheduling.dependencies")
+
+        if "upstream_artifacts" not in candidate_profile or not isinstance(candidate_profile.get("upstream_artifacts"), dict):
+            missing_fields.append("upstream_artifacts")
+
+        if missing_fields:
+            raise ValueError(
+                f"Expert '{expert_id}' is missing dependency review fields and cannot be promoted to "
+                f"'{normalized_target_status}'. Update the expert profile first. Missing: "
+                f"{', '.join(missing_fields)}."
+            )
+
+    if normalized_target_status == "dependency_reviewed":
+        dependency_review_findings = _get_dependency_findings_for_expert(
+            expert_id,
+            severities={"warning", "error"},
+        )
+        if dependency_review_findings:
+            first_finding = dependency_review_findings[0]
+            finding_code = str(first_finding.get("code") or "UNKNOWN")
+            finding_message = str(first_finding.get("message") or "Dependency alignment issue.")
+            raise ValueError(
+                f"Expert '{expert_id}' still has dependency alignment issues and cannot be promoted to "
+                f"'{normalized_target_status}'. Run Validate Dependencies and resolve the warnings/errors "
+                f"first. Example: [{finding_code}] {finding_message}"
+            )
+        return
+
+    if normalized_target_status not in {EXPERT_LIFECYCLE_CANARY_PASSED, EXPERT_LIFECYCLE_ACTIVE}:
+        return
+
+    phase_assignment = _get_expert_phase_assignment(expert_id)
+    if not phase_assignment:
+        raise ValueError(
+            f"Expert '{expert_id}' is not assigned to any phase yet. "
+            "Configure it in Expert Center > System Tools > Phase Orchestration "
+            f"before promoting it to '{normalized_target_status}'."
+        )
+
+    blocking_findings = _get_dependency_findings_for_expert(expert_id, severities={"error"})
+    if not blocking_findings:
+        return
+
+    first_finding = blocking_findings[0]
+    finding_code = str(first_finding.get("code") or "UNKNOWN")
+    finding_message = str(first_finding.get("message") or "Blocking dependency validation issue.")
+    raise ValueError(
+        f"Expert '{expert_id}' still has blocking dependency validation issues and cannot be "
+        f"promoted to '{normalized_target_status}'. Run Validate Dependencies and resolve the "
+        f"blocking findings first. Example: [{finding_code}] {finding_message}"
+    )
+
+
+def _reload_expert_registry() -> None:
+    try:
+        registry = ExpertRegistry.get_instance()
+    except RuntimeError:
+        try:
+            ExpertRegistry.initialize(BASE_DIR)
+        except Exception:
+            return
+        return
+
+    registry.reload()
+
+
 def _normalize_expert_profile_yaml(content: str, *, expert_id: str, existing_profile_path: Path | None = None) -> str:
     """Normalize expert profile YAML so bilingual name fields stay present."""
     try:
@@ -69,11 +323,25 @@ def _normalize_expert_profile_yaml(content: str, *, expert_id: str, existing_pro
     existing_name = str(existing_profile.get("name") or "").strip()
     existing_name_en = str(existing_profile.get("name_en") or existing_name or "").strip()
     existing_name_zh = str(existing_profile.get("name_zh") or "").strip()
+    existing_lifecycle_status = _parse_expert_lifecycle_status(existing_profile.get("lifecycle_status"))
 
     name = str(profile.get("name") or profile.get("name_en") or existing_name_en or expert_id).strip()
     name_en = str(profile.get("name_en") or name or existing_name_en or expert_id).strip()
     name_zh = str(profile.get("name_zh") or existing_name_zh or "").strip()
     capability = str(profile.get("capability") or existing_profile.get("capability") or expert_id).strip()
+    lifecycle_status = existing_lifecycle_status
+    if "lifecycle_status" in profile:
+        lifecycle_status = _parse_expert_lifecycle_status(
+            profile.get("lifecycle_status"),
+            default=existing_lifecycle_status,
+            strict=True,
+        )
+        _validate_expert_lifecycle_transition(
+            expert_id,
+            current_status=existing_lifecycle_status,
+            target_status=lifecycle_status,
+            profile=profile,
+        )
 
     if not capability:
         capability = expert_id
@@ -86,8 +354,53 @@ def _normalize_expert_profile_yaml(content: str, *, expert_id: str, existing_pro
     profile["name_en"] = name_en
     profile["name_zh"] = name_zh
     profile["capability"] = capability
+    profile["lifecycle_status"] = lifecycle_status
 
     return yaml.safe_dump(profile, allow_unicode=True, sort_keys=False)
+
+
+def _build_expert_metadata(expert_id: str, config: dict, *, profile_path: Path, content: str) -> dict:
+    name_zh, name_en = _resolve_localized_expert_names(expert_id, config)
+    return {
+        "id": expert_id,
+        "name": config.get("name", expert_id),
+        "name_zh": name_zh or None,
+        "name_en": name_en or config.get("name", expert_id),
+        "description": config.get("description", ""),
+        "expertise": config.get("keywords", []),
+        "lifecycle_status": _parse_expert_lifecycle_status(config.get("lifecycle_status")),
+        "profile_path": str(profile_path.relative_to(BASE_DIR)),
+        "skill_path": str((SKILLS_DIR / expert_id).relative_to(BASE_DIR)) if (SKILLS_DIR / expert_id).exists() else None,
+        "current_profile": content,
+        "versions": _list_file_versions(profile_path),
+    }
+
+
+def _is_expert_profile_path(file_path: Path) -> bool:
+    return file_path.name.endswith(".expert.yaml") or file_path.name.endswith(".agent.yaml")
+
+
+def _get_expert_id_from_profile_path(file_path: Path) -> str:
+    return file_path.stem.replace(".expert", "").replace(".agent", "")
+
+
+def _path_affects_expert_registry(file_path: Path) -> bool:
+    if _is_expert_profile_path(file_path):
+        return True
+    return file_path.name == "SKILL.md" and SKILLS_DIR in file_path.parents
+
+
+def _write_normalized_expert_profile(profile_path: Path, content: str, *, expert_id: str) -> bool:
+    normalized_profile_yaml = _normalize_expert_profile_yaml(
+        content,
+        expert_id=expert_id,
+        existing_profile_path=profile_path,
+    )
+
+    success = _write_versioned_file(profile_path, normalized_profile_yaml, validate_yaml=True)
+    if success:
+        _reload_expert_registry()
+    return success
 
 
 def _resolve_localized_expert_names(expert_id: str, config: dict) -> tuple[str, str]:
@@ -1968,17 +2281,25 @@ def create_project(project_id: str, name: Optional[str] = None, description: Opt
     (PROJECTS_DIR / project_id).mkdir(parents=True, exist_ok=True)
     metadata_db.upsert_project(project_id, name or project_id, description)
     
-    # Initialize all experts as enabled by default (for backward compatibility)
+    # Initialize only active experts as enabled by default.
     try:
-        from registry.expert_registry import ExpertRegistry
         registry = ExpertRegistry.get_instance()
+        initialized_count = 0
+        enabled_count = 0
         for manifest in registry.get_all_manifests():
+            initialized_count += 1
+            is_active = manifest.lifecycle_status == EXPERT_LIFECYCLE_ACTIVE
             metadata_db.upsert_project_expert(project_id, {
                 "id": manifest.capability,
-                "enabled": True,
+                "enabled": is_active,
                 "description": manifest.description
             })
-        print(f"[Project] Initialized {len(registry.get_all_manifests())} experts for project {project_id}")
+            if is_active:
+                enabled_count += 1
+        print(
+            f"[Project] Initialized {initialized_count} experts for project {project_id}; "
+            f"enabled {enabled_count} active experts by default."
+        )
     except RuntimeError:
         print(f"[Project] Warning: ExpertRegistry not initialized, cannot setup default experts")
 
@@ -2200,24 +2521,12 @@ def list_experts():
     experts = []
     for item in sorted(list(experts_dir.glob("*.expert.yaml")) + list(experts_dir.glob("*.agent.yaml"))):
         try:
-            with open(item, "r", encoding="utf-8") as handle:
-                config = yaml.safe_load(handle) or {}
-            expert_id = item.stem.replace(".expert", "").replace(".agent", "")
-            name_zh, name_en = _resolve_localized_expert_names(expert_id, config)
-            experts.append(
-                {
-                    "id": expert_id,
-                    "name": config.get("name", expert_id),
-                    "name_zh": name_zh or None,
-                    "name_en": name_en or config.get("name", expert_id),
-                    "description": config.get("description", ""),
-                    "expertise": config.get("keywords", []),
-                    "profile_path": str(item.relative_to(BASE_DIR)),
-                    "skill_path": str((SKILLS_DIR / expert_id).relative_to(BASE_DIR)) if (SKILLS_DIR / expert_id).exists() else None,
-                    "current_profile": item.read_text(encoding="utf-8"),
-                    "versions": _list_file_versions(item),
-                }
-            )
+            content = item.read_text(encoding="utf-8")
+            config = yaml.safe_load(content) or {}
+            if not isinstance(config, dict):
+                continue
+            expert_id = _get_expert_id_from_profile_path(item)
+            experts.append(_build_expert_metadata(expert_id, config, profile_path=item, content=content))
         except Exception:
             pass
     return experts
@@ -2238,32 +2547,33 @@ def get_expert(expert_id: str):
 
     content = profile_path.read_text(encoding="utf-8")
     config = yaml.safe_load(content) or {}
-    name_zh, name_en = _resolve_localized_expert_names(expert_id, config)
-    return {
-        "id": expert_id,
-        "name": config.get("name", expert_id),
-        "name_zh": name_zh or None,
-        "name_en": name_en or config.get("name", expert_id),
-        "description": config.get("description", ""),
-        "expertise": config.get("keywords", []),
-        "profile_path": str(profile_path.relative_to(BASE_DIR)),
-        "skill_path": str((SKILLS_DIR / expert_id).relative_to(BASE_DIR)) if (SKILLS_DIR / expert_id).exists() else None,
-        "current_profile": content,
-        "versions": _list_file_versions(profile_path),
-    }
+    if not isinstance(config, dict):
+        return None
+    return _build_expert_metadata(expert_id, config, profile_path=profile_path, content=content)
 
 
 def update_expert(expert_id: str, new_profile_yaml: str):
     profile_path = _resolve_expert_profile_path(expert_id)
+    return _write_normalized_expert_profile(profile_path, new_profile_yaml, expert_id=expert_id)
+
+
+def update_expert_lifecycle_status(expert_id: str, lifecycle_status: str):
+    expert = get_expert(expert_id)
+    if not expert:
+        return None
+
     try:
-        normalized_profile_yaml = _normalize_expert_profile_yaml(
-            new_profile_yaml,
-            expert_id=expert_id,
-            existing_profile_path=profile_path,
-        )
-    except ValueError:
-        return False
-    return _write_versioned_file(profile_path, normalized_profile_yaml, validate_yaml=True)
+        profile = yaml.safe_load(expert["current_profile"]) or {}
+    except Exception as exc:
+        raise ValueError(f"Invalid YAML: {exc}") from exc
+    if not isinstance(profile, dict):
+        raise ValueError("Expert profile YAML must be a mapping object.")
+
+    profile["lifecycle_status"] = _parse_expert_lifecycle_status(lifecycle_status, strict=True)
+    updated_yaml = yaml.safe_dump(profile, allow_unicode=True, sort_keys=False)
+    if not update_expert(expert_id, updated_yaml):
+        return None
+    return get_expert(expert_id)
 
 
 # System experts that cannot be deleted
@@ -2328,6 +2638,7 @@ def create_expert(
             ]
         )
         print(f"[ExpertCreate:{request_tag}] Phase orchestration updated for expert '{result['id']}'.")
+        _reload_expert_registry()
         return get_expert(result["id"])
     
     # Fallback: inline generation with rich structure
@@ -2358,6 +2669,7 @@ name_zh: {json.dumps(name_zh, ensure_ascii=False)}
 capability: {final_id}
 description: {json.dumps(description or normalized_name, ensure_ascii=False)}
 version: 0.1.0
+lifecycle_status: {NEW_EXPERT_DEFAULT_LIFECYCLE_STATUS}
 skills:
   - {final_id}
 inputs:
@@ -2437,7 +2749,8 @@ keywords: []
 4. `actions` 只可包含 `read_file_chunk`、`extract_structure`、`grep_search` 等只读工具。
 """
 
-    profile_path.write_text(profile_content, encoding="utf-8")
+    if not _write_normalized_expert_profile(profile_path, profile_content, expert_id=final_id):
+        raise ValueError(f"Failed to write generated expert profile for '{final_id}'.")
     (skill_dir / "SKILL.md").write_text(skill_content, encoding="utf-8")
     print(f"[ExpertCreate:{request_tag}] Applying fallback expert '{final_id}' to phase '{target_phase}'.")
     update_phase_orchestration(
@@ -2450,6 +2763,7 @@ keywords: []
             for item in get_phase_orchestration()["phases"]
         ]
     )
+    _reload_expert_registry()
     print(f"[ExpertCreate:{request_tag}] Inline fallback completed with id='{final_id}'.")
     return get_expert(final_id)
 
@@ -2480,6 +2794,7 @@ def delete_expert(expert_id: str) -> bool:
             for item in get_phase_orchestration()["phases"]
         ]
     )
+    _reload_expert_registry()
     return True
 
 
@@ -2567,8 +2882,18 @@ def update_file_content(relative_path: str, content: str):
     if BASE_DIR.resolve() not in file_path.parents and file_path != BASE_DIR.resolve():
         return False
 
+    if _is_expert_profile_path(file_path):
+        return _write_normalized_expert_profile(
+            file_path,
+            content,
+            expert_id=_get_expert_id_from_profile_path(file_path),
+        )
+
     validate_yaml = file_path.suffix.lower() in {".yaml", ".yml"}
-    return _write_versioned_file(file_path, content, validate_yaml=validate_yaml)
+    success = _write_versioned_file(file_path, content, validate_yaml=validate_yaml)
+    if success and _path_affects_expert_registry(file_path):
+        _reload_expert_registry()
+    return success
 
 
 def delete_file(relative_path: str) -> bool:

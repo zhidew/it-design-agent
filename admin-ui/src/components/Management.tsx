@@ -23,8 +23,16 @@ import { apiClient } from '../api';
 import { useTranslation } from 'react-i18next';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { PhaseOrchestrationPanel } from './PhaseOrchestrationPanel';
+import { ExpertReverseImpactPanel } from './ExpertReverseImpactPanel';
+import { getResolvedExpertReverseImpact, type ExpertLike, type ExpertReverseImpact } from '../utils/expertReverseImpact';
 
 type WorkbenchTab = 'profile' | 'skill' | 'templates' | 'references' | 'scripts' | 'tools';
+type ExpertLifecycleStatus =
+  | 'draft'
+  | 'boundary_confirmed'
+  | 'dependency_reviewed'
+  | 'canary_passed'
+  | 'active';
 
 interface Expert {
   id: string;
@@ -33,8 +41,21 @@ interface Expert {
   name_en?: string | null;
   description: string;
   expertise: string[];
+  lifecycle_status?: string | null;
   profile_path: string;
   skill_path?: string | null;
+  dependencies?: string[];
+  upstream_artifacts?: string[];
+  expected_outputs?: string[];
+  boundary_owns?: string[];
+  display_name?: string | null;
+  title?: string | null;
+  metadata?: {
+    boundary_contract?: {
+      owns?: string[];
+      excludes?: string[];
+    };
+  };
 }
 
 interface FileVersion {
@@ -81,6 +102,7 @@ interface DependencyFinding {
 }
 
 interface DependencyValidationReport {
+  expert_impacts?: ExpertReverseImpact[];
   ok: boolean;
   expert_count: number;
   dependency_edges: number;
@@ -112,6 +134,14 @@ interface WorkbenchSection {
 const TAB_ORDER: WorkbenchTab[] = ['profile', 'skill', 'templates', 'references', 'scripts', 'tools'];
 const PHASE_ORCHESTRATION_ID = '__phase-orchestration__';
 const DEFAULT_CREATE_PHASE = 'INTERFACE';
+const SYSTEM_EXPERTS = ['expert-creator'];
+const LIFECYCLE_STATUS_ORDER: ExpertLifecycleStatus[] = [
+  'draft',
+  'boundary_confirmed',
+  'dependency_reviewed',
+  'canary_passed',
+  'active',
+];
 
 function pickDefaultCreatePhase(phases: PhaseOption[]): string {
   if (!phases.length) {
@@ -129,6 +159,25 @@ function extractApiErrorDetail(error: unknown): string {
   return typeof detail === 'string' ? detail : '';
 }
 
+function normalizeLifecycleStatus(status?: string | null): ExpertLifecycleStatus {
+  const normalized = String(status || 'active').trim().toLowerCase();
+  return (LIFECYCLE_STATUS_ORDER as string[]).includes(normalized)
+    ? (normalized as ExpertLifecycleStatus)
+    : 'active';
+}
+
+function lifecycleFindingInvolvesExpert(finding: DependencyFinding, expertId: string): boolean {
+  const normalizedExpertId = expertId.trim();
+  if (!normalizedExpertId) {
+    return false;
+  }
+
+  return finding.expert_id === normalizedExpertId
+    || finding.related_expert_id === normalizedExpertId
+    || finding.message.includes(`'${normalizedExpertId}'`)
+    || finding.message.includes(`"${normalizedExpertId}"`);
+}
+
 export function ExpertCenter() {
   const { t, i18n } = useTranslation();
   const [experts, setExperts] = useState<Expert[]>([]);
@@ -142,6 +191,7 @@ export function ExpertCenter() {
   const [saving, setSaving] = useState(false);
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [updatingLifecycle, setUpdatingLifecycle] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   
   // Search and Modal states
@@ -181,6 +231,98 @@ export function ExpertCenter() {
   const getPhaseDisplayName = React.useCallback((phase: PhaseOption) => {
     return isZh ? (phase.label_zh || phase.label || phase.id) : (phase.label_en || phase.label || phase.id);
   }, [isZh]);
+
+  const lifecycleCopy = useMemo(() => {
+    const labels: Record<ExpertLifecycleStatus, string> = isZh
+      ? {
+          draft: '草稿',
+          boundary_confirmed: '边界已确认',
+          dependency_reviewed: '依赖已评审',
+          canary_passed: '试运行通过',
+          active: '已激活',
+        }
+      : {
+          draft: 'Draft',
+          boundary_confirmed: 'Boundary Confirmed',
+          dependency_reviewed: 'Dependency Reviewed',
+          canary_passed: 'Canary Passed',
+          active: 'Active',
+        };
+    const stepGuides: Record<Exclude<ExpertLifecycleStatus, 'draft'>, string> = isZh
+      ? {
+          boundary_confirmed: '先确认 outputs.expected、outputs.evidence 与 boundary_contract 的 owns / excludes。',
+          dependency_reviewed: '对齐 scheduling.dependencies、upstream_artifacts，并和现有专家边界核对。',
+          canary_passed: '进入试运行前，先补齐 phase 归属并确认依赖校验没有阻塞错误。',
+          active: '正式激活前，再确认 phase 已配置、依赖校验没有阻塞问题。',
+        }
+      : {
+          boundary_confirmed: 'Confirm outputs.expected, outputs.evidence, and boundary_contract owns / excludes first.',
+          dependency_reviewed: 'Align scheduling.dependencies and upstream_artifacts with the existing expert graph.',
+          canary_passed: 'Before canary, add a phase assignment and make sure dependency validation has no blocking errors.',
+          active: 'Before activating, confirm the phase assignment is set and dependency validation is clear.',
+        };
+
+    return {
+      title: isZh ? '生命周期状态' : 'Lifecycle Status',
+      helper: isZh ? '新建专家默认从草稿开始，只有 Active 状态才会被项目配置页允许启用。' : 'New experts start in Draft. Only Active experts can be enabled in project configuration.',
+      updateSuccess: isZh ? '专家生命周期状态已更新。' : 'Expert lifecycle status updated.',
+      updateError: isZh ? '更新专家生命周期状态失败。' : 'Failed to update expert lifecycle status.',
+      inactiveHint: isZh ? '当前专家尚未激活，项目侧不会允许启用。请在这里按治理流程逐步推进，完成后切换为 Active。' : 'This expert is not active yet, so projects cannot enable it. Promote it here after the governance checks are complete.',
+      selectorLabel: isZh ? '切换状态' : 'Change status',
+      progressTitle: isZh ? '治理进度' : 'Governance Progress',
+      nextStepTitle: isZh ? '下一步建议' : 'Suggested next step',
+      phaseLabel: isZh ? '当前执行 Phase' : 'Assigned Phase',
+      unassignedPhase: isZh ? '未分配' : 'Unassigned',
+      phaseHint: isZh ? '去 Expert Center > System Tools > Phase Orchestration 里完成 phase 归属后，再继续推进后续状态。' : 'Assign a phase in Expert Center > System Tools > Phase Orchestration before promoting later stages.',
+      checklistBoundary: isZh ? '确认边界与产出字段' : 'Confirm boundary and outputs',
+      checklistOutputs: isZh ? '补齐 outputs.expected 与 outputs.evidence' : 'Fill outputs.expected and outputs.evidence',
+      checklistBoundaryContract: isZh ? '补齐 boundary_contract 的 owns / excludes' : 'Fill boundary_contract owns / excludes',
+      checklistDependency: isZh ? '对齐依赖与上游产物' : 'Align dependencies and upstream artifacts',
+      checklistDependencyValidation: isZh ? '依赖校验没有 warning / error' : 'Dependency validation has no warnings or errors',
+      impactChecklist: isZh ? '已复核受影响的存量专家' : 'Impacted existing experts are reviewed',
+      checklistPhase: isZh ? '已配置执行 phase' : 'Execution phase is assigned',
+      checklistValidation: isZh ? '依赖校验没有阻塞错误' : 'Dependency validation has no blocking errors',
+      validationPending: isZh ? '先运行一次 Validate Dependencies，确认当前专家相关的错误已经清理完。' : 'Run Validate Dependencies first to confirm there are no blocking errors involving this expert.',
+      validationClear: isZh ? '最近一次依赖校验没有发现当前专家的阻塞错误。' : 'The latest dependency validation found no blocking errors for this expert.',
+      dependencyReviewPending: isZh ? '先运行一次 Validate Dependencies，确认当前专家相关的 warning / error 已清理完。' : 'Run Validate Dependencies first to confirm there are no warnings or errors involving this expert.',
+      dependencyReviewClear: isZh ? '最近一次依赖校验没有发现当前专家相关的 warning / error。' : 'The latest dependency validation found no warnings or errors for this expert.',
+      impactPending: isZh ? '先运行一次 Validate Dependencies，再检查当前专家对存量专家的影响面。' : 'Run Validate Dependencies first, then review which existing experts are impacted.',
+      impactClear: isZh ? '最近一次依赖校验没有发现需要额外复核的受影响存量专家。' : 'The latest dependency validation found no impacted existing experts that need extra review.',
+      readyTitle: isZh ? '当前已经到达最高生命周期状态。' : 'This expert is already at the highest lifecycle state.',
+      readyHint: isZh ? '只要 phase 与依赖校验持续保持健康，项目配置页就会允许启用它。' : 'As long as its phase assignment and dependency validation stay healthy, projects can enable it.',
+      labels,
+      stepGuides,
+    };
+  }, [isZh]);
+
+  const getLifecycleLabel = React.useCallback(
+    (status?: string | null) => lifecycleCopy.labels[normalizeLifecycleStatus(status)],
+    [lifecycleCopy],
+  );
+
+  const getLifecycleBadgeClasses = React.useCallback(
+    (status?: string | null, active = false) => {
+      const lifecycleStatus = normalizeLifecycleStatus(status);
+      if (lifecycleStatus === 'active') {
+        return active
+          ? 'bg-emerald-500/15 text-emerald-50 border border-emerald-300/30'
+          : 'bg-emerald-50 text-emerald-700 border border-emerald-200';
+      }
+      return active
+        ? 'bg-amber-500/15 text-amber-50 border border-amber-300/30'
+        : 'bg-amber-50 text-amber-700 border border-amber-200';
+    },
+    [],
+  );
+
+  const lifecycleOptions = useMemo(
+    () =>
+      LIFECYCLE_STATUS_ORDER.map((status) => ({
+        value: status,
+        label: lifecycleCopy.labels[status],
+      })),
+    [lifecycleCopy],
+  );
 
   useEffect(() => {
     let interval: ReturnType<typeof setInterval> | undefined;
@@ -287,6 +429,32 @@ export function ExpertCenter() {
     });
   }, [experts, searchTerm]);
 
+  const regularExperts = useMemo(
+    () => filteredExperts.filter((expert) => !SYSTEM_EXPERTS.includes(expert.id)),
+    [filteredExperts],
+  );
+
+  const expertGroupsByPhase = useMemo(() => {
+    const expertMap = new Map(regularExperts.map((expert) => [expert.id, expert]));
+    const groupedPhases = createPhaseOptions
+      .map((phase) => ({
+        phase,
+        experts: phase.experts
+          .map((expertId) => expertMap.get(expertId))
+          .filter((expert): expert is Expert => Boolean(expert)),
+      }))
+      .filter((group) => group.experts.length > 0);
+
+    const assignedExpertIds = new Set(
+      groupedPhases.flatMap((group) => group.experts.map((expert) => expert.id)),
+    );
+
+    return {
+      groupedPhases,
+      unassignedExperts: regularExperts.filter((expert) => !assignedExpertIds.has(expert.id)),
+    };
+  }, [createPhaseOptions, regularExperts]);
+
   const getExpertDisplayName = (expert: Expert | null) => {
     if (!expert) {
       return '';
@@ -331,6 +499,180 @@ export function ExpertCenter() {
     () => experts.find((expert) => expert.id === selectedExpertId) ?? null,
     [experts, selectedExpertId],
   );
+  const expertPhaseById = useMemo(() => {
+    const mapping = new Map<string, PhaseOption>();
+    createPhaseOptions.forEach((phase) => {
+      phase.experts.forEach((expertId) => {
+        mapping.set(expertId, phase);
+      });
+    });
+    return mapping;
+  }, [createPhaseOptions]);
+  const selectedLifecycleStatus = selectedExpert ? normalizeLifecycleStatus(selectedExpert.lifecycle_status) : 'active';
+  const selectedLifecycleIndex = LIFECYCLE_STATUS_ORDER.indexOf(selectedLifecycleStatus);
+  const selectableLifecycleOptions = useMemo(
+    () => lifecycleOptions.filter((option) => LIFECYCLE_STATUS_ORDER.indexOf(option.value) <= selectedLifecycleIndex + 1),
+    [lifecycleOptions, selectedLifecycleIndex],
+  );
+  const selectedExpertPhase = useMemo(
+    () => (selectedExpert ? expertPhaseById.get(selectedExpert.id) ?? null : null),
+    [expertPhaseById, selectedExpert],
+  );
+  const selectedExpertImpact = useMemo(() => {
+    if (!selectedExpert) {
+      return null;
+    }
+
+    const preferredImpact =
+      validationReport?.expert_impacts?.find((impact) => impact.expert_id === selectedExpert.id) ?? null;
+
+    return getResolvedExpertReverseImpact(experts as ExpertLike[], selectedExpert.id, preferredImpact);
+  }, [experts, selectedExpert, validationReport]);
+  const selectedExpertImpactedExpertIds = useMemo(() => {
+    if (!selectedExpertImpact) {
+      return [];
+    }
+
+    return Array.from(
+      new Set([
+        ...selectedExpertImpact.direct_downstream_expert_ids,
+        ...selectedExpertImpact.all_downstream_expert_ids,
+        ...selectedExpertImpact.artifact_consumer_expert_ids,
+        ...selectedExpertImpact.output_overlap.map((item) => item.related_expert_id),
+        ...selectedExpertImpact.boundary_overlap.map((item) => item.related_expert_id),
+      ]),
+    );
+  }, [selectedExpertImpact]);
+  const selectedExpertBlockingDependencyFindings = useMemo(() => {
+    if (!selectedExpert || !validationReport) {
+      return [];
+    }
+    return validationReport.findings.filter(
+      (finding) => finding.severity === 'error' && lifecycleFindingInvolvesExpert(finding, selectedExpert.id),
+    );
+  }, [validationReport, selectedExpert]);
+  const selectedExpertDependencyReviewFindings = useMemo(() => {
+    if (!selectedExpert || !validationReport) {
+      return [];
+    }
+    return validationReport.findings.filter(
+      (finding) => ['warning', 'error'].includes(finding.severity) && lifecycleFindingInvolvesExpert(finding, selectedExpert.id),
+    );
+  }, [validationReport, selectedExpert]);
+  const lifecycleProgress = useMemo(
+    () => LIFECYCLE_STATUS_ORDER.map((status, index) => ({
+      status,
+      completed: index <= selectedLifecycleIndex,
+      next: index === selectedLifecycleIndex + 1,
+    })),
+    [selectedLifecycleIndex],
+  );
+  const nextLifecycleStatus = useMemo<Exclude<ExpertLifecycleStatus, 'draft'> | null>(() => {
+    if (selectedLifecycleIndex < 0 || selectedLifecycleIndex >= LIFECYCLE_STATUS_ORDER.length - 1) {
+        return null;
+    }
+    return LIFECYCLE_STATUS_ORDER[selectedLifecycleIndex + 1] as Exclude<ExpertLifecycleStatus, 'draft'>;
+  }, [selectedLifecycleIndex]);
+  const lifecycleChecklistItems = useMemo(() => {
+    if (!nextLifecycleStatus) {
+      return [];
+    }
+
+    if (nextLifecycleStatus === 'boundary_confirmed') {
+      return [
+        {
+          key: 'boundary-outputs',
+          state: 'manual',
+          label: lifecycleCopy.checklistOutputs,
+          hint: lifecycleCopy.stepGuides.boundary_confirmed,
+        },
+        {
+          key: 'boundary-contract',
+          state: 'manual',
+          label: lifecycleCopy.checklistBoundaryContract,
+          hint: lifecycleCopy.stepGuides.boundary_confirmed,
+        },
+      ];
+    }
+
+    if (nextLifecycleStatus === 'dependency_reviewed') {
+      const dependencyReviewHint = !validationReport
+        ? lifecycleCopy.dependencyReviewPending
+        : selectedExpertDependencyReviewFindings.length === 0
+          ? lifecycleCopy.dependencyReviewClear
+          : isZh
+            ? `还有 ${selectedExpertDependencyReviewFindings.length} 个 warning / error 与当前专家相关，请先在依赖校验里处理。`
+            : `${selectedExpertDependencyReviewFindings.length} warning/error finding(s) still involve this expert. Resolve them before promoting.`;
+      const impactReviewHint = !validationReport
+        ? lifecycleCopy.impactPending
+        : !selectedExpertImpact?.review_required
+          ? lifecycleCopy.impactClear
+          : isZh
+            ? `当前专家影响到 ${selectedExpertImpactedExpertIds.length} 个存量专家，请结合下方反向影响分析逐一复核。`
+            : `${selectedExpertImpactedExpertIds.length} existing expert(s) are impacted. Review them in the reverse impact analysis below.`;
+
+      return [
+        {
+          key: 'dependency-config',
+          state: 'manual',
+          label: lifecycleCopy.checklistDependency,
+          hint: lifecycleCopy.stepGuides.dependency_reviewed,
+        },
+        {
+          key: 'dependency-phase',
+          state: selectedExpertPhase ? 'done' : 'todo',
+          label: lifecycleCopy.checklistPhase,
+          hint: selectedExpertPhase ? getPhaseDisplayName(selectedExpertPhase) : lifecycleCopy.phaseHint,
+        },
+        {
+          key: 'dependency-validation',
+          state: !validationReport ? 'pending' : selectedExpertDependencyReviewFindings.length === 0 ? 'done' : 'todo',
+          label: lifecycleCopy.checklistDependencyValidation,
+          hint: dependencyReviewHint,
+        },
+        {
+          key: 'dependency-impact-review',
+          state: !validationReport ? 'pending' : selectedExpertImpact?.review_required ? 'manual' : 'done',
+          label: lifecycleCopy.impactChecklist,
+          hint: impactReviewHint,
+        },
+      ];
+    }
+
+    const validationHint = !validationReport
+      ? lifecycleCopy.validationPending
+      : selectedExpertBlockingDependencyFindings.length === 0
+        ? lifecycleCopy.validationClear
+        : isZh
+          ? `还有 ${selectedExpertBlockingDependencyFindings.length} 个阻塞 error 与当前专家相关，请先在依赖校验里处理。`
+          : `${selectedExpertBlockingDependencyFindings.length} blocking validation error(s) still involve this expert. Resolve them before promoting.`;
+
+    return [
+      {
+        key: 'phase',
+        state: selectedExpertPhase ? 'done' : 'todo',
+        label: lifecycleCopy.checklistPhase,
+        hint: selectedExpertPhase ? getPhaseDisplayName(selectedExpertPhase) : lifecycleCopy.phaseHint,
+      },
+      {
+        key: 'validation',
+        state: !validationReport ? 'pending' : selectedExpertBlockingDependencyFindings.length === 0 ? 'done' : 'todo',
+        label: lifecycleCopy.checklistValidation,
+        hint: validationHint,
+      },
+    ];
+  }, [
+    getPhaseDisplayName,
+    isZh,
+    lifecycleCopy,
+    nextLifecycleStatus,
+    selectedExpertDependencyReviewFindings,
+    selectedExpertBlockingDependencyFindings,
+    selectedExpertImpact,
+    selectedExpertImpactedExpertIds,
+    selectedExpertPhase,
+    validationReport,
+  ]);
   const isPhaseOrchestrationView = selectedExpertId === PHASE_ORCHESTRATION_ID;
 
   const visibleDependencyFindings = useMemo(() => {
@@ -434,7 +776,7 @@ export function ExpertCenter() {
   const activeSection = activeSections.find((section) => section.tab === activeTab) ?? null;
 
   useEffect(() => {
-    if (!selectedExpertId) {
+      if (!selectedExpertId) {
       return;
     }
     setActiveTab('profile');
@@ -485,8 +827,8 @@ export function ExpertCenter() {
       setMessage({ type: 'success', text: t('management.saveSuccess') });
       await selectFile(selectedFile.path);
       await loadExpertCenter();
-    } catch {
-      setMessage({ type: 'error', text: t('common.error') });
+    } catch (err: unknown) {
+      setMessage({ type: 'error', text: extractApiErrorDetail(err) || t('common.error') });
     } finally {
       setSaving(false);
     }
@@ -557,6 +899,22 @@ export function ExpertCenter() {
       setMessage({ type: 'error', text: t('management.deleteExpertError') });
     } finally {
       setDeleting(false);
+    }
+  };
+
+  const handleLifecycleStatusChange = async (expertId: string, lifecycleStatus: ExpertLifecycleStatus) => {
+    setUpdatingLifecycle(true);
+    try {
+      await apiClient.put(`/expert-center/experts/${expertId}/status`, {
+        lifecycle_status: lifecycleStatus,
+      });
+      setMessage({ type: 'success', text: lifecycleCopy.updateSuccess });
+      await loadExpertCenter();
+      setSelectedExpertId(expertId);
+    } catch (err: unknown) {
+      setMessage({ type: 'error', text: extractApiErrorDetail(err) || lifecycleCopy.updateError });
+    } finally {
+      setUpdatingLifecycle(false);
     }
   };
 
@@ -638,13 +996,46 @@ export function ExpertCenter() {
     }
   }, [selectedTool, selectedExpertId, activeTab]);
   
-  // System experts that cannot be deleted
-  const SYSTEM_EXPERTS = ['expert-creator'];
   const isSystemExpert = selectedExpertId ? SYSTEM_EXPERTS.includes(selectedExpertId) : false;
   const expertVersionKey = useMemo(
     () => experts.map((expert) => expert.id).sort((left, right) => left.localeCompare(right)).join('|'),
     [experts],
   );
+
+  const renderExpertNavigationCard = (expert: Expert, icon: React.ReactNode = <Bot size={16} />) => {
+    const active = selectedExpertId === expert.id;
+    return (
+      <button
+        key={expert.id}
+        type="button"
+        onClick={() => setSelectedExpertId(expert.id)}
+        className={`w-full rounded-2xl border p-3 text-left transition-all ${
+          active
+            ? 'border-indigo-500 bg-indigo-600 text-white shadow-lg shadow-indigo-100'
+            : 'border-gray-200 bg-white text-gray-700 hover:border-indigo-200 hover:bg-gray-50'
+        }`}
+      >
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className="text-[11px] font-black uppercase leading-4 break-words">
+              {translateExpertName(expert)}
+            </div>
+            <div className={`mt-1 text-[10px] leading-4 break-all ${active ? 'text-indigo-100' : 'text-gray-400'}`}>
+              {expert.id}
+            </div>
+            <div className="mt-2">
+              <span className={`inline-flex items-center rounded-full px-2 py-1 text-[9px] font-black uppercase tracking-wider ${getLifecycleBadgeClasses(expert.lifecycle_status, active)}`}>
+                {getLifecycleLabel(expert.lifecycle_status)}
+              </span>
+            </div>
+          </div>
+          <div className={`shrink-0 ${active ? 'text-indigo-100' : 'text-gray-400'}`}>
+            {icon}
+          </div>
+        </div>
+      </button>
+    );
+  };
 
   const restoreVersion = (content: string) => {
     setEditingContent(content);
@@ -735,33 +1126,34 @@ export function ExpertCenter() {
             </div>
 
             <div className="p-3 space-y-2 flex-1 overflow-y-auto">
-              {/* Regular experts list */}
-              {filteredExperts
-                .filter((expert) => !SYSTEM_EXPERTS.includes(expert.id))
-                .map((expert) => {
-                  const active = selectedExpertId === expert.id;
-                  return (
-                    <button
-                      key={expert.id}
-                      type="button"
-                      onClick={() => setSelectedExpertId(expert.id)}
-                      className={`w-full rounded-2xl border p-4 text-left transition-all ${
-                        active
-                          ? 'border-indigo-500 bg-indigo-600 text-white shadow-lg shadow-indigo-100'
-                          : 'border-gray-200 bg-white text-gray-700 hover:border-indigo-200 hover:bg-gray-50'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="text-xs font-black uppercase truncate">{translateExpertName(expert)}</div>
-                          <div className={`text-[11px] mt-1 truncate ${active ? 'text-indigo-100' : 'text-gray-400'}`}>{expert.id}</div>
-                        </div>
-                        <Bot size={16} />
-                      </div>
-                    </button>
-                  );
-                })}
-              {filteredExperts.filter((e) => !SYSTEM_EXPERTS.includes(e.id)).length === 0 && (
+              {expertGroupsByPhase.groupedPhases.map(({ phase, experts: phaseExperts }) => (
+                <div key={phase.id} className="space-y-2">
+                  <div className="px-1">
+                    <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                      {getPhaseDisplayName(phase)}
+                    </div>
+                    <div className="mt-1 text-[10px] text-gray-400">
+                      {phase.id} · {phaseExperts.length}
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {phaseExperts.map((expert) => renderExpertNavigationCard(expert))}
+                  </div>
+                </div>
+              ))}
+              {expertGroupsByPhase.unassignedExperts.length > 0 && (
+                <div className="space-y-2">
+                  <div className="px-1">
+                    <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                      {t('management.phaseOrchestrationUnassigned')}
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {expertGroupsByPhase.unassignedExperts.map((expert) => renderExpertNavigationCard(expert))}
+                  </div>
+                </div>
+              )}
+              {regularExperts.length === 0 && (
                 <div className="py-10 text-center text-xs text-gray-400 italic">
                   {t('management.noExpertSearchResults')}
                 </div>
@@ -844,6 +1236,27 @@ export function ExpertCenter() {
                   {t('management.validateDependencies')}
                 </button>
                 {selectedExpert && !isSystemExpert && !isPhaseOrchestrationView && (
+                  <label className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-xs font-semibold text-gray-600">
+                    <span className="uppercase tracking-wide text-[10px] text-gray-400">{lifecycleCopy.title}</span>
+                    <select
+                      aria-label={lifecycleCopy.selectorLabel}
+                      value={selectedLifecycleStatus}
+                      onChange={(event) => void handleLifecycleStatusChange(selectedExpert.id, event.target.value as ExpertLifecycleStatus)}
+                      disabled={updatingLifecycle}
+                      className="rounded-lg border border-gray-200 bg-gray-50 px-2 py-1 text-xs font-semibold text-gray-700 outline-none transition-all focus:border-indigo-400 focus:bg-white disabled:opacity-60"
+                    >
+                      {selectableLifecycleOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                    <span className={`inline-flex items-center rounded-full px-2 py-1 text-[10px] font-black uppercase tracking-wider ${getLifecycleBadgeClasses(selectedExpert.lifecycle_status)}`}>
+                      {updatingLifecycle ? (isZh ? '更新中' : 'Updating') : getLifecycleLabel(selectedLifecycleStatus)}
+                    </span>
+                  </label>
+                )}
+                {selectedExpert && !isSystemExpert && !isPhaseOrchestrationView && (
                   <button
                     type="button"
                     onClick={handleDeleteExpert}
@@ -856,6 +1269,60 @@ export function ExpertCenter() {
                 )}
               </div>
             </div>
+            {selectedExpert && !isSystemExpert && !isPhaseOrchestrationView && (
+              <div className={`mt-4 rounded-2xl border px-4 py-3 text-sm ${selectedLifecycleStatus === 'active' ? 'border-emerald-200 bg-emerald-50/80 text-emerald-700' : 'border-amber-200 bg-amber-50/80 text-amber-800'}`}>
+                <div className="font-semibold">{lifecycleCopy.helper}</div>
+                <div className="mt-2 text-xs text-gray-600">
+                  {lifecycleCopy.phaseLabel}: {' '}
+                  <span className="font-semibold text-gray-900">
+                    {selectedExpertPhase ? getPhaseDisplayName(selectedExpertPhase) : lifecycleCopy.unassignedPhase}
+                  </span>
+                </div>
+                {!selectedExpertPhase && (
+                  <div className="mt-1 text-xs text-amber-700">{lifecycleCopy.phaseHint}</div>
+                )}
+                <div className="mt-3">
+                  <div className="text-[10px] font-black uppercase tracking-wider text-gray-400">{lifecycleCopy.progressTitle}</div>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {lifecycleProgress.map((item) => (
+                      <span
+                        key={item.status}
+                        className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-wider ${item.completed ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : item.next ? 'border-indigo-200 bg-indigo-50 text-indigo-700' : 'border-gray-200 bg-gray-50 text-gray-500'}`}
+                      >
+                        {getLifecycleLabel(item.status)}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                {nextLifecycleStatus ? (
+                  <div className="mt-3 rounded-xl border border-white/70 bg-white/70 px-3 py-3 text-xs text-gray-700">
+                    <div className="font-semibold text-gray-900">
+                      {lifecycleCopy.nextStepTitle}: {getLifecycleLabel(nextLifecycleStatus)}
+                    </div>
+                    <div className="mt-1 text-gray-600">{lifecycleCopy.stepGuides[nextLifecycleStatus]}</div>
+                    {lifecycleChecklistItems.length > 0 && (
+                      <div className="mt-3 space-y-2">
+                        {lifecycleChecklistItems.map((item) => (
+                          <div
+                            key={item.key}
+                            className={`rounded-lg border px-3 py-2 ${item.state === 'done' ? 'border-emerald-200 bg-emerald-50/80 text-emerald-700' : item.state === 'pending' ? 'border-slate-200 bg-slate-50 text-slate-600' : item.state === 'manual' ? 'border-indigo-200 bg-indigo-50/80 text-indigo-700' : 'border-amber-200 bg-amber-50/80 text-amber-700'}`}
+                          >
+                            <div className="font-semibold">{item.label}</div>
+                            {item.hint && <div className="mt-1 text-[11px] opacity-90">{item.hint}</div>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <div className="mt-3 text-amber-700">{lifecycleCopy.inactiveHint}</div>
+                  </div>
+                ) : (
+                  <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50/80 px-3 py-3 text-xs text-emerald-700">
+                    <div className="font-semibold">{lifecycleCopy.readyTitle}</div>
+                    <div className="mt-1">{lifecycleCopy.readyHint}</div>
+                  </div>
+                )}
+              </div>
+            )}
           </section>
 
           {showValidationCard && (
@@ -908,6 +1375,18 @@ export function ExpertCenter() {
                 <div className="text-2xl font-black text-amber-700 mt-2">{validationReport?.summary.warnings ?? 0}</div>
               </div>
             </div>
+
+            {selectedExpert && !isPhaseOrchestrationView && (
+              <div className="mt-6">
+                <ExpertReverseImpactPanel
+                  expertId={selectedExpert.id}
+                  experts={experts as ExpertLike[]}
+                  impact={selectedExpertImpact}
+                  title={isZh ? '反向影响分析' : 'Reverse impact analysis'}
+                  isZh={isZh}
+                />
+              </div>
+            )}
 
             <div className="mt-6">
               {!validationReport ? (
