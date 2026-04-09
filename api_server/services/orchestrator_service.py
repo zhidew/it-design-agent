@@ -2228,7 +2228,7 @@ def validate_expert_dependencies():
         registry = ExpertRegistry.get_instance()
     except RuntimeError:
         registry = ExpertRegistry.initialize(BASE_DIR)
-    return registry.validate_dependency_graph()
+    return registry.validate_dependency_graph(exclude_capabilities=SYSTEM_EXPERTS)
 
 
 def get_expert(expert_id: str):

@@ -1,18 +1,15 @@
 ﻿import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  AlertTriangle,
   ArrowLeft,
   BookOpen,
   Bot,
   Braces,
-  CheckCircle2,
   Code2,
   FileCode,
   Network,
   Loader as LucideLoader,
   Plus,
-  RefreshCw,
   Save,
   ScrollText,
   Trash2,
@@ -71,27 +68,6 @@ interface ToolInfo {
   script_path?: string;
 }
 
-interface DependencyFinding {
-  severity: 'error' | 'warning' | 'info';
-  code: string;
-  message: string;
-  expert_id?: string | null;
-  related_expert_id?: string | null;
-  details: Record<string, unknown>;
-}
-
-interface DependencyValidationReport {
-  ok: boolean;
-  expert_count: number;
-  dependency_edges: number;
-  summary: {
-    errors: number;
-    warnings: number;
-    infos: number;
-  };
-  findings: DependencyFinding[];
-}
-
 interface PhaseOption {
   id: string;
   label: string;
@@ -112,6 +88,7 @@ interface WorkbenchSection {
 const TAB_ORDER: WorkbenchTab[] = ['profile', 'skill', 'templates', 'references', 'scripts', 'tools'];
 const PHASE_ORCHESTRATION_ID = '__phase-orchestration__';
 const DEFAULT_CREATE_PHASE = 'INTERFACE';
+const SYSTEM_EXPERTS = ['expert-creator'];
 
 function pickDefaultCreatePhase(phases: PhaseOption[]): string {
   if (!phases.length) {
@@ -165,9 +142,6 @@ export function ExpertCenter() {
   const [selectedTool, setSelectedTool] = useState<ToolInfo | null>(null);
   const [toolCode, setToolCode] = useState<string>('');
   const [loadingTools, setLoadingTools] = useState(false);
-  const [validationReport, setValidationReport] = useState<DependencyValidationReport | null>(null);
-  const [validatingDependencies, setValidatingDependencies] = useState(false);
-  const [showValidationCard, setShowValidationCard] = useState(false);
 
   const GENERATION_STEPS = [
     t('management.generationSteps.0'),
@@ -231,23 +205,6 @@ export function ExpertCenter() {
     void loadExpertCenter();
   }, [loadExpertCenter]);
 
-  const loadDependencyValidation = async () => {
-    setValidatingDependencies(true);
-    setShowValidationCard(true);
-    try {
-      const response = await apiClient.get('/expert-center/experts/validate-dependencies');
-      setValidationReport(response.data as DependencyValidationReport);
-      setMessage({
-        type: response.data.ok ? 'success' : 'error',
-        text: response.data.ok ? t('management.validationSuccess') : t('management.validationIssuesFound'),
-      });
-    } catch {
-      setMessage({ type: 'error', text: t('management.validationLoadError') });
-    } finally {
-      setValidatingDependencies(false);
-    }
-  };
-  
   const loadToolsList = async () => {
     setLoadingTools(true);
     try {
@@ -286,6 +243,37 @@ export function ExpertCenter() {
       return searchable.includes(term);
     });
   }, [experts, searchTerm]);
+
+  const regularExperts = useMemo(
+    () => filteredExperts.filter((expert) => !SYSTEM_EXPERTS.includes(expert.id)),
+    [filteredExperts],
+  );
+
+  const expertsGroupedByPhase = useMemo(() => {
+    const expertById = new Map(regularExperts.map((expert) => [expert.id, expert]));
+    const groupedPhases = createPhaseOptions
+      .map((phase) => ({
+        phase,
+        experts: phase.experts
+          .map((expertId) => expertById.get(expertId))
+          .filter((expert): expert is Expert => Boolean(expert)),
+      }))
+      .filter((group) => group.experts.length > 0);
+
+    const assignedExpertIds = new Set(
+      groupedPhases.flatMap((group) => group.experts.map((expert) => expert.id)),
+    );
+
+    return {
+      groupedPhases,
+      unassignedExperts: regularExperts.filter((expert) => !assignedExpertIds.has(expert.id)),
+    };
+  }, [createPhaseOptions, regularExperts]);
+
+  const systemExperts = useMemo(
+    () => filteredExperts.filter((expert) => SYSTEM_EXPERTS.includes(expert.id)),
+    [filteredExperts],
+  );
 
   const getExpertDisplayName = (expert: Expert | null) => {
     if (!expert) {
@@ -332,18 +320,6 @@ export function ExpertCenter() {
     [experts, selectedExpertId],
   );
   const isPhaseOrchestrationView = selectedExpertId === PHASE_ORCHESTRATION_ID;
-
-  const visibleDependencyFindings = useMemo(() => {
-    if (!validationReport) {
-      return [];
-    }
-    if (!selectedExpertId || isPhaseOrchestrationView) {
-      return validationReport.findings;
-    }
-    return validationReport.findings.filter(
-      (finding) => finding.expert_id === selectedExpertId || finding.related_expert_id === selectedExpertId,
-    );
-  }, [validationReport, selectedExpertId, isPhaseOrchestrationView]);
 
   const fileNamesByPath = useMemo(() => {
     const entries: Record<string, string> = {};
@@ -638,8 +614,6 @@ export function ExpertCenter() {
     }
   }, [selectedTool, selectedExpertId, activeTab]);
   
-  // System experts that cannot be deleted
-  const SYSTEM_EXPERTS = ['expert-creator'];
   const isSystemExpert = selectedExpertId ? SYSTEM_EXPERTS.includes(selectedExpertId) : false;
   const expertVersionKey = useMemo(
     () => experts.map((expert) => expert.id).sort((left, right) => left.localeCompare(right)).join('|'),
@@ -734,34 +708,87 @@ export function ExpertCenter() {
               </div>
             </div>
 
-            <div className="p-3 space-y-2 flex-1 overflow-y-auto">
-              {/* Regular experts list */}
-              {filteredExperts
-                .filter((expert) => !SYSTEM_EXPERTS.includes(expert.id))
-                .map((expert) => {
-                  const active = selectedExpertId === expert.id;
-                  return (
-                    <button
-                      key={expert.id}
-                      type="button"
-                      onClick={() => setSelectedExpertId(expert.id)}
-                      className={`w-full rounded-2xl border p-4 text-left transition-all ${
-                        active
-                          ? 'border-indigo-500 bg-indigo-600 text-white shadow-lg shadow-indigo-100'
-                          : 'border-gray-200 bg-white text-gray-700 hover:border-indigo-200 hover:bg-gray-50'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="text-xs font-black uppercase truncate">{translateExpertName(expert)}</div>
-                          <div className={`text-[11px] mt-1 truncate ${active ? 'text-indigo-100' : 'text-gray-400'}`}>{expert.id}</div>
-                        </div>
-                        <Bot size={16} />
-                      </div>
-                    </button>
-                  );
-                })}
-              {filteredExperts.filter((e) => !SYSTEM_EXPERTS.includes(e.id)).length === 0 && (
+            <div className="p-3 space-y-4 flex-1 overflow-y-auto">
+              {expertsGroupedByPhase.groupedPhases.map(({ phase, experts: phaseExperts }) => (
+                <section key={phase.id} className="space-y-2">
+                  <div className="px-1">
+                    <div className="text-[10px] font-black uppercase tracking-widest text-gray-400">
+                      {getPhaseDisplayName(phase)}
+                    </div>
+                    <div className="mt-1 text-[10px] font-medium uppercase tracking-wider text-gray-300">
+                      {phase.id}
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {phaseExperts.map((expert) => {
+                      const active = selectedExpertId === expert.id;
+                      return (
+                        <button
+                          key={expert.id}
+                          type="button"
+                          onClick={() => setSelectedExpertId(expert.id)}
+                          className={`rounded-2xl border p-3 text-left transition-all ${
+                            active
+                              ? 'border-indigo-500 bg-indigo-600 text-white shadow-lg shadow-indigo-100'
+                              : 'border-gray-200 bg-white text-gray-700 hover:border-indigo-200 hover:bg-gray-50'
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <div className="text-[11px] font-black uppercase leading-4 break-words">
+                                {translateExpertName(expert)}
+                              </div>
+                              <div className={`mt-1 text-[10px] leading-4 break-all ${active ? 'text-indigo-100' : 'text-gray-400'}`}>
+                                {expert.id}
+                              </div>
+                            </div>
+                            <Bot size={14} className="mt-0.5 shrink-0" />
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+              ))}
+              {expertsGroupedByPhase.unassignedExperts.length > 0 && (
+                <section className="space-y-2">
+                  <div className="px-1">
+                    <div className="text-[10px] font-black uppercase tracking-widest text-amber-600">
+                      {isZh ? '未归属 Phase' : 'Unassigned Phase'}
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {expertsGroupedByPhase.unassignedExperts.map((expert) => {
+                      const active = selectedExpertId === expert.id;
+                      return (
+                        <button
+                          key={expert.id}
+                          type="button"
+                          onClick={() => setSelectedExpertId(expert.id)}
+                          className={`rounded-2xl border p-3 text-left transition-all ${
+                            active
+                              ? 'border-amber-400 bg-amber-500 text-white shadow-lg shadow-amber-100'
+                              : 'border-amber-200 bg-amber-50/70 text-amber-900 hover:border-amber-300 hover:bg-amber-50'
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <div className="text-[11px] font-black uppercase leading-4 break-words">
+                                {translateExpertName(expert)}
+                              </div>
+                              <div className={`mt-1 text-[10px] leading-4 break-all ${active ? 'text-amber-50' : 'text-amber-700/80'}`}>
+                                {expert.id}
+                              </div>
+                            </div>
+                            <Bot size={14} className="mt-0.5 shrink-0" />
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+              )}
+              {regularExperts.length === 0 && (
                 <div className="py-10 text-center text-xs text-gray-400 italic">
                   {t('management.noExpertSearchResults')}
                 </div>
@@ -791,9 +818,7 @@ export function ExpertCenter() {
                     <Network size={16} />
                   </div>
                 </button>
-                {filteredExperts
-                  .filter((expert) => SYSTEM_EXPERTS.includes(expert.id))
-                  .map((expert) => {
+                {systemExperts.map((expert) => {
                     const active = selectedExpertId === expert.id;
                     return (
                       <button
@@ -822,148 +847,33 @@ export function ExpertCenter() {
         </aside>
 
         <main className="xl:col-span-9 space-y-6">
-          <section className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
-            <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-6">
-              <div className="space-y-3">
-                <div className="text-[10px] font-black text-indigo-500 uppercase tracking-widest">{t('management.workbenchTitle')}</div>
-                <div className="text-2xl font-black text-gray-900">
-                  {isPhaseOrchestrationView ? t('management.phaseOrchestrationTitle') : translateExpertName(selectedExpert)}
-                </div>
-                <div className="max-w-3xl text-sm text-gray-500 leading-relaxed">
-                  {isPhaseOrchestrationView ? t('management.phaseOrchestrationDescription') : translateExpertDescription(selectedExpert)}
-                </div>
-              </div>
-              <div className="flex flex-wrap items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => void loadDependencyValidation()}
-                  disabled={validatingDependencies}
-                  className="inline-flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-xs font-black uppercase text-indigo-700 hover:bg-indigo-100 disabled:opacity-50 transition-all"
-                >
-                  {validatingDependencies ? <LucideLoader size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-                  {t('management.validateDependencies')}
-                </button>
-                {selectedExpert && !isSystemExpert && !isPhaseOrchestrationView && (
-                  <button
-                    type="button"
-                    onClick={handleDeleteExpert}
-                    disabled={deleting}
-                    className="inline-flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-xs font-black uppercase text-rose-600 hover:bg-rose-100 disabled:opacity-50 transition-all"
-                  >
-                    {deleting ? <LucideLoader size={14} className="animate-spin" /> : <Trash2 size={14} />}
-                    {t('management.deleteExpert')}
-                  </button>
-                )}
-              </div>
-            </div>
-          </section>
-
-          {showValidationCard && (
-          <section className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
-            <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
-              <div>
-                <div className="text-[10px] font-black text-indigo-500 uppercase tracking-widest">{t('management.validationEyebrow')}</div>
-                <div className="text-lg font-black text-gray-900 mt-1">{t('management.validationTitle')}</div>
-                <div className="text-sm text-gray-500 mt-2 max-w-3xl">
-                  {selectedExpertId && !isPhaseOrchestrationView
-                    ? t('management.validationDescriptionSelected', { expert: translateExpertName(selectedExpert) })
-                    : t('management.validationDescription')}
-                </div>
-              </div>
-              <div className="flex items-center gap-3">
-                <div className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-xs font-black uppercase ${
-                  validationReport?.ok
-                    ? 'bg-emerald-50 text-emerald-700'
-                    : 'bg-amber-50 text-amber-700'
-                }`}>
-                  {validationReport?.ok ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />}
-                  {validationReport?.ok ? t('management.validationHealthy') : t('management.validationAttention')}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setShowValidationCard(false)}
-                  className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-all"
-                  title={t('common.dismiss')}
-                >
-                  <X size={16} />
-                </button>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-6">
-              <div className="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-4">
-                <div className="text-[10px] font-black uppercase tracking-widest text-gray-400">{t('management.validationExperts')}</div>
-                <div className="text-2xl font-black text-gray-900 mt-2">{validationReport?.expert_count ?? experts.length}</div>
-              </div>
-              <div className="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-4">
-                <div className="text-[10px] font-black uppercase tracking-widest text-gray-400">{t('management.validationDependenciesCount')}</div>
-                <div className="text-2xl font-black text-gray-900 mt-2">{validationReport?.dependency_edges ?? 0}</div>
-              </div>
-              <div className="rounded-2xl border border-rose-100 bg-rose-50 px-4 py-4">
-                <div className="text-[10px] font-black uppercase tracking-widest text-rose-400">{t('management.validationErrors')}</div>
-                <div className="text-2xl font-black text-rose-700 mt-2">{validationReport?.summary.errors ?? 0}</div>
-              </div>
-              <div className="rounded-2xl border border-amber-100 bg-amber-50 px-4 py-4">
-                <div className="text-[10px] font-black uppercase tracking-widest text-amber-500">{t('management.validationWarnings')}</div>
-                <div className="text-2xl font-black text-amber-700 mt-2">{validationReport?.summary.warnings ?? 0}</div>
-              </div>
-            </div>
-
-            <div className="mt-6">
-              {!validationReport ? (
-                <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 px-5 py-8 text-sm text-gray-400 text-center flex items-center justify-center gap-3">
-                  <LucideLoader size={16} className="animate-spin" />
-                  {t('common.loading')}
-                </div>
-              ) : visibleDependencyFindings.length === 0 ? (
-                <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-5 py-8 text-sm text-emerald-700 flex items-center justify-center gap-2">
-                  <CheckCircle2 size={16} />
-                  {t('management.validationNoFindings')}
-                </div>
-              ) : (
+          {!isPhaseOrchestrationView && (
+            <section className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
+              <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-6">
                 <div className="space-y-3">
-                  {visibleDependencyFindings.map((finding, index) => {
-                    const severityClasses = finding.severity === 'error'
-                      ? 'border-rose-200 bg-rose-50 text-rose-700'
-                      : finding.severity === 'warning'
-                        ? 'border-amber-200 bg-amber-50 text-amber-700'
-                        : 'border-sky-200 bg-sky-50 text-sky-700';
-                    return (
-                      <div key={`${finding.code}-${finding.expert_id ?? 'global'}-${finding.related_expert_id ?? 'none'}-${index}`} className={`rounded-2xl border p-4 ${severityClasses}`}>
-                        <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
-                          <div className="space-y-2 min-w-0">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span className="inline-flex items-center gap-1 rounded-full bg-white/80 px-2.5 py-1 text-[10px] font-black uppercase tracking-widest">
-                                {finding.severity}
-                              </span>
-                              <span className="inline-flex items-center gap-1 rounded-full bg-white/80 px-2.5 py-1 text-[10px] font-black uppercase tracking-widest">
-                                <Network size={12} />
-                                {finding.code}
-                              </span>
-                            </div>
-                            <div className="text-sm font-semibold leading-relaxed">{finding.message}</div>
-                            <div className="flex flex-wrap gap-2 text-[11px] font-medium">
-                              {finding.expert_id ? (
-                                <span className="rounded-full bg-white/80 px-2.5 py-1">{t('management.validationSource')}: {finding.expert_id}</span>
-                              ) : null}
-                              {finding.related_expert_id ? (
-                                <span className="rounded-full bg-white/80 px-2.5 py-1">{t('management.validationTarget')}: {finding.related_expert_id}</span>
-                              ) : null}
-                            </div>
-                          </div>
-                          {Object.keys(finding.details ?? {}).length > 0 ? (
-                            <pre className="max-w-xl overflow-x-auto rounded-xl bg-white/80 p-3 text-[11px] text-gray-700">
-                              {JSON.stringify(finding.details, null, 2)}
-                            </pre>
-                          ) : null}
-                        </div>
-                      </div>
-                    );
-                  })}
+                  <div className="text-[10px] font-black text-indigo-500 uppercase tracking-widest">{t('management.workbenchTitle')}</div>
+                  <div className="text-2xl font-black text-gray-900">
+                    {translateExpertName(selectedExpert)}
+                  </div>
+                  <div className="max-w-3xl text-sm text-gray-500 leading-relaxed">
+                    {translateExpertDescription(selectedExpert)}
+                  </div>
                 </div>
-              )}
-            </div>
-          </section>
+                <div className="flex flex-wrap items-center gap-3">
+                  {selectedExpert && !isSystemExpert && (
+                    <button
+                      type="button"
+                      onClick={handleDeleteExpert}
+                      disabled={deleting}
+                      className="inline-flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-xs font-black uppercase text-rose-600 hover:bg-rose-100 disabled:opacity-50 transition-all"
+                    >
+                      {deleting ? <LucideLoader size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                      {t('management.deleteExpert')}
+                    </button>
+                  )}
+                </div>
+              </div>
+            </section>
           )}
 
           {isPhaseOrchestrationView ? (

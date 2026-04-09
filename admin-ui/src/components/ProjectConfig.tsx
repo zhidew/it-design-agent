@@ -76,7 +76,17 @@ interface ExpertConfig {
   phase?: string | null;
 }
 
+interface PhaseOption {
+  id: string;
+  label?: string;
+  label_zh?: string | null;
+  label_en?: string | null;
+  executable?: boolean;
+  order?: number;
+}
+
 interface PhaseOrchestrationPayload {
+  phases?: PhaseOption[];
   experts?: Array<{
     id: string;
     phase?: string | null;
@@ -235,6 +245,7 @@ export function ProjectConfig() {
   const [databases, setDatabases] = useState<DatabaseConfig[]>([]);
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseConfig[]>([]);
   const [experts, setExperts] = useState<ExpertConfig[]>([]);
+  const [phaseOptions, setPhaseOptions] = useState<PhaseOption[]>([]);
   const [models, setModels] = useState<ModelConfig[]>([]);
   const [debugConfig, setDebugConfig] = useState<DebugConfig>({
     llm_interaction_logging_enabled: false,
@@ -391,10 +402,43 @@ export function ProjectConfig() {
     };
   };
 
+  const getPhaseDisplayName = (phase: PhaseOption) => {
+    const zhName = phase.label_zh || phase.label || phase.id;
+    const enName = phase.label_en || phase.label || phase.id;
+    return i18n.language.toLowerCase().startsWith('zh') ? zhName : enName;
+  };
+
   const expertsMissingPhase = useMemo(
     () => experts.filter((expert) => !expert.phase?.trim()),
     [experts],
   );
+
+  const expertIndexById = useMemo(
+    () => new Map(experts.map((expert, index) => [expert.id, index])),
+    [experts],
+  );
+
+  const expertGroupsByPhase = useMemo(() => {
+    const sortedPhases = [...phaseOptions].sort(
+      (left, right) => (left.order ?? Number.MAX_SAFE_INTEGER) - (right.order ?? Number.MAX_SAFE_INTEGER),
+    );
+    const groupedPhases = sortedPhases
+      .map((phase) => ({
+        phase,
+        experts: experts.filter((expert) => expert.phase?.trim() === phase.id),
+      }))
+      .filter((group) => group.experts.length > 0);
+
+    const knownPhaseIds = new Set(sortedPhases.map((phase) => phase.id));
+
+    return {
+      groupedPhases,
+      unassignedExperts: experts.filter((expert) => {
+        const phaseId = expert.phase?.trim();
+        return !phaseId || !knownPhaseIds.has(phaseId);
+      }),
+    };
+  }, [experts, phaseOptions]);
 
   const buildMissingPhaseEnableMessage = (expert: ExpertConfig) => {
     const { primary } = getExpertDisplayNames(expert);
@@ -505,6 +549,7 @@ export function ProjectConfig() {
         ? projectsRes.find((project: { id?: string; name?: string }) => project.id === projectId)
         : null;
       setProjectDisplayName(matchedProject?.name || projectId);
+      setPhaseOptions((phaseRes.phases || []) as PhaseOption[]);
       setRepositories(repoRes.repositories || []);
       setDatabases(dbRes.databases || []);
       setKnowledgeBases(kbRes.knowledge_bases || []);
@@ -1355,51 +1400,109 @@ export function ProjectConfig() {
                   </div>
                 )}
 
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                  {experts.map((expert, index) => {
-                    const expertNames = getExpertDisplayNames(expert);
-                    return (
-                      <div key={expert.id} className="rounded-xl border border-gray-200 bg-white p-3 transition-all hover:border-indigo-200 hover:shadow-sm">
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="flex-1 min-w-0">
-                            <div className="text-xs font-bold text-gray-900 truncate">{expertNames.primary}</div>
-                            {expertNames.secondary && (
-                              <div className="mt-1 text-[10px] font-medium text-gray-400 truncate">
-                                {expertNames.secondary}
-                              </div>
-                            )}
-                            <div className="mt-2 flex flex-wrap items-center gap-2">
-                              <div className={`text-[10px] font-black uppercase tracking-wider ${expert.enabled ? 'text-emerald-600' : 'text-gray-400'}`}>
-                                {expert.enabled ? expertCopy.enabled : expertCopy.disabled}
-                              </div>
-                              {expert.phase?.trim() ? (
-                                <span className="inline-flex items-center rounded-full bg-indigo-50 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-indigo-700">
-                                  {expertCopy.phasePrefix}: {expert.phase}
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-amber-700">
-                                  {expertCopy.phaseMissing}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                          <button
-                            type="button"
-                            role="switch"
-                            aria-checked={expert.enabled}
-                            aria-label={`${expertNames.primary} ${expert.enabled ? expertCopy.enabled : expertCopy.disabled}`}
-                            onClick={() => handleExpertToggle(index)}
-                            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 ${expert.enabled ? 'bg-emerald-500' : 'bg-gray-300'}`}
-                          >
-                            <span
-                              className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${expert.enabled ? 'translate-x-6' : 'translate-x-1'}`}
-                            />
-                          </button>
+                <div className="space-y-6">
+                  {expertGroupsByPhase.groupedPhases.map(({ phase, experts: phaseExperts }) => (
+                    <section key={phase.id} className="rounded-3xl border border-slate-200 bg-gradient-to-br from-slate-50 via-white to-indigo-50/60 p-4 shadow-sm sm:p-5">
+                      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/80 pb-3">
+                        <div className="min-w-0">
+                          <div className="text-[10px] font-black uppercase tracking-[0.24em] text-slate-400">{phase.id}</div>
+                          <div className="mt-1 text-sm font-black text-slate-900">{getPhaseDisplayName(phase)}</div>
                         </div>
+                        <span className="inline-flex items-center rounded-full border border-indigo-200 bg-white/90 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-indigo-700 shadow-sm">
+                          {isZh ? `${phaseExperts.length} 位专家` : `${phaseExperts.length} experts`}
+                        </span>
                       </div>
-                    );
-                  })}
-                  {experts.length === 0 && <div className="col-span-full rounded-2xl border border-dashed border-gray-200 p-6 text-center text-sm text-gray-400">{expertCopy.empty}</div>}
+                      <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                        {phaseExperts.map((expert) => {
+                          const expertNames = getExpertDisplayNames(expert);
+                          return (
+                            <div key={expert.id} className="rounded-xl border border-gray-200 bg-white p-3 transition-all hover:border-indigo-200 hover:shadow-sm">
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="flex-1 min-w-0">
+                                  <div className="text-xs font-bold text-gray-900 truncate">{expertNames.primary}</div>
+                                  {expertNames.secondary && (
+                                    <div className="mt-1 text-[10px] font-medium text-gray-400 truncate">
+                                      {expertNames.secondary}
+                                    </div>
+                                  )}
+                                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                                    <div className={`text-[10px] font-black uppercase tracking-wider ${expert.enabled ? 'text-emerald-600' : 'text-gray-400'}`}>
+                                      {expert.enabled ? expertCopy.enabled : expertCopy.disabled}
+                                    </div>
+                                  </div>
+                                </div>
+                                <button
+                                  type="button"
+                                  role="switch"
+                                  aria-checked={expert.enabled}
+                                  aria-label={`${expertNames.primary} ${expert.enabled ? expertCopy.enabled : expertCopy.disabled}`}
+                                  onClick={() => handleExpertToggle(expertIndexById.get(expert.id) ?? -1)}
+                                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 ${expert.enabled ? 'bg-emerald-500' : 'bg-gray-300'}`}
+                                >
+                                  <span
+                                    className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${expert.enabled ? 'translate-x-6' : 'translate-x-1'}`}
+                                  />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  ))}
+                  {expertGroupsByPhase.unassignedExperts.length > 0 && (
+                    <section className="rounded-3xl border border-amber-200 bg-gradient-to-br from-amber-50 via-white to-orange-50/70 p-4 shadow-sm sm:p-5">
+                      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-amber-200/80 pb-3">
+                        <div className="min-w-0">
+                          <div className="text-[10px] font-black uppercase tracking-[0.24em] text-amber-500">{isZh ? '待编排' : 'Pending Assignment'}</div>
+                          <div className="mt-1 text-sm font-black text-amber-900">{isZh ? '未归属 Phase' : 'Unassigned Phase'}</div>
+                        </div>
+                        <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-amber-700">
+                          {expertCopy.phaseMissing}
+                        </span>
+                      </div>
+                      <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                        {expertGroupsByPhase.unassignedExperts.map((expert) => {
+                          const expertNames = getExpertDisplayNames(expert);
+                          return (
+                            <div key={expert.id} className="rounded-xl border border-gray-200 bg-white p-3 transition-all hover:border-indigo-200 hover:shadow-sm">
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="flex-1 min-w-0">
+                                  <div className="text-xs font-bold text-gray-900 truncate">{expertNames.primary}</div>
+                                  {expertNames.secondary && (
+                                    <div className="mt-1 text-[10px] font-medium text-gray-400 truncate">
+                                      {expertNames.secondary}
+                                    </div>
+                                  )}
+                                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                                    <div className={`text-[10px] font-black uppercase tracking-wider ${expert.enabled ? 'text-emerald-600' : 'text-gray-400'}`}>
+                                      {expert.enabled ? expertCopy.enabled : expertCopy.disabled}
+                                    </div>
+                                    <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-amber-700">
+                                      {expertCopy.phaseMissing}
+                                    </span>
+                                  </div>
+                                </div>
+                                <button
+                                  type="button"
+                                  role="switch"
+                                  aria-checked={expert.enabled}
+                                  aria-label={`${expertNames.primary} ${expert.enabled ? expertCopy.enabled : expertCopy.disabled}`}
+                                  onClick={() => handleExpertToggle(expertIndexById.get(expert.id) ?? -1)}
+                                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 ${expert.enabled ? 'bg-emerald-500' : 'bg-gray-300'}`}
+                                >
+                                  <span
+                                    className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${expert.enabled ? 'translate-x-6' : 'translate-x-1'}`}
+                                  />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  )}
+                  {experts.length === 0 && <div className="rounded-2xl border border-dashed border-gray-200 p-6 text-center text-sm text-gray-400">{expertCopy.empty}</div>}
                 </div>
               </section>
             )}

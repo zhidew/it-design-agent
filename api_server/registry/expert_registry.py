@@ -423,10 +423,12 @@ class ExpertRegistry:
             "capabilities": self.get_capabilities(),
         }
 
-    def validate_dependency_graph(self) -> Dict[str, Any]:
+    def validate_dependency_graph(self, exclude_capabilities: Optional[Set[str]] = None) -> Dict[str, Any]:
+        excluded = {item.strip() for item in (exclude_capabilities or set()) if item and item.strip()}
         manifests = {
             manifest.capability: manifest
             for manifest in sorted(self._manifests.values(), key=lambda item: item.capability)
+            if manifest.capability not in excluded
         }
         findings: List[Dict[str, Any]] = []
 
