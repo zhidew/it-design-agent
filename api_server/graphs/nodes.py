@@ -32,6 +32,96 @@ AGENT_ALIASES = {
     "test": "test-design",
 }
 
+def _collect_planner_signal_text(requirement_text: str, human_inputs: Dict[str, Any]) -> str:
+    candidate_texts: List[str] = [str(requirement_text or "")]
+
+    if isinstance(human_inputs, dict):
+        for value in human_inputs.values():
+            if isinstance(value, list):
+                candidate_texts.extend(str(item) for item in value)
+            else:
+                candidate_texts.append(str(value))
+
+    return " ".join(text.casefold() for text in candidate_texts if text)
+
+
+def _normalize_policy_keywords(raw_keywords: Any) -> List[str]:
+    if isinstance(raw_keywords, str):
+        items = [raw_keywords]
+    elif isinstance(raw_keywords, list):
+        items = [item for item in raw_keywords if isinstance(item, (str, int, float))]
+    else:
+        return []
+    return [str(item).strip().casefold() for item in items if str(item).strip()]
+
+
+def _apply_policy_based_auto_selection(
+    *,
+    active_agents: set[str],
+    enabled_experts: set[str],
+    requirement_text: str,
+    human_inputs: Dict[str, Any],
+) -> set[str]:
+    """Apply planner auto-selection rules from expert YAML policies.
+
+    Supported policy shape (per expert):
+    policies:
+      planner_auto_select:
+        enabled: true
+        trigger: keyword_any | keyword_all
+        keywords: ["latency", "性能", ...]
+    """
+    if not enabled_experts:
+        return active_agents
+
+    signal_text = _collect_planner_signal_text(requirement_text, human_inputs)
+    if not signal_text:
+        return active_agents
+
+    try:
+        from registry.expert_registry import ExpertRegistry
+
+        registry = ExpertRegistry.get_instance()
+    except RuntimeError:
+        return active_agents
+
+    auto_selected: List[str] = []
+    for expert_id in sorted(enabled_experts):
+        if expert_id in active_agents:
+            continue
+
+        try:
+            config = registry.load_full_config(expert_id)
+        except Exception:
+            continue
+
+        policy = (config.policies or {}).get("planner_auto_select")
+        if not isinstance(policy, dict):
+            continue
+        if not bool(policy.get("enabled", False)):
+            continue
+
+        trigger = str(policy.get("trigger", "keyword_any")).strip().lower()
+        keywords = _normalize_policy_keywords(policy.get("keywords"))
+        if not keywords:
+            continue
+
+        if trigger == "keyword_all":
+            matched = all(keyword in signal_text for keyword in keywords)
+        else:
+            matched = any(keyword in signal_text for keyword in keywords)
+
+        if not matched:
+            continue
+
+        active_agents.add(expert_id)
+        auto_selected.append(expert_id)
+
+    if auto_selected:
+        print(f"[DEBUG] Planner: policy auto-selected experts: {sorted(auto_selected)}")
+
+    return active_agents
+
 
 def _build_project_asset_context(project_id: str) -> Dict[str, Any]:
     asset_context: Dict[str, Any] = {}
@@ -1292,6 +1382,14 @@ Output JSON format:
         # If no experts are enabled, we MUST NOT fallback to "all"
         print(f"[DEBUG] Planner: No design experts are enabled for this project. Clearing selection.")
         active_agents = set()
+
+    # Apply generic policy-driven auto-selection from expert YAML.
+    active_agents = _apply_policy_based_auto_selection(
+        active_agents=active_agents,
+        enabled_experts=enabled_experts,
+        requirement_text=requirement_text,
+        human_inputs=human_inputs,
+    )
     
     # Early return if human intervention is needed - don't build full task queue yet
     if needs_human:

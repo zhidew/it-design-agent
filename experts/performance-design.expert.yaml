@@ -1,0 +1,126 @@
+name: Performance Design Expert
+name_en: Performance Design Expert
+name_zh: 性能设计专家
+capability: performance-design
+description: 负责基于需求边界与实现颗粒度进行性能预算、容量边界、热点路径与降级策略设计，输出专业的性能设计方案，而不是停留在需求拆分描述层面。
+version: 0.1.0
+skills:
+  - performance-design
+keywords:
+  - 性能设计
+  - 性能预算
+  - 容量规划
+  - 吞吐延迟
+  - 关键链路
+inputs:
+  required:
+    - requirements
+    - existing_assets
+    - output_root
+  optional:
+    - constraints
+    - context
+    - workload_profile
+scheduling:
+  priority: 48
+  phase: DFX
+  dependencies:
+    - modular-design
+    - data-design
+    - integration-design
+    - api-design
+    - config-design
+    - flow-design
+upstream_artifacts:
+  modular-design:
+    - architecture.md
+    - module-map.json
+  data-design:
+    - schema.sql
+    - er.md
+    - migration-plan.md
+  integration-design:
+    - integration.md
+    - asyncapi.yaml
+  api-design:
+    - api-design.md
+    - errors-rfc9457.json
+  config-design:
+    - config-catalog.yaml
+    - config-matrix.md
+  flow-design:
+    - sequence.md
+    - state.md
+tools:
+  allowed:
+    - clone_repository
+    - query_database
+    - query_knowledge_base
+    - write_file
+    - patch_file
+outputs:
+  expected:
+    - performance-design.md
+    - performance-budget.yaml
+    - capacity-assessment.json
+  evidence:
+    - performance-design.json
+metadata:
+  boundary_contract:
+    owns:
+      - performance budgets, capacity assessment, and critical path design
+      - hotspot path analysis, capacity assumptions, and degradation design
+    excludes:
+      - global SLO, alert, and runbook design
+      - detailed test case or test data design
+      - redesign of architecture, API schema, or data schema
+      - code-level micro-optimization implementation
+    upstream_inputs:
+      - modular-design
+      - data-design
+      - integration-design
+      - api-design
+      - config-design
+      - flow-design
+policies:
+  asset_baseline_required: true
+  evidence_required: true
+  output_must_be_structured: true
+  manual_override_forbidden: true
+  descriptions_prefer_chinese: true
+  planner_auto_select:
+    enabled: true
+    trigger: keyword_any
+    keywords:
+      - performance
+      - latency
+      - throughput
+      - qps
+      - tps
+      - p95
+      - p99
+      - capacity
+      - slo
+      - sla
+      - scalability
+      - load test
+      - stress test
+      - benchmark
+      - timeout
+      - rate limit
+      - degrade
+      - 性能
+      - 时延
+      - 延迟
+      - 吞吐
+      - 并发
+      - 容量
+      - 压测
+      - 限流
+      - 降级
+      - 峰值
+      - 瓶颈
+error_handling:
+  on_missing_required_input: fail
+  on_validation_failure: fail
+  on_partial_generation: emit_evidence_and_fail

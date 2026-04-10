@@ -26,6 +26,7 @@ scheduling:
     - flow-design
     - api-design
     - integration-design
+    - performance-design
     - ops-design
 upstream_artifacts:
   flow-design:
@@ -37,6 +38,10 @@ upstream_artifacts:
   integration-design:
     - integration.md
     - asyncapi.yaml
+  performance-design:
+    - performance-design.md
+    - performance-budget.yaml
+    - capacity-assessment.json
   ops-design:
     - slo.yaml
     - observability-spec.yaml
@@ -64,6 +69,7 @@ metadata:
       - flow-design
       - api-design
       - integration-design
+      - performance-design
       - ops-design
 policies:
   asset_baseline_required: true

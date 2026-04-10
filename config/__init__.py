@@ -25,7 +25,7 @@ _DEFAULT_DATA = {
         {"id": "ARCHITECTURE", "label_zh": "架构设计", "label_en": "Architecture", "executable": True, "order": 3, "experts": ["modular-design", "integration-design"]},
         {"id": "MODELING", "label_zh": "建模设计", "label_en": "Modeling", "executable": True, "order": 4, "experts": ["data-design", "ddd-structure"]},
         {"id": "INTERFACE", "label_zh": "接口设计", "label_en": "Interface", "executable": True, "order": 5, "experts": ["api-design", "config-design", "flow-design"]},
-        {"id": "DFX", "label_zh": "DFX设计", "label_en": "DFX", "executable": True, "order": 6, "experts": ["ops-design"]},
+        {"id": "DFX", "label_zh": "DFX设计", "label_en": "DFX", "executable": True, "order": 6, "experts": ["performance-design", "ops-design"]},
         {"id": "QUALITY", "label_zh": "质量保障", "label_en": "Quality", "executable": True, "order": 7, "experts": ["test-design"]},
         {"id": "DELIVERY", "label_zh": "交付装配", "label_en": "Delivery", "executable": True, "order": 8, "experts": ["design-assembler", "validator"]},
         {"id": "DONE", "label_zh": "已完成", "label_en": "Done", "executable": False, "order": 99, "experts": []},

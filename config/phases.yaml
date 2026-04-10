@@ -54,6 +54,7 @@ phases:
     executable: true
     order: 6
     experts:
+      - performance-design
       - ops-design
 
   - id: QUALITY

@@ -70,6 +70,30 @@ OUTPUT_MUST_COVER_LIMIT_BY_FILE = {
     ("integration-design", "asyncapi.yaml"): 4,
 }
 
+OUTPUT_PLAN_REQUIRED_MUST_COVER_GROUPS_BY_FILE: Dict[tuple[str, str], List[Dict[str, Any]]] = {
+    (
+        "design-assembler",
+        "detailed-design.md",
+    ): [
+        {
+            "label": "critical path",
+            "keywords": ["critical path", "core path", "core flow", "核心链路", "主链路"],
+        },
+        {
+            "label": "constraints",
+            "keywords": ["constraint", "constraints", "assumption", "约束", "限制", "前提"],
+        },
+        {
+            "label": "risks",
+            "keywords": ["risk", "risks", "风险", "隐患"],
+        },
+        {
+            "label": "degradation or fallback",
+            "keywords": ["degradation", "fallback", "graceful", "降级", "兜底", "回退"],
+        },
+    ],
+}
+
 CAPABILITY_SCOPE_NOTES = {
     "modular-design": (
         "Focus on system boundary, container decomposition, module ownership, and allowed dependencies only. "
@@ -435,6 +459,108 @@ def _match_output_candidate(raw_value: Any, candidate_outputs: List[str]) -> Opt
     return None
 
 
+def _default_must_cover_items_for_output(capability: str, target_file: str) -> List[str]:
+    basename = Path(_normalize_relative_path(target_file)).name
+    if capability == "design-assembler" and basename == "detailed-design.md":
+        return [
+            "Critical path, hard constraints, primary risks, and degradation/fallback strategy for cross-artifact delivery.",
+        ]
+
+    suffix = Path(basename).suffix.lower()
+    if suffix == ".md":
+        return [
+            "Key decisions with constraints, risks, and implementation boundaries for this artifact.",
+        ]
+    if suffix in {".yaml", ".yml", ".json"}:
+        return [
+            "Required schema/field contract and validation constraints.",
+            "Downstream implementation and integration expectations.",
+        ]
+    if suffix == ".sql":
+        return [
+            "DDL coverage for required entities/fields/constraints.",
+            "Indexing, migration compatibility, and rollback considerations.",
+        ]
+    return ["Key content that this artifact must answer."]
+
+
+def _normalize_coverage_contract_text(value: Any) -> str:
+    return str(value or "").strip().casefold()
+
+
+def _missing_required_must_cover_groups(
+    capability: str,
+    target_file: str,
+    must_cover_items: List[str],
+) -> List[str]:
+    basename = Path(_normalize_relative_path(target_file)).name
+    rules = OUTPUT_PLAN_REQUIRED_MUST_COVER_GROUPS_BY_FILE.get((capability, basename)) or []
+    if not rules:
+        return []
+
+    normalized_items = [_normalize_coverage_contract_text(item) for item in must_cover_items if str(item).strip()]
+    missing_labels: List[str] = []
+    for rule in rules:
+        label = str(rule.get("label") or "required coverage").strip()
+        keywords = [
+            _normalize_coverage_contract_text(keyword)
+            for keyword in (rule.get("keywords") or [])
+            if _normalize_coverage_contract_text(keyword)
+        ]
+        if not keywords:
+            continue
+        matched = any(keyword in item for keyword in keywords for item in normalized_items)
+        if not matched:
+            missing_labels.append(label)
+    return missing_labels
+
+
+def _validate_output_plan_coverage(
+    *,
+    capability: str,
+    output_plan: Dict[str, Any],
+    candidate_outputs: List[str],
+) -> None:
+    selected_outputs = _normalize_output_candidate_list(output_plan.get("selected_outputs") or [])
+    candidate_outputs = _normalize_output_candidate_list(candidate_outputs)
+    must_cover_by_file = output_plan.get("must_cover_by_file")
+
+    if candidate_outputs and not selected_outputs:
+        raise ValueError(
+            "Output planning coverage contract violated: selected_outputs cannot be empty when candidate outputs exist."
+        )
+
+    if not isinstance(must_cover_by_file, dict):
+        raise ValueError(
+            "Output planning coverage contract violated: must_cover_by_file must be a mapping keyed by selected output path."
+        )
+
+    files_without_coverage: List[str] = []
+    for target_file in selected_outputs:
+        items = must_cover_by_file.get(target_file)
+        if not isinstance(items, list):
+            files_without_coverage.append(target_file)
+            continue
+
+        normalized_items = [str(item).strip() for item in items if str(item).strip()]
+        if not normalized_items:
+            files_without_coverage.append(target_file)
+            continue
+
+        missing_groups = _missing_required_must_cover_groups(capability, target_file, normalized_items)
+        if missing_groups:
+            missing_text = ", ".join(missing_groups)
+            raise ValueError(
+                f"Output planning coverage contract violated for `{target_file}`: missing required must_cover dimensions: {missing_text}."
+            )
+
+    if files_without_coverage:
+        missing_text = ", ".join(sorted(set(files_without_coverage)))
+        raise ValueError(
+            f"Output planning coverage contract violated: selected outputs must provide non-empty must_cover items. Missing coverage for: {missing_text}."
+        )
+
+
 def _default_output_plan(
     capability: str,
     candidate_outputs: List[str],
@@ -459,7 +585,10 @@ def _default_output_plan(
         "selected_outputs": selected,
         "skipped_outputs": skipped,
         "file_order": list(selected),
-        "must_cover_by_file": {path: [] for path in selected},
+        "must_cover_by_file": {
+            path: _default_must_cover_items_for_output(capability, path)
+            for path in selected
+        },
         "evidence_focus": [],
         "planning_notes": "",
     }
@@ -2426,6 +2555,8 @@ Rules:
 6. Keep each file concise and scoped to this expert's responsibility; avoid absorbing downstream experts' detailed design work.
 7. Respect the approximate per-file char budgets shown above when choosing scope and must-cover items.
 8. Avoid planning files that would all need the same background, scope, or generic requirement-overview sections; shared context should live in one concise place, not every deliverable.
+9. `must_cover_by_file` is a hard contract: every selected file must contain at least one concrete must-cover item, otherwise execution fails fast.
+10. If the expert is `design-assembler` and `detailed-design.md` is selected, must-cover items must explicitly address critical path, constraints, risks, and degradation/fallback.
 
 Return JSON in artifacts.output_plan:
 {{
@@ -3730,6 +3861,42 @@ async def run_dynamic_subagent(
         payload.get("active_agents") or []
     )
     expected_files = _normalize_output_candidate_list(output_plan.get("selected_outputs") or [])
+    try:
+        _validate_output_plan_coverage(
+            capability=capability,
+            output_plan=output_plan,
+            candidate_outputs=candidate_output_files,
+        )
+    except ValueError as exc:
+        validation_error = str(exc).strip() or "output plan coverage contract violation"
+        history_updates.append(f"[{capability}] [ERROR] {validation_error}")
+        (logs_dir / f"{capability}-reasoning.md").write_text(validation_error, encoding="utf-8")
+        failure_evidence = default_build_evidence(
+            capability,
+            payload,
+            {},
+            [],
+            [],
+            [],
+            expected_files,
+            candidate_output_files,
+            output_plan,
+        )
+        failure_evidence["failure_reason"] = "output_plan_coverage_contract_violation"
+        failure_evidence["output_plan_validation_error"] = validation_error
+        (evidence_dir / f"{capability}.json").write_text(
+            json.dumps(failure_evidence, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        history_updates.append(f"[{capability}] Completed with status: failed")
+        return {
+            "history": history_updates,
+            "task_queue": update_task_status_fn(state["task_queue"], capability, "failed"),
+            "human_intervention_required": False,
+            "last_worker": capability,
+            "tool_results": [],
+        }
+
     payload["candidate_output_files"] = candidate_output_files
     payload["selected_outputs"] = expected_files
     payload["output_plan"] = output_plan
@@ -4694,7 +4861,7 @@ UPSTREAM_ARTIFACT_MAPPING_FALLBACK: Dict[str, Dict[str, List[str]]] = {
         "ops-design": ["slo.yaml", "observability-spec.yaml", "deployment-runbook.md"],
     },
     "validator": {
-        "design-assembler": ["detailed-design.md", "traceability.json", "review-checklist.md"],
+        "design-assembler": ["detailed-design.md", "implementation-plan.json", "traceability.json", "review-checklist.md"],
     },
 }
 

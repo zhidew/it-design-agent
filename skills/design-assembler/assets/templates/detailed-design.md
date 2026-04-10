@@ -14,19 +14,20 @@
 ## 3. 核心领域与类图设计 (Domain Design)
 本章节描述了系统的核心业务语言与对象结构。
 - **领域结构说明**: 详见 `artifacts/ddd-structure.md`
-- **聚合根与实体**: 详见 `artifacts/class-*.md`
+- **聚合根与实体**: 详见 `artifacts/class-diagram.md`
 
 ## 4. 流程与状态设计 (Flow & State)
 描述关键业务链路的交互过程与生命周期。
-- **业务时序图**: 详见 `artifacts/sequence-*.md`
-- **实体状态机**: 详见 `artifacts/state-*.md`
+- **业务时序图**: 详见 `artifacts/sequence.md`
+- **实体状态机**: 详见 `artifacts/state.md`
 
 ## 5. 接口与集成契约 (Contracts & Integrations)
 定义微服务对外提供以及依赖的外部系统契约。
-- **内部 API 设计**: `artifacts/api-internal.yaml`
-- **外部 API 设计**: `artifacts/api-public.yaml`
+- **API 设计主文档**: `artifacts/api-design.md`
+- **内部 API 契约（按需生成）**: `artifacts/api-internal.yaml`
+- **外部 API 契约（按需生成）**: `artifacts/api-public.yaml`
 - **异常结构定义**: `artifacts/errors-rfc9457.json`
-- **外部系统集成**: `artifacts/integration-*.md` 和 `artifacts/asyncapi.yaml`
+- **外部系统集成**: `artifacts/integration.md` 和 `artifacts/asyncapi.yaml`
 
 ## 6. 数据模型设计 (Data Design)
 核心数据的存储与结构定义。
@@ -34,9 +35,17 @@
 - **实体关系图(ER)**: `artifacts/er.md`
 - **数据迁移方案**: `artifacts/migration-plan.md`
 
-## 7. 质量保证与运维属性
+## 7. 性能与容量设计 (Performance & Capacity)
+面向开发和测试阶段的性能预算、容量边界与风险控制。
+- **性能设计说明**: `artifacts/performance-design.md`
+- **性能预算清单**: `artifacts/performance-budget.yaml`
+- **容量评估结果**: `artifacts/capacity-assessment.json`
+
+## 8. 质量保证与运维属性
 为下游的测试与运维提供基准指南。
 - **测试覆盖与边界**: `artifacts/test-inputs.md`
 - **SLO 与可观测基线**: `artifacts/slo.yaml` 及 `artifacts/observability-spec.yaml`
 - **环境配置矩阵**: `artifacts/config-matrix.md`
 - **发布与回滚手册**: `artifacts/deployment-runbook.md`
+## 9. Implementation Handoff
+- **Executable plan for code agents**: `artifacts/implementation-plan.json`

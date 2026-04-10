@@ -1,0 +1,54 @@
+{
+  "project_name": "{{project_name}}",
+  "version": "{{version}}",
+  "generated_at": "{{generated_at}}",
+  "handoff_notes": "Executable implementation plan for downstream code agents.",
+  "target_modules": [
+    {
+      "module": "example-module",
+      "responsibility": "Describe bounded responsibility and why this module is touched.",
+      "files_to_change": [
+        "src/example/file.ts"
+      ],
+      "api_or_schema_touchpoints": [
+        "POST /example",
+        "schema: example_table"
+      ],
+      "dependencies": [
+        "upstream-artifact-or-component"
+      ]
+    }
+  ],
+  "work_breakdown": [
+    {
+      "id": "TASK-001",
+      "title": "Implement core flow",
+      "owner": "code-agent",
+      "depends_on": [],
+      "inputs": [
+        "artifacts/detailed-design.md#critical-path"
+      ],
+      "deliverables": [
+        "code changes",
+        "tests"
+      ],
+      "verification": [
+        "unit tests pass",
+        "integration scenario validated"
+      ]
+    }
+  ],
+  "risks_and_mitigations": [
+    {
+      "risk": "Key integration dependency is unstable.",
+      "impact": "May delay rollout or cause regressions.",
+      "mitigation": "Add feature flag and fallback path before enabling by default."
+    }
+  ],
+  "acceptance_criteria": [
+    "All required behavior from detailed-design is implemented.",
+    "No unresolved P0/P1 defects in changed scope.",
+    "Operational and rollback constraints are satisfied."
+  ],
+  "open_questions": []
+}

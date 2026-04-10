@@ -1,0 +1,56 @@
+project_name: "{{project_name}}"
+requirement:
+  id: "{{requirement_id}}"
+  name: "{{requirement_name}}"
+  summary: "{{requirement_summary}}"
+workload_profile:
+  average_qps: "{{avg_qps}}"
+  peak_qps: "{{peak_qps}}"
+  peak_ratio: "{{peak_ratio}}"
+  read_write_ratio: "{{read_write_ratio}}"
+  burst_pattern: "{{burst_pattern}}"
+performance_units:
+  - scenario_name: "{{scenario_name}}"
+    component_name: "{{component_name}}"
+    responsibility: "{{component_responsibility}}"
+    boundary_assessment:
+      class: "{{boundary_class}}"
+      score: "{{boundary_score}}"
+      reason: "{{boundary_reason}}"
+      recommendation: "{{boundary_recommendation}}"
+    path_type: "{{path_type}}"
+    traffic:
+      peak_throughput: "{{peak_throughput}}"
+      average_throughput: "{{average_throughput}}"
+      peak_concurrency: "{{peak_concurrency}}"
+      batch_size: "{{batch_size}}"
+    latency_budget:
+      p50: "{{latency_p50}}"
+      p95: "{{latency_p95}}"
+      p99: "{{latency_p99}}"
+      timeout: "{{timeout}}"
+    payload_budget:
+      request_max_kb: "{{request_max_kb}}"
+      response_max_kb: "{{response_max_kb}}"
+    dependency_budget:
+      db_calls_max: "{{db_calls}}"
+      remote_calls_max: "{{remote_calls}}"
+      cache_hit_target: "{{cache_hit_target}}"
+    resource_budget:
+      cpu_millis: "{{cpu_millis}}"
+      memory_mb: "{{memory_mb}}"
+      connection_pool: "{{connection_pool}}"
+    protection_controls:
+      throttling: "{{throttling_strategy}}"
+      degrade: "{{degrade_strategy}}"
+      retry: "{{retry_strategy}}"
+      fallback: "{{fallback_strategy}}"
+    validation_hooks:
+      metrics:
+        - "{{metric_name}}"
+      scenarios:
+        - "{{scenario_name}}"
+assumptions:
+  - "{{assumption}}"
+open_questions:
+  - "{{open_question}}"

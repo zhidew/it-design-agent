@@ -31,6 +31,7 @@ tools:
 outputs:
   expected:
     - detailed-design.md
+    - implementation-plan.json
     - traceability.json
     - review-checklist.md
   evidence:

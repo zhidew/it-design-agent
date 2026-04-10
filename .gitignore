@@ -19,7 +19,7 @@ htmlcov/
 .hypothesis/
 .tox/
 .nox/
-api_server/tests/
+api_server/tests/*
 **/tests/
 test_*.py
 *_test.py

@@ -1,0 +1,45 @@
+{
+  "project_name": "{{project_name}}",
+  "requirement": {
+    "id": "{{requirement_id}}",
+    "name": "{{requirement_name}}",
+    "summary": "{{requirement_summary}}"
+  },
+  "assessment_rules": [
+    "单个关键处理单元应具备清晰职责边界",
+    "关键路径应具备独立预算与验收口径",
+    "瓶颈应可通过指标、日志或压测验证",
+    "高风险处理环节应具备明确的治理与降级策略"
+  ],
+  "capacity_units": [
+    {
+      "scenario_name": "{{scenario_name}}",
+      "component_name": "{{component_name}}",
+      "boundary_class": "{{boundary_class}}",
+      "boundary_score": "{{boundary_score}}",
+      "signals": [
+        "{{signal_1}}",
+        "{{signal_2}}"
+      ],
+      "performance_risks": [
+        {
+          "risk": "{{risk_name}}",
+          "severity": "{{risk_severity}}",
+          "impact": "{{risk_impact}}"
+        }
+      ],
+      "recommended_action": "{{recommended_action}}",
+      "optimization_candidates": [
+        "{{optimization_candidate}}"
+      ],
+      "trace_refs": [
+        "{{trace_ref}}"
+      ]
+    }
+  ],
+  "summary": {
+    "high_risk_units": 0,
+    "governable_units": 0,
+    "needs_refinement_units": 0
+  }
+}

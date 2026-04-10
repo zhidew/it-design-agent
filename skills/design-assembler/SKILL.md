@@ -42,6 +42,7 @@ keywords:
 | 产物路径 | 说明 |
 |----------|------|
 | `artifacts/detailed-design.md` | 聚合后的详细设计主文档。 |
+| `artifacts/implementation-plan.json` | 面向 code agent 的可执行实施计划（模块、文件、任务拆解、风险与验收标准）。 |
 | `artifacts/traceability.json` | 需求到设计决策的追踪关系。 |
 | `artifacts/review-checklist.md` | 面向评审和交付的检查清单。 |
 
@@ -72,7 +73,7 @@ keywords:
 
 # 参考资料 (References)
 
-- 模板参考 `assets/templates/detailed-design.md`、`assets/templates/traceability.json`、`assets/templates/review-checklist.md`。
+- 模板参考 `assets/templates/detailed-design.md`、`assets/templates/implementation-plan.json`、`assets/templates/traceability.json`、`assets/templates/review-checklist.md`。
 - 上游输入来自所有活动专家产物，应保留来源可追溯性。
 - 详细设计必须是“聚合与对齐”结果，而不是绕过上游专家重新发明设计。
 
