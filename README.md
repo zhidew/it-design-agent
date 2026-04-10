@@ -59,7 +59,7 @@ Frontend i18n files are not the source of expert metadata.
 | `flow-design` | 流程设计专家 / Flow Design Expert | `sequence.md`, `state.md` |
 | `config-design` | 配置设计专家 / Configuration Design Expert | `config-catalog.yaml`, `config-matrix.md` |
 | `ops-design` | 运维设计专家 / Ops Design Expert | `slo.yaml`, `observability-spec.yaml`, `deployment-runbook.md` |
-| `test-design` | 测试设计专家 / Test Design Expert | `test-inputs.md`, `coverage-map.json` |
+| `test-design` | 测试设计专家 / Test Design Expert | `test-strategy-design.md`, `test-solution-design.md` |
 | `design-assembler` | 设计组装专家 / Design Assembler | `detailed-design.md`, `traceability.json`, `review-checklist.md` |
 | `validator` | 校验专家 / Validator | validation findings and workflow validation output |
 

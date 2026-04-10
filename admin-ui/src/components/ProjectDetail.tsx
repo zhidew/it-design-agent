@@ -19,7 +19,7 @@ const AGENT_MAPPING: Record<string, string[]> = {
   'flow-design': ['sequence-', 'state-'],
   'api-design': ['api-design.md', 'api-internal.yaml', 'api-public.yaml', 'errors-rfc9457.json'],
   'ddd-structure': ['ddd-structure.md', 'class-'],
-  'test-design': ['test-inputs.md', 'coverage-map.json'],
+  'test-design': ['test-strategy-design.md', 'test-solution-design.md'],
   'ops-design': ['slo.yaml', 'observability-spec.yaml', 'deployment-runbook.md'],
   'design-assembler': ['detailed-design.md', 'traceability.json', 'review-checklist.md'],
   // validator 使用独立的报告展示逻辑，不走产物清单

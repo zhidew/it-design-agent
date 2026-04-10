@@ -129,8 +129,9 @@ CAPABILITY_SCOPE_NOTES = {
         "Reference config keys, APIs, and events only as operational dependencies; do not redefine their detailed designs."
     ),
     "test-design": (
-        "Own test inputs, coverage mapping, and verification scenarios. "
-        "Do not redesign architecture, domain models, API/event contracts, schema DDL, config matrices, or ops policies."
+        "Own IR-level test strategy design, test solution design, verification themes, strategy reuse assessment, and IR granularity assessment. "
+        "Test strategy design must come before test solution design unless an applicable existing strategy is explicitly reused and cited. "
+        "Do not redesign architecture, domain models, API/event contracts, schema DDL, config matrices, ops policies, or expand into test case steps, equivalence-class tables, and boundary-value enumerations."
     ),
     "design-assembler": (
         "Own synthesis, cross-artifact alignment, and traceability only. "
@@ -175,7 +176,7 @@ DEFAULT_CAPABILITY_TOPICS = {
     "flow-design": ["main_flow", "recalculation_flow", "exception_flow", "state_transitions"],
     "config-design": ["feature_flags", "rules_binding", "environment_matrix", "permissions", "rollback_switches"],
     "ops-design": ["observability", "alerts", "audit_visibility", "failure_recovery", "batch_operations"],
-    "test-design": ["coverage_matrix", "boundary_cases", "retro_and_segment_regression", "acceptance_criteria"],
+    "test-design": ["granularity_and_scope", "strategy_reuse_and_scope", "test_strategy_design", "test_solution_design", "risk_and_regression"],
     "validator": ["consistency_checks", "gap_analysis", "residual_risks"],
     "design-assembler": ["shared_context", "cross_artifact_alignment", "traceability", "final_package"],
 }
@@ -1257,7 +1258,7 @@ def _capability_keywords(capability: str) -> List[str]:
         "api-design": ["API", "接口", "查询", "重算", "明细", "权限"],
         "config-design": ["配置", "灰度", "开关", "权限", "回滚", "规则"],
         "ops-design": ["运维", "可观测", "监控", "告警", "指标", "审计"],
-        "test-design": ["测试", "场景", "校验", "验收", "回归"],
+        "test-design": ["测试", "策略", "方案", "验证", "验收", "回归", "IR", "颗粒度", "拆分", "复用策略", "策略设计", "方案设计"],
         "validator": ["约束", "一致性", "风险", "校验"],
         "design-assembler": ["汇总", "方案", "整合", "结论"],
     }
@@ -1425,11 +1426,14 @@ def _build_capability_delivery_checklist(capability: str, expected_files: List[s
         },
         "test-design": {
             "must_answer": [
-                "核心场景、边界场景、回归场景和验收标准。",
-                "跨月补发、segment 重算、税差校验、灰度回滚场景。",
+                "当前 IR 的颗粒度是否适中，是否需要拆分、并入或保持当前边界。",
+                "当前 IR 是否需要新增测试策略设计；若不需要，复用哪份既有策略以及它的适用边界是什么。",
+                "测试策略设计是否明确测试目标、范围边界、风险优先级、测试层级和进入/退出准则。",
+                "测试方案设计是否基于策略设计结果展开，并说明验证主题簇、回归影响面、非功能关注点，以及数据/环境/观测方案。",
             ],
             "evidence_expectations": [
-                "测试矩阵要覆盖成功/失败/回滚/并发等关键分支。",
+                "若只输出 test-solution-design.md，必须引用既有测试策略来源并解释继承关系。",
+                "测试方案设计必须回指 IR 验收项与上游设计事实，禁止直接展开为测试用例步骤、等价类明细或边界值枚举。",
             ],
         },
         "ddd-structure": {

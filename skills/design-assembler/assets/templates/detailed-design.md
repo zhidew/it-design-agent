@@ -43,7 +43,8 @@
 
 ## 8. 质量保证与运维属性
 为下游的测试与运维提供基准指南。
-- **测试覆盖与边界**: `artifacts/test-inputs.md`
+- **IR级测试策略设计**: `artifacts/test-strategy-design.md`
+- **IR级测试方案设计**: `artifacts/test-solution-design.md`
 - **SLO 与可观测基线**: `artifacts/slo.yaml` 及 `artifacts/observability-spec.yaml`
 - **环境配置矩阵**: `artifacts/config-matrix.md`
 - **发布与回滚手册**: `artifacts/deployment-runbook.md`

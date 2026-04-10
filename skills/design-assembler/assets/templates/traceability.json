@@ -12,7 +12,8 @@
         "artifacts/schema.sql#table=orders"
       ],
       "test_artifacts": [
-        "artifacts/test-inputs.md#scenario=OrderCreation"
+        "artifacts/test-strategy-design.md#strategy=IR-001",
+        "artifacts/test-solution-design.md#verification-unit=VU-01"
       ],
       "ops_artifacts": [
         "artifacts/slo.yaml#slis=api_success_rate"

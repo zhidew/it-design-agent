@@ -2,16 +2,20 @@ name: Test Design Expert
 name_en: Test Design Expert
 name_zh: 测试设计专家
 capability: test-design
-description: 负责测试输入、覆盖率映射和验证场景设计，确保关键业务路径、异常场景和非功能风险都能被验证。
-version: 0.1.1
+description: 负责基于 IR 颗粒度输出测试策略设计与测试方案设计，并判断当前 IR 颗粒度是否适中；默认先做策略设计，再基于策略结果做方案设计，若已有可复用策略则允许只输出测试方案设计。
+version: 0.3.0
 skills:
   - test-design
 keywords:
-  - 测试设计
-  - 覆盖率映射
-  - 边界测试
-  - 异常场景
-  - 并发测试
+  - 测试策略
+  - 测试方案
+  - IR测试设计
+  - IR颗粒度
+  - 测试策略设计
+  - 测试方案设计
+  - 策略复用
+  - 验收追踪
+  - 验证主题
 inputs:
   required:
     - requirements
@@ -55,16 +59,16 @@ tools:
     - patch_file
 outputs:
   expected:
-    - test-inputs.md
-    - coverage-map.json
+    - test-strategy-design.md
+    - test-solution-design.md
   evidence:
     - test-design.json
 metadata:
   boundary_contract:
     owns:
-      - test inputs, coverage mapping, and verification scenarios
+      - IR-level test strategy design, test solution design, verification themes, strategy reuse assessment, and IR granularity assessment
     excludes:
-      - redesign of architecture, domain, API, integration, data, config, or ops artifacts
+      - test case steps, equivalence-class enumeration, boundary-value listings, automation scripts, or redesign of architecture, domain, API, integration, data, config, or ops artifacts
     upstream_inputs:
       - flow-design
       - api-design
