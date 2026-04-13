@@ -281,7 +281,6 @@ export function ProjectConfig() {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [expertNotice, setExpertNotice] = useState<{ type: 'warning' | 'error'; text: string } | null>(null);
-  const isZh = i18n.language.toLowerCase().startsWith('zh');
 
   const testModelConfig = async () => {
     if (!projectId || !editingModel) return;
@@ -345,49 +344,24 @@ export function ProjectConfig() {
     }
   };
 
-  const expertCopy = useMemo(() => {
-    const isZh = i18n.language.toLowerCase().startsWith('zh');
-    const fallback = {
-      tab: isZh ? '专家启用配置' : 'Expert Config',
-      eyebrow: isZh ? '专家可用性' : 'Expert Availability',
-      title: isZh ? '专家启用配置' : 'Expert Enablement',
-      empty: isZh ? '暂无可配置专家。' : 'No experts available yet.',
-      enabled: isZh ? '已启用' : 'Enabled',
-      disabled: isZh ? '未启用' : 'Disabled',
-      description: isZh
-        ? '控制当前项目允许哪些专家参与编排。只有已归属 phase 的专家才能启用。'
-        : 'Control which experts the planner can schedule for this project. Only experts with a phase assignment can be enabled.',
-      phaseMissing: isZh ? '未归属 Phase' : 'Phase Required',
-      phasePrefix: isZh ? '归属 Phase' : 'Phase',
-      phaseRequiredHint: isZh
-        ? '未归属 phase 的专家暂时不能启用，请先到“专家中心 > System Tools > Phase Orchestration”完成归属配置。'
-        : 'Experts without a phase assignment cannot be enabled yet. Configure them in "Expert Center > System Tools > Phase Orchestration" first.',
-      phaseConfigureAction: isZh ? '前往 Phase 编排' : 'Open Phase Orchestration',
-      phaseConfigureLocation: isZh
-        ? '配置入口：专家中心 > System Tools > Phase Orchestration'
-        : 'Location: Expert Center > System Tools > Phase Orchestration',
-      saveError: isZh ? '保存专家启用配置失败。' : 'Failed to save expert enablement.',
-    };
-    const pick = (key: string, fallbackValue: string) => {
-      const value = t(key);
-      return value === key || /\?{2,}/.test(value) ? fallbackValue : value;
-    };
-    return {
-      tab: pick('projectConfig.tabs.experts', fallback.tab),
-      eyebrow: pick('projectConfig.experts.eyebrow', fallback.eyebrow),
-      title: pick('projectConfig.experts.title', fallback.title),
-      description: pick('projectConfig.experts.description', fallback.description),
-      empty: pick('projectConfig.experts.empty', fallback.empty),
-      enabled: pick('projectConfig.experts.enabled', fallback.enabled),
-      disabled: pick('projectConfig.experts.disabled', fallback.disabled),
-      phaseMissing: pick('projectConfig.experts.phaseMissing', fallback.phaseMissing),
-      phasePrefix: pick('projectConfig.experts.phasePrefix', fallback.phasePrefix),
-      phaseRequiredHint: pick('projectConfig.experts.phaseRequiredHint', fallback.phaseRequiredHint),
-      phaseConfigureAction: pick('projectConfig.experts.phaseConfigureAction', fallback.phaseConfigureAction),
-      phaseConfigureLocation: pick('projectConfig.experts.phaseConfigureLocation', fallback.phaseConfigureLocation),
-      saveError: pick('projectConfig.experts.saveError', fallback.saveError),
-    };
-  }, [i18n.language, t]);
+  const expertCopy = useMemo(() => ({
+    tab: t('projectConfig.tabs.experts'),
+    eyebrow: t('projectConfig.experts.eyebrow'),
+    title: t('projectConfig.experts.title'),
+    description: t('projectConfig.experts.description'),
+    empty: t('projectConfig.experts.empty'),
+    enabled: t('projectConfig.experts.enabled'),
+    disabled: t('projectConfig.experts.disabled'),
+    phaseMissing: t('projectConfig.experts.phaseMissing'),
+    phasePrefix: t('projectConfig.experts.phasePrefix'),
+    phaseRequiredHint: t('projectConfig.experts.phaseRequiredHint'),
+    phaseConfigureAction: t('projectConfig.experts.phaseConfigureAction'),
+    phaseConfigureLocation: t('projectConfig.experts.phaseConfigureLocation'),
+    saveError: t('projectConfig.messages.saveExpertsError'),
+    pendingAssignmentEyebrow: t('projectConfig.experts.pendingAssignmentEyebrow'),
+    pendingAssignmentTitle: t('projectConfig.experts.pendingAssignmentTitle'),
+    phaseExpertsCount: (count: number) => t('projectConfig.experts.phaseExpertsCount', { count }),
+  }), [i18n.language, t]);
 
   const getExpertDisplayNames = (expert: ExpertConfig) => {
     const zhName = expert.name_zh || expert.name_en || expert.name || expert.id;
@@ -442,87 +416,65 @@ export function ProjectConfig() {
 
   const buildMissingPhaseEnableMessage = (expert: ExpertConfig) => {
     const { primary } = getExpertDisplayNames(expert);
-    return isZh
-      ? `“${primary}” 尚未归属任何 phase，暂时不能启用。请前往“专家中心 > System Tools > Phase Orchestration”完成归属配置后再回来启用。`
-      : `"${primary}" is not assigned to any phase yet, so it cannot be enabled for this project. Go to "Expert Center > System Tools > Phase Orchestration" first, then come back and enable it.`;
+    return t('projectConfig.experts.phaseMissingEnableMessage', { name: primary });
   };
 
-  const llmCopy = useMemo(() => {
-    const isZh = i18n.language.toLowerCase().startsWith('zh');
-    return {
-      tab: isZh ? '大模型配置' : 'LLM CONFIG',
-      eyebrow: isZh ? '系统模型配置' : 'System Model Setup',
-      title: isZh ? '大模型配置' : 'LLM CONFIG',
-      description: isZh
-        ? '配置当前项目使用的模型提供商、网关地址、模型名称与密钥。可以配置多个模型供执行时选择。'
-        : 'Configure project-level models. You can add multiple configurations to choose from during execution.',
-      refresh: isZh ? '刷新配置' : 'Refresh Config',
-      provider: isZh ? '模型提供商' : 'Provider',
-      openaiBaseUrl: isZh ? 'OpenAI 网关地址' : 'OpenAI Base URL',
-      openaiModel: isZh ? 'OpenAI 模型名' : 'OpenAI Model',
-      openaiKey: isZh ? 'OpenAI API Key (选填)' : 'OpenAI API Key (Optional)',
-      requestHeaders: isZh ? '请求头 JSON' : 'Request Headers JSON',
-      requestHeadersPlaceholder: '{"Authorization":"Bearer custom-token"}',
-      keepCurrentHeaders: isZh ? '留空则保持当前请求头' : 'Leave blank to keep current headers',
-      saved: isZh ? '保存' : 'Save',
-      keepCurrent: isZh ? '留空则保持当前密钥' : 'Leave blank to keep current key',
-      enterKey: isZh ? 'API Key (选填)' : 'API Key (Optional)',
-      saveSuccess: isZh ? '大模型配置已保存。' : 'LLM config saved.',
-      saveError: isZh ? '保存大模型配置失败。' : 'Failed to save LLM config.',
-      loadError: isZh ? '加载大模型配置失败。' : 'Failed to load LLM config.',
-      addModel: isZh ? '添加模型配置' : 'Add Model',
-      editModel: isZh ? '编辑模型' : 'Edit Model',
-      deleteModel: isZh ? '删除模型' : 'Delete Model',
-      modelName: isZh ? '显示名称' : 'Display Name',
-      modelId: isZh ? '模型 ID' : 'Model ID',
-      isDefault: isZh ? '设为默认' : 'Set as Default',
-      defaultLabel: isZh ? '默认' : 'Default',
-      testModel: isZh ? '测试连接' : 'Test Connection',
-      testing: isZh ? '正在测试...' : 'Testing...',
-      testSuccess: isZh ? '连接成功！' : 'Connection successful!',
-      testFailed: isZh ? '连接失败：' : 'Connection failed: ',
-      debugEyebrow: isZh ? '调试日志' : 'Debug Logging',
-      debugTitle: isZh ? 'LLM 调试日志开关' : 'LLM Debug Logging',
-      debugDescription: isZh
-        ? '默认关闭。排查问题时再开启，避免产生额外磁盘占用和敏感上下文落盘。'
-        : 'Disabled by default. Turn it on only when you need deeper troubleshooting logs.',
-      debugIndexTitle: isZh ? '记录交互索引' : 'Record Interaction Index',
-      debugIndexDesc: isZh
-        ? '写入 llm_interactions.jsonl，保留每次调用的摘要、状态与文件引用。'
-        : 'Write llm_interactions.jsonl with per-call summaries, statuses, and file references.',
-      debugPayloadTitle: isZh ? '记录完整 Prompts / Responses' : 'Record Full Prompts / Responses',
-      debugPayloadDesc: isZh
-        ? '额外写入 logs/prompts 与 logs/responses 下的完整文件。仅在开启交互索引后生效。'
-        : 'Also persist full prompt/response files under logs/prompts and logs/responses. Only works when interaction index logging is enabled.',
-      debugSave: isZh ? '保存调试设置' : 'Save Debug Settings',
-      debugWarning: isZh
-        ? '注意：完整日志会增加磁盘占用，并可能记录敏感业务上下文。'
-        : 'Warning: full payload logging increases disk usage and may capture sensitive business context.',
-    };
-  }, [i18n.language]);
+  const llmCopy = useMemo(() => ({
+    tab: t('projectConfig.llm.tab'),
+    eyebrow: t('projectConfig.llm.eyebrow'),
+    title: t('projectConfig.llm.title'),
+    description: t('projectConfig.llm.description'),
+    refresh: t('projectConfig.llm.refresh'),
+    provider: t('projectConfig.llm.provider'),
+    openaiBaseUrl: t('projectConfig.llm.openaiBaseUrl'),
+    openaiModel: t('projectConfig.llm.openaiModel'),
+    openaiKey: t('projectConfig.llm.openaiKey'),
+    requestHeaders: t('projectConfig.llm.requestHeaders'),
+    requestHeadersPlaceholder: t('projectConfig.llm.requestHeadersPlaceholder'),
+    keepCurrentHeaders: t('projectConfig.llm.keepCurrentHeaders'),
+    saved: t('projectConfig.llm.saved'),
+    keepCurrent: t('projectConfig.llm.keepCurrent'),
+    enterKey: t('projectConfig.llm.enterKey'),
+    saveSuccess: t('projectConfig.llm.saveSuccess'),
+    saveError: t('projectConfig.llm.saveError'),
+    loadError: t('projectConfig.llm.loadError'),
+    addModel: t('projectConfig.llm.addModel'),
+    editModel: t('projectConfig.llm.editModel'),
+    deleteModel: t('projectConfig.llm.deleteModel'),
+    modelName: t('projectConfig.llm.modelName'),
+    modelId: t('projectConfig.llm.modelId'),
+    isDefault: t('projectConfig.llm.isDefault'),
+    defaultLabel: t('projectConfig.llm.defaultLabel'),
+    testModel: t('projectConfig.llm.testModel'),
+    testing: t('projectConfig.llm.testing'),
+    testSuccess: t('projectConfig.llm.testSuccess'),
+    testFailed: t('projectConfig.llm.testFailed'),
+    debugEyebrow: t('projectConfig.llm.debugEyebrow'),
+    debugTitle: t('projectConfig.llm.debugTitle'),
+    debugDescription: t('projectConfig.llm.debugDescription'),
+    debugIndexTitle: t('projectConfig.llm.debugIndexTitle'),
+    debugIndexDesc: t('projectConfig.llm.debugIndexDesc'),
+    debugPayloadTitle: t('projectConfig.llm.debugPayloadTitle'),
+    debugPayloadDesc: t('projectConfig.llm.debugPayloadDesc'),
+    debugSave: t('projectConfig.llm.debugSave'),
+    debugWarning: t('projectConfig.llm.debugWarning'),
+  }), [i18n.language, t]);
 
-  const dangerCopy = useMemo(() => {
-    const isZh = i18n.language.toLowerCase().startsWith('zh');
-    return {
-      tab: isZh ? '危险区域' : 'DANGER ZONE',
-      title: isZh ? '删除项目' : 'Delete Project',
-      description: isZh 
-        ? '永久删除此项目及其所有关联资产（版本、产出物、配置等）。此操作无法撤销。' 
-        : 'Permanently delete this project and all its associated assets (versions, artifacts, configs, etc.). This action cannot be undone.',
-      button: isZh ? '删除项目' : 'Delete Project',
-      confirmTitle: isZh ? '确认删除项目？' : 'Confirm Delete Project?',
-      confirmDescription: isZh 
-        ? '在确认删除之前，请查看以下将要被清理的资产清单：' 
-        : 'Before confirming deletion, please review the following list of assets that will be cleared:',
-      assetsVersions: isZh ? '个版本' : ' versions',
-      assetsFiles: isZh ? '个文件' : ' files',
-      assetsSize: isZh ? '总计大小' : 'Total size',
-      assetsConfigs: isZh ? '项配置 (仓库/数据库/模型等)' : ' configs (repos/dbs/models etc.)',
-      deleteSuccess: isZh ? '项目已成功删除。' : 'Project deleted successfully.',
-      deleteError: isZh ? '无法删除项目。请确保没有正在运行的版本。' : 'Cannot delete project. Make sure no versions are running.',
-      finalConfirm: isZh ? '我确定要删除此项目' : 'I am sure I want to delete this project',
-    };
-  }, [i18n.language]);
+  const dangerCopy = useMemo(() => ({
+    tab: t('projectConfig.danger.tab'),
+    title: t('projectConfig.danger.title'),
+    description: t('projectConfig.danger.description'),
+    button: t('projectConfig.danger.button'),
+    confirmTitle: t('projectConfig.danger.confirmTitle'),
+    confirmDescription: t('projectConfig.danger.confirmDescription'),
+    assetsVersions: t('projectConfig.danger.assetsVersions'),
+    assetsFiles: t('projectConfig.danger.assetsFiles'),
+    assetsSize: t('projectConfig.danger.assetsSize'),
+    assetsConfigs: t('projectConfig.danger.assetsConfigs'),
+    deleteSuccess: t('projectConfig.danger.deleteSuccess'),
+    deleteError: t('projectConfig.danger.deleteError'),
+    finalConfirm: t('projectConfig.danger.finalConfirm'),
+  }), [i18n.language, t]);
 
   const loadAll = async () => {
     if (!projectId) return;
@@ -1383,9 +1335,7 @@ export function ProjectConfig() {
                         <div className="min-w-0">
                           <div className="text-sm font-semibold text-amber-900">{expertCopy.phaseRequiredHint}</div>
                           <div className="mt-1 text-xs text-amber-700">
-                            {isZh
-                              ? `当前有 ${expertsMissingPhase.length} 位专家尚未配置 phase 归属。`
-                              : `${expertsMissingPhase.length} experts still need a phase assignment.`}
+                            {t('projectConfig.experts.phaseRequiredCount', { count: expertsMissingPhase.length })}
                           </div>
                           <div className="mt-1 text-xs text-amber-700">{expertCopy.phaseConfigureLocation}</div>
                         </div>
@@ -1409,7 +1359,7 @@ export function ProjectConfig() {
                           <div className="mt-1 text-sm font-black text-slate-900">{getPhaseDisplayName(phase)}</div>
                         </div>
                         <span className="inline-flex items-center rounded-full border border-indigo-200 bg-white/90 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-indigo-700 shadow-sm">
-                          {isZh ? `${phaseExperts.length} 位专家` : `${phaseExperts.length} experts`}
+                          {expertCopy.phaseExpertsCount(phaseExperts.length)}
                         </span>
                       </div>
                       <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -1454,8 +1404,8 @@ export function ProjectConfig() {
                     <section className="rounded-3xl border border-amber-200 bg-gradient-to-br from-amber-50 via-white to-orange-50/70 p-4 shadow-sm sm:p-5">
                       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-amber-200/80 pb-3">
                         <div className="min-w-0">
-                          <div className="text-[10px] font-black uppercase tracking-[0.24em] text-amber-500">{isZh ? '待编排' : 'Pending Assignment'}</div>
-                          <div className="mt-1 text-sm font-black text-amber-900">{isZh ? '未归属 Phase' : 'Unassigned Phase'}</div>
+                          <div className="text-[10px] font-black uppercase tracking-[0.24em] text-amber-500">{expertCopy.pendingAssignmentEyebrow}</div>
+                          <div className="mt-1 text-sm font-black text-amber-900">{expertCopy.pendingAssignmentTitle}</div>
                         </div>
                         <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-amber-700">
                           {expertCopy.phaseMissing}

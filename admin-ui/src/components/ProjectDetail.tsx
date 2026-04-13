@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useState, useRef, useMemo } from 'react';
+import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { useParams, Link, useLocation } from 'react-router-dom';
 import { api } from '../api';
 import { ArrowLeft, Play, RefreshCw, Activity, Check, X, Upload, FileText, Database, Layers, Book, List, Trash2, ChevronLeft, ChevronRight, Settings2, FolderGit2, BookOpen, Bot, Cpu, Square, Clock3 } from 'lucide-react';
@@ -117,6 +117,20 @@ interface ExpertResourceSummary {
   dependencies?: string[];
 }
 
+interface PlannerPhaseOption {
+  id: string;
+  label?: string;
+  label_zh?: string | null;
+  label_en?: string | null;
+  executable?: boolean;
+  order?: number;
+}
+
+interface PlannerPhaseAssignment {
+  id: string;
+  phase?: string | null;
+}
+
 interface EventBase {
   event_id: string;
   event_type: string;
@@ -170,6 +184,7 @@ interface WaitingHumanEvent extends EventBase {
   node_id: string;
   node_type: string;
   interrupt_id?: string | null;
+  interrupt_kind?: 'ask_human' | 'review' | 'expert_selection' | string;
   question: string;
   context?: Record<string, unknown>;
   resume_target: string;
@@ -179,6 +194,17 @@ interface InterruptOption {
   value: string;
   label: string;
   description?: string;
+}
+
+interface PlannerExpertOption {
+  id: string;
+  name: string;
+  name_zh?: string | null;
+  name_en?: string | null;
+  description?: string;
+  phase?: string;
+  recommended?: boolean;
+  auto_selected?: boolean;
 }
 
 interface RunCompletedEvent extends EventBase {
@@ -214,6 +240,49 @@ const NODE_STATUS_PRIORITY: Record<NodeStatus, number> = {
   waiting_human: 4,
   success: 5,
   failed: 6,
+};
+
+const PLANNER_EXPERT_SELECTION_DRAFT_PREFIX = 'it-design-agent:planner-expert-selection';
+
+const buildPlannerExpertSelectionDraftKey = (projectId: string, version: string, interruptId: string) => (
+  `${PLANNER_EXPERT_SELECTION_DRAFT_PREFIX}:${projectId}:${version}:${interruptId}`
+);
+
+const loadPlannerExpertSelectionDraft = (key: string): string[] | null => {
+  try {
+    const rawValue = window.localStorage.getItem(key);
+    if (rawValue === null) {
+      return null;
+    }
+    const parsed = JSON.parse(rawValue);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed
+      .map((item) => String(item ?? '').trim())
+      .filter((item) => item.length > 0);
+  } catch {
+    return [];
+  }
+};
+
+const savePlannerExpertSelectionDraft = (key: string, expertIds: string[]) => {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(expertIds));
+  } catch {
+    // Ignore draft persistence failures and keep the current in-memory selection.
+  }
+};
+
+const clearPlannerExpertSelectionDraft = (key: string | null) => {
+  if (!key) {
+    return;
+  }
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    // Ignore cleanup failures. They should not block the workflow.
+  }
 };
 
 export function ProjectDetail() {
@@ -257,6 +326,7 @@ export function ProjectDetail() {
   const [isReasoningOpen, setIsReasoningOpen] = useState(false);
   const [reviewFeedback, setReviewFeedback] = useState('');
   const [selectedInterruptOption, setSelectedInterruptOption] = useState<string>('');
+  const [selectedPlannerExperts, setSelectedPlannerExperts] = useState<string[]>([]);
   const [resumeActionLoading, setResumeActionLoading] = useState<'approve' | 'revise' | 'answer' | null>(null);
   const [deletingVersion, setDeletingVersion] = useState<string | null>(null);
   const [retryingNode, setRetryingNode] = useState<string | null>(null);
@@ -268,6 +338,8 @@ export function ProjectDetail() {
     knowledgeBases: KnowledgeBaseResourceSummary[];
     experts: ExpertResourceSummary[];
   }>({ repositories: [], databases: [], knowledgeBases: [], experts: [] });
+  const [plannerPhaseOptions, setPlannerPhaseOptions] = useState<PlannerPhaseOption[]>([]);
+  const [plannerPhaseAssignments, setPlannerPhaseAssignments] = useState<PlannerPhaseAssignment[]>([]);
 
   const pollInterval = useRef<ReturnType<typeof setInterval> | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -275,6 +347,7 @@ export function ProjectDetail() {
   const latestFetchedStateAtRef = useRef<number>(0);
 
   const selectedVersionRef = useRef<string | null>(null);
+  const plannerExpertSelectionInitializedRef = useRef<string | null>(null);
   const formatProjectModelLabel = useMemo(() => {
     return (model: any) => {
       const modelId = model?.model_name || model?.model_id || model?.id || 'LLM';
@@ -319,35 +392,22 @@ export function ProjectDetail() {
 
   const isSubmittingRun = loading || scheduleLoading;
 
-  const resourceCopy = useMemo(() => {
-    const isZh = i18n.language.toLowerCase().startsWith('zh');
-    const fallback = {
-      title: isZh ? '项目资源' : 'Project Resources',
-      repositories: isZh ? '代码仓库' : 'Code Repos',
-      databases: isZh ? '数据库' : 'Databases',
-      knowledgeBases: isZh ? '知识库' : 'Knowledge Bases',
-      experts: isZh ? '已启用专家' : 'Enabled Experts',
-      emptyRepositories: isZh ? '暂未配置代码仓库。' : 'No code repositories configured yet.',
-      emptyDatabases: isZh ? '暂未配置数据库。' : 'No databases configured yet.',
-      emptyKnowledgeBases: isZh ? '暂未配置知识库。' : 'No knowledge bases configured yet.',
-      emptyExperts: isZh ? '暂未配置已启用专家。' : 'No enabled experts configured yet.',
-    };
-    const pick = (key: string, fallbackValue: string) => {
-      const value = t(key);
-      return /\?{2,}/.test(value) ? fallbackValue : value;
-    };
-    return {
-      title: pick('projectDetail.resources.title', fallback.title),
-      repositories: pick('projectDetail.resources.repositories', fallback.repositories),
-      databases: pick('projectDetail.resources.databases', fallback.databases),
-      knowledgeBases: pick('projectDetail.resources.knowledgeBases', fallback.knowledgeBases),
-      experts: pick('projectDetail.resources.experts', fallback.experts),
-      emptyRepositories: pick('projectDetail.resources.emptyRepositories', fallback.emptyRepositories),
-      emptyDatabases: pick('projectDetail.resources.emptyDatabases', fallback.emptyDatabases),
-      emptyKnowledgeBases: pick('projectDetail.resources.emptyKnowledgeBases', fallback.emptyKnowledgeBases),
-      emptyExperts: pick('projectDetail.resources.emptyExperts', fallback.emptyExperts),
-    };
-  }, [i18n.language, t]);
+  const resourceCopy = useMemo(() => ({
+    title: t('projectDetail.resources.title'),
+    summary: t('projectDetail.resources.summary'),
+    repositories: t('projectDetail.resources.repositories'),
+    databases: t('projectDetail.resources.databases'),
+    knowledgeBases: t('projectDetail.resources.knowledgeBases'),
+    experts: t('projectDetail.resources.experts'),
+    emptyRepositories: t('projectDetail.resources.emptyRepositories'),
+    emptyDatabases: t('projectDetail.resources.emptyDatabases'),
+    emptyKnowledgeBases: t('projectDetail.resources.emptyKnowledgeBases'),
+    emptyExperts: t('projectDetail.resources.emptyExperts'),
+    emptyRepositoriesShort: t('projectDetail.resources.emptyRepositoriesShort'),
+    emptyDatabasesShort: t('projectDetail.resources.emptyDatabasesShort'),
+    emptyKnowledgeBasesShort: t('projectDetail.resources.emptyKnowledgeBasesShort'),
+    more: (count: number) => t('projectDetail.resources.more', { count }),
+  }), [i18n.language, t]);
 
   const getExpertDisplayName = (expert: ExpertResourceSummary) => {
     const isZh = i18n.language.toLowerCase().startsWith('zh');
@@ -355,6 +415,75 @@ export function ProjectDetail() {
       return expert.name_zh || expert.name_en || expert.name || expert.id;
     }
     return expert.name_en || expert.name || expert.name_zh || expert.id;
+  };
+
+  const getPlannerExpertDisplayName = (expert: PlannerExpertOption) => {
+    const isZh = i18n.language.toLowerCase().startsWith('zh');
+    if (isZh) {
+      return expert.name_zh || expert.name_en || expert.name || expert.id;
+    }
+    return expert.name_en || expert.name || expert.name_zh || expert.id;
+  };
+
+  const getPlannerPhaseDisplayName = (phase: PlannerPhaseOption) => {
+    const isZh = i18n.language.toLowerCase().startsWith('zh');
+    const zhName = phase.label_zh || phase.label || phase.id;
+    const enName = phase.label_en || phase.label || phase.id;
+    return (isZh ? zhName : enName) || phase.id;
+  };
+
+  const getPlannerExpertPhaseId = (expert: PlannerExpertOption) => {
+    const orchestratedPhase = plannerPhaseAssignments.find((item) => item.id === expert.id)?.phase;
+    return String(orchestratedPhase ?? expert.phase ?? '').trim();
+  };
+
+  const getPlannerExpertPhaseBadge = (expert: PlannerExpertOption) => {
+    const phaseId = getPlannerExpertPhaseId(expert);
+    if (!phaseId) {
+      const unset = t('projectDetail.waitingHuman.phaseUnset');
+      return { label: unset, title: unset, rank: Number.MAX_SAFE_INTEGER };
+    }
+
+    const sortedPhases = [...plannerPhaseOptions].sort(
+      (left, right) => (left.order ?? Number.MAX_SAFE_INTEGER) - (right.order ?? Number.MAX_SAFE_INTEGER),
+    );
+    const phaseIndex = sortedPhases.findIndex((phase) => phase.id === phaseId);
+    const phase = phaseIndex >= 0 ? sortedPhases[phaseIndex] : null;
+    if (!phase) {
+      return { label: phaseId, title: phaseId, rank: Number.MAX_SAFE_INTEGER - 1 };
+    }
+
+    const displayName = getPlannerPhaseDisplayName(phase);
+    return {
+      label: displayName,
+      title: `${t('projectDetail.waitingHuman.phaseLabel')}: ${displayName} (${phase.id})`,
+      rank: phaseIndex,
+    };
+  };
+
+  const sortPlannerExpertsByPhase = (experts: PlannerExpertOption[]) => (
+    experts
+      .map((expert, index) => ({
+        expert,
+        index,
+        phaseMeta: getPlannerExpertPhaseBadge(expert),
+      }))
+      .sort((left, right) => left.phaseMeta.rank - right.phaseMeta.rank || left.index - right.index)
+  );
+
+  const getPlannerExpertSelectionDescription = () => {
+    const fallback = t('projectDetail.waitingHuman.expertSelectionDescription');
+    const waitingReason = workflowState?.waiting_reason?.trim();
+    if (!waitingReason) {
+      return fallback;
+    }
+
+    const isZh = i18n.language.toLowerCase().startsWith('zh');
+    if (isZh && /[A-Za-z]/.test(waitingReason) && !/[\u3400-\u9FFF]/.test(waitingReason)) {
+      return fallback;
+    }
+
+    return waitingReason;
   };
 
   const getWorkflowNodeDisplayName = (nodeId: string) => {
@@ -399,6 +528,7 @@ export function ProjectDetail() {
   useEffect(() => {
     if (!id) return;
     void loadResourceSummary();
+    void loadPlannerPhaseOrchestration();
   }, [id]);
 
   const fetchLogs = async () => {
@@ -556,6 +686,7 @@ export function ProjectDetail() {
               node_id: event.node_id,
               node_type: event.node_type,
               interrupt_id: event.interrupt_id,
+              interrupt_kind: event.interrupt_kind,
               question: event.question,
               context: event.context,
               resume_target: event.resume_target,
@@ -811,8 +942,10 @@ export function ProjectDetail() {
     setWorkflowState(null);
     setRunEvents([]);
     latestFetchedStateAtRef.current = 0;
+    plannerExpertSelectionInitializedRef.current = null;
     setReviewFeedback('');
     setSelectedInterruptOption('');
+    setSelectedPlannerExperts([]);
     seenEventIdsRef.current.clear();
     setSelectedNode('planner');
     setStreamStatus(streamStatus);
@@ -885,6 +1018,11 @@ export function ProjectDetail() {
     if (!id || !selectedVersion) return;
     const pendingInterrupt = workflowState?.pending_interrupt;
     const effectiveAction = action === 'approve' && pendingInterrupt?.interrupt_kind === 'ask_human' ? 'answer' : action;
+    const selectedExpertsPayload = effectiveAction === 'answer' && plannerExpertSelectionInterrupt
+      ? plannerExpertSelectionInterrupt.availableExperts
+        .map((expert) => expert.id)
+        .filter((expertId) => selectedPlannerExperts.includes(expertId))
+      : undefined;
     setResumeActionLoading(action);
     try {
       setStreamStatus('connecting');
@@ -893,12 +1031,16 @@ export function ProjectDetail() {
         node_id: pendingInterrupt?.node_id,
         interrupt_id: pendingInterrupt?.interrupt_id ?? undefined,
         selected_option: effectiveAction === 'answer' && selectedInterruptOption ? selectedInterruptOption : undefined,
+        selected_experts: selectedExpertsPayload,
         answer: effectiveAction === 'answer' ? reviewFeedback.trim() : undefined,
         feedback: effectiveAction === 'revise' ? reviewFeedback.trim() : undefined,
       });
       if (effectiveAction === 'approve' || effectiveAction === 'answer') {
+        clearPlannerExpertSelectionDraft(plannerExpertSelectionDraftKey);
+        plannerExpertSelectionInitializedRef.current = null;
         setReviewFeedback('');
         setSelectedInterruptOption('');
+        setSelectedPlannerExperts([]);
       }
       void fetchState();
     } catch {
@@ -915,6 +1057,14 @@ export function ProjectDetail() {
     }
   };
 
+  const togglePlannerExpertSelection = (expertId: string) => {
+    setSelectedPlannerExperts((prev) => (
+      prev.includes(expertId)
+        ? prev.filter((item) => item !== expertId)
+        : [...prev, expertId]
+    ));
+  };
+
   const handleSelectVersion = (version: string) => {
     eventSourceRef.current?.close();
     eventSourceRef.current = null;
@@ -926,8 +1076,10 @@ export function ProjectDetail() {
     setWorkflowState(null);
     latestFetchedStateAtRef.current = 0;
     setStreamStatus('idle');
+    plannerExpertSelectionInitializedRef.current = null;
     setReviewFeedback('');
     setSelectedInterruptOption('');
+    setSelectedPlannerExperts([]);
     seenEventIdsRef.current.clear();
     setSelectedFile(null);
     setSelectedNode('planner');
@@ -996,6 +1148,17 @@ export function ProjectDetail() {
       });
     } catch {
       setResourceSummary({ repositories: [], databases: [], knowledgeBases: [], experts: [] });
+    }
+  };
+
+  const loadPlannerPhaseOrchestration = async () => {
+    try {
+      const response = await api.getExpertPhaseOrchestration();
+      setPlannerPhaseOptions(Array.isArray(response?.phases) ? response.phases : []);
+      setPlannerPhaseAssignments(Array.isArray(response?.experts) ? response.experts : []);
+    } catch {
+      setPlannerPhaseOptions([]);
+      setPlannerPhaseAssignments([]);
     }
   };
 
@@ -1338,6 +1501,86 @@ export function ProjectDetail() {
   const pendingInterrupt = workflowState?.pending_interrupt ?? null;
   const isClarificationInterrupt = pendingInterrupt?.interrupt_kind === 'ask_human';
   const isCancelledState = workflowState?.waiting_reason?.includes('[CANCELLED]') ?? false;
+  const plannerExpertSelectionInterrupt = useMemo(() => {
+    if (!pendingInterrupt || pendingInterrupt.node_type !== 'planner') {
+      return null;
+    }
+    const context = (pendingInterrupt.context ?? {}) as Record<string, unknown>;
+    const interactionType = String(context.interaction_type ?? '').trim();
+    if (interactionType !== 'expert_selection') {
+      return null;
+    }
+
+    const recommendedExperts = Array.isArray(context.recommended_experts)
+      ? context.recommended_experts
+        .map((item) => String(item ?? '').trim())
+        .filter((item) => item.length > 0)
+      : [];
+    const selectedExperts = Array.isArray(context.selected_experts)
+      ? context.selected_experts
+        .map((item) => String(item ?? '').trim())
+        .filter((item) => item.length > 0)
+      : recommendedExperts;
+    const availableExperts = Array.isArray(context.available_experts)
+      ? context.available_experts
+        .map((item): PlannerExpertOption | null => {
+          if (!item || typeof item !== 'object') {
+            return null;
+          }
+          const row = item as Record<string, unknown>;
+          const id = String(row.id ?? '').trim();
+          if (!id) {
+            return null;
+          }
+          return {
+            id,
+            name: String(row.name ?? id).trim() || id,
+            name_zh: row.name_zh ? String(row.name_zh) : null,
+            name_en: row.name_en ? String(row.name_en) : null,
+            description: row.description ? String(row.description).trim() : '',
+            phase: row.phase ? String(row.phase).trim() : '',
+            recommended: Boolean(row.recommended),
+            auto_selected: Boolean(row.auto_selected),
+          };
+        })
+        .filter((item): item is PlannerExpertOption => item !== null)
+      : [];
+
+    return {
+      recommendedExperts,
+      selectedExperts,
+      availableExperts,
+    };
+  }, [pendingInterrupt]);
+  const isPlannerExpertSelectionInterrupt = Boolean(plannerExpertSelectionInterrupt);
+  const plannerExpertSelectionDraftKey = useMemo(() => {
+    if (!id || !selectedVersion || !pendingInterrupt?.interrupt_id || !plannerExpertSelectionInterrupt) {
+      return null;
+    }
+    return buildPlannerExpertSelectionDraftKey(id, selectedVersion, pendingInterrupt.interrupt_id);
+  }, [id, pendingInterrupt?.interrupt_id, plannerExpertSelectionInterrupt, selectedVersion]);
+  const selectedPlannerExpertOptions = useMemo(() => {
+    if (!plannerExpertSelectionInterrupt) {
+      return [];
+    }
+    const selectedSet = new Set(selectedPlannerExperts);
+    return plannerExpertSelectionInterrupt.availableExperts.filter((expert) => selectedSet.has(expert.id));
+  }, [plannerExpertSelectionInterrupt, selectedPlannerExperts]);
+  const availablePlannerExpertOptions = useMemo(() => {
+    if (!plannerExpertSelectionInterrupt) {
+      return [];
+    }
+    const selectedSet = new Set(selectedPlannerExperts);
+    return plannerExpertSelectionInterrupt.availableExperts.filter((expert) => !selectedSet.has(expert.id));
+  }, [plannerExpertSelectionInterrupt, selectedPlannerExperts]);
+  const selectedSortedPlannerExperts = useMemo(
+    () => sortPlannerExpertsByPhase(selectedPlannerExpertOptions),
+    [plannerPhaseAssignments, plannerPhaseOptions, selectedPlannerExpertOptions, i18n.language],
+  );
+  const availableSortedPlannerExperts = useMemo(
+    () => sortPlannerExpertsByPhase(availablePlannerExpertOptions),
+    [availablePlannerExpertOptions, plannerPhaseAssignments, plannerPhaseOptions, i18n.language],
+  );
   const interruptOptions = useMemo(() => {
     const rawOptions = pendingInterrupt?.context?.options;
     if (!Array.isArray(rawOptions)) {
@@ -1375,6 +1618,46 @@ export function ProjectDetail() {
       setSelectedInterruptOption('');
     }
   }, [interruptOptions, selectedInterruptOption]);
+
+  useEffect(() => {
+    const interruptId = pendingInterrupt?.interrupt_id ?? null;
+    if (!plannerExpertSelectionInterrupt || !interruptId) {
+      plannerExpertSelectionInitializedRef.current = null;
+      setSelectedPlannerExperts([]);
+      return;
+    }
+
+    if (plannerExpertSelectionInitializedRef.current === interruptId) {
+      return;
+    }
+
+    plannerExpertSelectionInitializedRef.current = interruptId;
+    const availableIds = new Set(
+      plannerExpertSelectionInterrupt.availableExperts.map((expert) => expert.id),
+    );
+    const savedDraft = plannerExpertSelectionDraftKey
+      ? loadPlannerExpertSelectionDraft(plannerExpertSelectionDraftKey)
+      : null;
+    const nextSelected = (savedDraft !== null
+      ? savedDraft
+      : plannerExpertSelectionInterrupt.selectedExperts)
+      .filter((expertId) => availableIds.has(expertId));
+    setSelectedPlannerExperts(nextSelected);
+  }, [pendingInterrupt?.interrupt_id, plannerExpertSelectionDraftKey, plannerExpertSelectionInterrupt]);
+
+  useEffect(() => {
+    if (!plannerExpertSelectionDraftKey || !plannerExpertSelectionInterrupt) {
+      return;
+    }
+
+    const availableIds = new Set(
+      plannerExpertSelectionInterrupt.availableExperts.map((expert) => expert.id),
+    );
+    savePlannerExpertSelectionDraft(
+      plannerExpertSelectionDraftKey,
+      selectedPlannerExperts.filter((expertId) => availableIds.has(expertId)),
+    );
+  }, [plannerExpertSelectionDraftKey, plannerExpertSelectionInterrupt, selectedPlannerExperts]);
 
   useEffect(() => {
     if (!workflowState?.current_node) {
@@ -1611,7 +1894,7 @@ export function ProjectDetail() {
               />
             </div>
 
-            <div className="space-y-3">
+            <div className="space-y-2">
 
               {projectModels.length > 0 && (
                 <div className="flex w-full items-center gap-2 rounded-2xl border border-gray-100 bg-gray-50 px-3 py-2.5">
@@ -1886,7 +2169,7 @@ export function ProjectDetail() {
                 </div>
               </div>
 
-            <div className="space-y-3">
+            <div className="space-y-2">
                 {workflowState?.run_status === 'running' && (
                   <button
                     onClick={handleCancelWorkflow}
@@ -2022,15 +2305,15 @@ export function ProjectDetail() {
             <section className="bg-white rounded-3xl border border-gray-100 shadow-sm p-6 space-y-5">
               <div className="flex items-center justify-between">
                 <div>
-                  <h2 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Project Resources</h2>
-                  <p className="text-xs text-gray-500 mt-2">代码仓、数据库和知识库入口摘要。</p>
+                  <h2 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">{resourceCopy.title}</h2>
+                  <p className="text-xs text-gray-500 mt-2">{resourceCopy.summary}</p>
                 </div>
                 <Link
                   to={`/projects/${id}/config`}
                   className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-indigo-50 text-indigo-600 text-[10px] font-black uppercase tracking-wider hover:bg-indigo-100 transition-all"
                 >
                   <Settings2 size={14} />
-                  Config
+                  {t('common.configuration')}
                 </Link>
               </div>
 
@@ -2038,7 +2321,7 @@ export function ProjectDetail() {
                 <div className="rounded-2xl border border-gray-100 bg-gray-50/70 p-4">
                   <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-gray-500 mb-3">
                     <FolderGit2 size={12} className="text-indigo-500" />
-                    Code Repos
+                    {resourceCopy.repositories}
                   </div>
                   {resourceSummary.repositories.length > 0 ? (
                     <div className="space-y-2">
@@ -2049,18 +2332,18 @@ export function ProjectDetail() {
                         </div>
                       ))}
                       {resourceSummary.repositories.length > 2 && (
-                        <div className="text-[10px] font-bold text-gray-400 uppercase">+{resourceSummary.repositories.length - 2} more</div>
+                        <div className="text-[10px] font-bold text-gray-400 uppercase">{resourceCopy.more(resourceSummary.repositories.length - 2)}</div>
                       )}
                     </div>
                   ) : (
-                    <div className="text-xs text-gray-400">未配置代码仓</div>
+                    <div className="text-xs text-gray-400">{resourceCopy.emptyRepositoriesShort}</div>
                   )}
                 </div>
 
                 <div className="rounded-2xl border border-gray-100 bg-gray-50/70 p-4">
                   <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-gray-500 mb-3">
                     <Database size={12} className="text-emerald-500" />
-                    Databases
+                    {resourceCopy.databases}
                   </div>
                   {resourceSummary.databases.length > 0 ? (
                     <div className="space-y-2">
@@ -2071,18 +2354,18 @@ export function ProjectDetail() {
                         </div>
                       ))}
                       {resourceSummary.databases.length > 2 && (
-                        <div className="text-[10px] font-bold text-gray-400 uppercase">+{resourceSummary.databases.length - 2} more</div>
+                        <div className="text-[10px] font-bold text-gray-400 uppercase">{resourceCopy.more(resourceSummary.databases.length - 2)}</div>
                       )}
                     </div>
                   ) : (
-                    <div className="text-xs text-gray-400">未配置数据库</div>
+                    <div className="text-xs text-gray-400">{resourceCopy.emptyDatabasesShort}</div>
                   )}
                 </div>
 
                 <div className="rounded-2xl border border-gray-100 bg-gray-50/70 p-4">
                   <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-gray-500 mb-3">
                     <BookOpen size={12} className="text-amber-500" />
-                    Knowledge Bases
+                    {resourceCopy.knowledgeBases}
                   </div>
                   {resourceSummary.knowledgeBases.length > 0 ? (
                     <div className="space-y-2">
@@ -2093,11 +2376,11 @@ export function ProjectDetail() {
                         </div>
                       ))}
                       {resourceSummary.knowledgeBases.length > 2 && (
-                        <div className="text-[10px] font-bold text-gray-400 uppercase">+{resourceSummary.knowledgeBases.length - 2} more</div>
+                        <div className="text-[10px] font-bold text-gray-400 uppercase">{resourceCopy.more(resourceSummary.knowledgeBases.length - 2)}</div>
                       )}
                     </div>
                   ) : (
-                    <div className="text-xs text-gray-400">未配置知识库</div>
+                    <div className="text-xs text-gray-400">{resourceCopy.emptyKnowledgeBasesShort}</div>
                   )}
                 </div>
               </div>
@@ -2112,10 +2395,20 @@ export function ProjectDetail() {
                     {isCancelledState ? t('projectDetail.retry.cancelled') : t('projectDetail.retry.waitingHuman')}
                   </div>
                   <h2 className="text-xl font-black tracking-tight text-amber-950">
-                    {isCancelledState ? t('projectDetail.retry.stoppedTitle') : (isClarificationInterrupt ? t('projectDetail.retry.clarificationTitle') : t('projectDetail.retry.reviewTitle'))}
+                    {isCancelledState
+                      ? t('projectDetail.retry.stoppedTitle')
+                      : isPlannerExpertSelectionInterrupt
+                        ? t('projectDetail.waitingHuman.expertSelectionTitle')
+                        : (isClarificationInterrupt ? t('projectDetail.retry.clarificationTitle') : t('projectDetail.retry.reviewTitle'))}
                   </h2>
                   <p className="text-sm font-medium text-amber-900/80">
-                    {workflowState.waiting_reason || (isCancelledState ? t('projectDetail.retry.stoppedDescription') : t('projectDetail.retry.reviewDescription'))}
+                    {isPlannerExpertSelectionInterrupt
+                      ? getPlannerExpertSelectionDescription()
+                      : workflowState.waiting_reason || (
+                          isCancelledState
+                            ? t('projectDetail.retry.stoppedDescription')
+                            : t('projectDetail.retry.reviewDescription')
+                        )}
                   </p>
                 </div>
                 {workflowState.current_node && (
@@ -2164,7 +2457,7 @@ export function ProjectDetail() {
               )}
 
               {!isCancelledState && isClarificationInterrupt && interruptOptions.length > 0 && (
-                <div className="space-y-3">
+                <div className="space-y-2">
                   <label className="text-[10px] font-black uppercase tracking-widest text-amber-700">
                     {t('projectDetail.waitingHuman.suggestedOptions')}
                   </label>
@@ -2204,13 +2497,15 @@ export function ProjectDetail() {
               {!isCancelledState && (
                 <div className="space-y-2">
                   <label className="text-[10px] font-black uppercase tracking-widest text-amber-700">
-                    {isClarificationInterrupt ? t('projectDetail.waitingHuman.additionalDetails') : t('projectDetail.waitingHuman.revisionFeedback')}
+                    {(isClarificationInterrupt || isPlannerExpertSelectionInterrupt)
+                      ? t('projectDetail.waitingHuman.additionalDetails')
+                      : t('projectDetail.waitingHuman.revisionFeedback')}
                   </label>
                   <textarea
                     value={reviewFeedback}
                     onChange={(e) => setReviewFeedback(e.target.value)}
                     placeholder={
-                      isClarificationInterrupt
+                      (isClarificationInterrupt || isPlannerExpertSelectionInterrupt)
                         ? t('projectDetail.waitingHuman.clarificationPlaceholder')
                         : t('projectDetail.waitingHuman.revisionPlaceholder')
                     }
@@ -2231,13 +2526,18 @@ export function ProjectDetail() {
                       {continuingWorkflow ? t('projectDetail.retry.retrying') : t('projectDetail.retry.retryWithSettings')}
                     </button>
                   </>
-                ) : isClarificationInterrupt ? (
+                ) : (isClarificationInterrupt || isPlannerExpertSelectionInterrupt) ? (
                   <button
                     onClick={() => handleResumeExecution('answer')}
-                    disabled={resumeActionLoading !== null || (!selectedInterruptOption && reviewFeedback.trim().length === 0)}
+                    disabled={
+                      resumeActionLoading !== null
+                      || (!isPlannerExpertSelectionInterrupt && !selectedInterruptOption && reviewFeedback.trim().length === 0)
+                    }
                     className="flex-1 rounded-2xl bg-emerald-600 px-5 py-4 text-sm font-black uppercase tracking-widest text-white transition-all hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-300"
                   >
-                    {resumeActionLoading === 'answer' ? t('projectDetail.waitingHuman.submitting') : t('projectDetail.waitingHuman.submitAnswer')}
+                    {resumeActionLoading === 'answer'
+                      ? t('projectDetail.waitingHuman.submitting')
+                      : (isPlannerExpertSelectionInterrupt ? t('projectDetail.waitingHuman.confirmExperts') : t('projectDetail.waitingHuman.submitAnswer'))}
                   </button>
                 ) : (
                   <>
@@ -2447,6 +2747,159 @@ export function ProjectDetail() {
         </div>
       )}
 
+      {plannerExpertSelectionInterrupt && workflowState?.run_status === 'waiting_human' && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/35 px-4 py-6 backdrop-blur-sm">
+          <div className="w-full max-w-7xl overflow-hidden rounded-[28px] border border-amber-200/80 bg-white shadow-2xl shadow-slate-900/20">
+            <div className="border-b border-amber-100 bg-[linear-gradient(135deg,rgba(255,251,235,1)_0%,rgba(255,247,237,0.94)_100%)] px-5 py-4 sm:px-6">
+              <div className="inline-flex items-center rounded-full bg-amber-100 px-3 py-1 text-[10px] font-black uppercase tracking-[0.2em] text-amber-700">
+                {t('projectDetail.retry.waitingHuman')}
+              </div>
+              <h2 className="mt-3 text-[26px] font-black tracking-tight text-amber-950">
+                {t('projectDetail.waitingHuman.expertSelectionTitle')}
+              </h2>
+              <p className="mt-2 max-w-4xl text-sm font-medium leading-6 text-amber-950/70">
+                {getPlannerExpertSelectionDescription()}
+              </p>
+              <div className="mt-4 flex flex-wrap gap-2 text-[11px] font-semibold text-amber-900/80">
+                <span className="rounded-full border border-amber-200 bg-white/90 px-3 py-1">
+                  {t('projectDetail.waitingHuman.selectedExpertsCount', { count: selectedPlannerExperts.length })}
+                </span>
+                <span className="rounded-full border border-amber-200 bg-white/90 px-3 py-1">
+                  {t('projectDetail.waitingHuman.availableExpertsCount', { count: availablePlannerExpertOptions.length })}
+                </span>
+              </div>
+            </div>
+
+            <div className="max-h-[72vh] overflow-y-auto px-5 py-5 sm:px-6">
+              <div className="grid gap-4 xl:grid-cols-2">
+                <section className="rounded-2xl border border-amber-200 bg-amber-50/45 p-4">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div className="text-[10px] font-black uppercase tracking-widest text-amber-950/70">
+                      {t('projectDetail.waitingHuman.selectedExperts')}
+                    </div>
+                    <span className="rounded-full border border-amber-200 bg-white px-2.5 py-1 text-[10px] font-black text-amber-700">
+                      {selectedPlannerExpertOptions.length}
+                    </span>
+                  </div>
+                  {selectedPlannerExpertOptions.length > 0 ? (
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {selectedSortedPlannerExperts.map(({ expert, phaseMeta }) => (
+                        <label
+                          key={`selected-${expert.id}`}
+                          className="group relative min-w-0 cursor-pointer rounded-xl border border-amber-200 bg-white/90 px-3 py-2.5 pl-10 shadow-sm shadow-amber-100/40 transition-all hover:-translate-y-0.5 hover:border-amber-300 hover:shadow-md"
+                        >
+                          <input
+                            type="checkbox"
+                            checked
+                            onChange={() => togglePlannerExpertSelection(expert.id)}
+                            className="absolute left-3 top-3.5 h-4 w-4 rounded border-amber-300 text-amber-600 focus:ring-amber-400"
+                          />
+                          <span
+                            className="absolute right-3 top-3 inline-flex max-w-[112px] truncate rounded-full border border-amber-200 bg-amber-100/80 px-2 py-0.5 text-[9px] font-black tracking-[0.14em] text-amber-800"
+                            title={phaseMeta.title}
+                          >
+                            {phaseMeta.label}
+                          </span>
+                          <div className="min-w-0 pr-20">
+                            <div className="truncate text-[13px] font-black leading-5 text-slate-900" title={getPlannerExpertDisplayName(expert)}>
+                              {getPlannerExpertDisplayName(expert)}
+                            </div>
+                            <div className="mt-0.5 truncate text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500" title={expert.id}>
+                              {expert.id}
+                            </div>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="rounded-2xl border border-amber-200/70 bg-white/80 px-4 py-3 text-sm font-medium text-slate-500">
+                      {t('projectDetail.waitingHuman.selectedExpertsEmpty')}
+                    </div>
+                  )}
+                </section>
+
+                <section className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+                      {t('projectDetail.waitingHuman.availableExperts')}
+                    </div>
+                    <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-black text-slate-600">
+                      {availablePlannerExpertOptions.length}
+                    </span>
+                  </div>
+                  {availablePlannerExpertOptions.length > 0 ? (
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {availableSortedPlannerExperts.map(({ expert, phaseMeta }) => (
+                        <label
+                          key={`available-${expert.id}`}
+                          className="group relative min-w-0 cursor-pointer rounded-xl border border-slate-200 bg-white px-3 py-2.5 pl-10 shadow-sm shadow-slate-200/40 transition-all hover:-translate-y-0.5 hover:border-amber-200 hover:shadow-md"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={false}
+                            onChange={() => togglePlannerExpertSelection(expert.id)}
+                            className="absolute left-3 top-3.5 h-4 w-4 rounded border-amber-300 text-amber-600 focus:ring-amber-400"
+                          />
+                          <span
+                            className="absolute right-3 top-3 inline-flex max-w-[112px] truncate rounded-full border border-slate-200 bg-slate-100 px-2 py-0.5 text-[9px] font-black tracking-[0.14em] text-slate-600"
+                            title={phaseMeta.title}
+                          >
+                            {phaseMeta.label}
+                          </span>
+                          <div className="min-w-0 pr-20">
+                            <div className="truncate text-[13px] font-black leading-5 text-slate-900" title={getPlannerExpertDisplayName(expert)}>
+                              {getPlannerExpertDisplayName(expert)}
+                            </div>
+                            <div className="mt-0.5 truncate text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500" title={expert.id}>
+                              {expert.id}
+                            </div>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-sm font-medium text-slate-500">
+                      {t('projectDetail.waitingHuman.availableExpertsEmpty')}
+                    </div>
+                  )}
+                </section>
+              </div>
+
+              <div className="mt-4 space-y-2">
+                <label className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+                  {t('projectDetail.waitingHuman.additionalDetails')}
+                </label>
+                <textarea
+                  value={reviewFeedback}
+                  onChange={(e) => setReviewFeedback(e.target.value)}
+                  placeholder={t('projectDetail.waitingHuman.expertSelectionNotePlaceholder')}
+                  className="w-full min-h-28 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-amber-300 resize-none"
+                />
+              </div>
+
+              {selectedPlannerExperts.length === 0 && (
+                <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">
+                  {t('projectDetail.waitingHuman.noExpertsSelectedWarning')}
+                </div>
+              )}
+            </div>
+
+            <div className="flex flex-col gap-3 border-t border-slate-100 bg-white px-6 py-5 sm:flex-row">
+              <button
+                type="button"
+                onClick={() => handleResumeExecution('answer')}
+                disabled={resumeActionLoading !== null}
+                className="flex-1 rounded-2xl bg-amber-600 px-5 py-4 text-sm font-black uppercase tracking-widest text-white transition-all hover:bg-amber-700 disabled:cursor-not-allowed disabled:bg-amber-300"
+              >
+                {resumeActionLoading === 'answer'
+                  ? t('projectDetail.waitingHuman.submitting')
+                  : t('projectDetail.waitingHuman.confirmExperts')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {uiError && (
         <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-50 animate-in slide-in-from-bottom duration-300">
           <div className="bg-gray-900 text-white px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-4 border border-white/10 backdrop-blur-xl">
@@ -2463,7 +2916,4 @@ export function ProjectDetail() {
     </div>
   );
 }
-
-
-
 

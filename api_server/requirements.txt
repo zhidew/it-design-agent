@@ -25,7 +25,7 @@ python-multipart==0.0.20
 
 # Database inspection support
 SQLAlchemy==2.0.38
-psycopg2-binary==2.9.10
+psycopg[binary]==3.3.3  # No system libraries required
 
 # Development and test tools
 black==25.1.0

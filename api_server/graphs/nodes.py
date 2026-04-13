@@ -21,6 +21,7 @@ if _project_root not in sys.path:
 from config import get_phase_config
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
+PLANNER_EXPERT_SELECTION_INTERACTION = "expert_selection"
 
 # Agent aliases for normalization (kept for backward compatibility)
 AGENT_ALIASES = {
@@ -31,6 +32,91 @@ AGENT_ALIASES = {
     "tests": "test-design",
     "test": "test-design",
 }
+
+
+def _dedupe_preserve_order(items: List[str]) -> List[str]:
+    seen: set[str] = set()
+    ordered: List[str] = []
+    for item in items:
+        normalized = str(item or "").strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        ordered.append(normalized)
+    return ordered
+
+
+def _normalize_expert_id_list(raw_ids: Any) -> List[str]:
+    if not isinstance(raw_ids, list):
+        return []
+    return _dedupe_preserve_order([str(item).strip() for item in raw_ids if str(item).strip()])
+
+
+def _format_expert_list(expert_ids: List[str]) -> str:
+    normalized = _dedupe_preserve_order(expert_ids)
+    return ", ".join(normalized) if normalized else "(none)"
+
+
+def _extract_planner_expert_selection(answer_entries: List[Dict[str, Any]]) -> Dict[str, Any] | None:
+    for entry in reversed(answer_entries):
+        if not isinstance(entry, dict):
+            continue
+        selection_type = str(entry.get("selection_type") or "").strip()
+        if selection_type != PLANNER_EXPERT_SELECTION_INTERACTION and "selected_experts" not in entry:
+            continue
+        return {
+            "selected_experts": _normalize_expert_id_list(entry.get("selected_experts")),
+            "recommended_experts": _normalize_expert_id_list(entry.get("recommended_experts")),
+        }
+    return None
+
+
+def _build_expert_selection_interrupt_context(
+    *,
+    enabled_expert_ids: List[str],
+    recommended_expert_ids: List[str],
+    auto_selected_expert_ids: List[str],
+) -> Dict[str, Any]:
+    try:
+        from registry.expert_registry import ExpertRegistry
+
+        registry = ExpertRegistry.get_instance()
+    except RuntimeError:
+        registry = None
+
+    recommended_set = set(recommended_expert_ids)
+    auto_selected_set = set(auto_selected_expert_ids)
+    available_experts: List[Dict[str, Any]] = []
+
+    for expert_id in _dedupe_preserve_order(enabled_expert_ids):
+        manifest = registry.get_manifest(expert_id) if registry else None
+        description = (manifest.description if manifest else "") or ""
+        phase = (manifest.phase if manifest else "") or _get_base_phase(expert_id)
+        available_experts.append(
+            {
+                "id": expert_id,
+                "name": (manifest.name if manifest else "") or expert_id,
+                "name_zh": manifest.name_zh if manifest else "",
+                "name_en": manifest.name_en if manifest else expert_id,
+                "description": description,
+                "phase": phase,
+                "recommended": expert_id in recommended_set,
+                "auto_selected": expert_id in auto_selected_set,
+            }
+        )
+
+    return {
+        "interaction_type": PLANNER_EXPERT_SELECTION_INTERACTION,
+        "selection_mode": "multi_select",
+        "why_needed": (
+            "Planner has finished the initial expert recommendation. "
+            "Please confirm the final experts before execution starts."
+        ),
+        "recommended_experts": list(recommended_expert_ids),
+        "selected_experts": list(recommended_expert_ids),
+        "available_experts": available_experts,
+        "allow_free_text": True,
+    }
 
 def _collect_planner_signal_text(requirement_text: str, human_inputs: Dict[str, Any]) -> str:
     candidate_texts: List[str] = [str(requirement_text or "")]
@@ -1208,6 +1294,7 @@ async def planner_node(state: DesignState) -> Dict[str, Any]:
         "extract_structure": _sanitize_tool_context(extract_structure_result["output"], "baseline"),
     }
     planner_answers = ((state.get("human_answers") or {}).get("planner") or [])
+    planner_selection_override = _extract_planner_expert_selection(planner_answers)
     human_feedback = state.get("human_feedback", "")
     human_inputs = _summarize_human_inputs(planner_answers, human_feedback)
     asset_context = _build_project_asset_context(project_id)
@@ -1225,9 +1312,10 @@ async def planner_node(state: DesignState) -> Dict[str, Any]:
     
     registry = AgentRegistry.get_instance()
     # Filter experts enabled for this project
-    enabled_ids = metadata_db.list_enabled_expert_ids(project_id)
+    enabled_ids = _dedupe_preserve_order(metadata_db.list_enabled_expert_ids(project_id))
     # Always exclude internal system agents from design planning
     design_expert_ids = [eid for eid in enabled_ids if eid != "expert-creator"]
+    enabled_experts = set(design_expert_ids)
     
     agent_descriptions = registry.get_planner_agent_descriptions(filter_ids=design_expert_ids)
     if not agent_descriptions.strip():
@@ -1338,58 +1426,89 @@ Output JSON format:
     needs_human = False
     ask_human_question = ""
     ask_human_context: Dict[str, Any] = {}
+    active_agents: set[str] = set()
+    policy_auto_selected: List[str] = []
     runtime_llm_settings = resolve_runtime_llm_settings(state.get("design_context"))
 
-    try:
-        print("[DEBUG] Planner: Calling LLM for intent analysis...")
-        llm_decision = await asyncio.to_thread(
-            generate_with_llm, 
-            system_prompt, 
-            user_prompt, 
-            ["active_agents"],
-            llm_settings=runtime_llm_settings,
-            project_id=project_id,
-            version=version,
-            node_id="planner"
-        )
-
-        decision_data = json.loads(llm_decision.artifacts.get("active_agents", "[]"))
-        if isinstance(decision_data, dict):
-            active_agents = set(decision_data.get("active_agents", []))
-            needs_human = bool(decision_data.get("needs_human"))
-            ask_human_question = (decision_data.get("question") or "").strip()
-            ask_human_context = _normalize_interrupt_context(decision_data.get("context"))
-        elif isinstance(decision_data, list):
-            active_agents = set(decision_data)
+    if planner_selection_override is not None:
+        selected_by_human = set(planner_selection_override.get("selected_experts") or [])
+        recommended_by_planner = planner_selection_override.get("recommended_experts") or []
+        active_agents = _normalize_active_agents(selected_by_human)
+        print(f"[DEBUG] Planner: using human-selected experts override: {sorted(active_agents)}")
+        print(f"[DEBUG] Planner: allowed design_experts for this project: {sorted(enabled_experts)}")
+        if enabled_experts:
+            active_agents = {agent for agent in active_agents if agent in enabled_experts}
         else:
-            active_agents = {"modular-design"}
-    except Exception as exc:
-        print(f"[ERROR] Planner LLM failed: {exc}. Falling back to default.")
-        active_agents = {"modular-design"}
+            active_agents = set()
 
-    active_agents = _normalize_active_agents(active_agents)
-    print(f"[DEBUG] Planner: active_agents after normalization: {sorted(active_agents)}")
-    
-    # Strictly filter by enabled experts from project configuration
-    enabled_experts = set(design_expert_ids)
-    print(f"[DEBUG] Planner: allowed design_experts for this project: {sorted(enabled_experts)}")
-    
-    if enabled_experts:
-        # Only use experts that are explicitly enabled
-        active_agents = {agent for agent in active_agents if agent in enabled_experts}
-        print(f"[DEBUG] Planner: final filtered active_agents: {sorted(active_agents)}")
+        added_experts = sorted(active_agents - set(recommended_by_planner))
+        removed_experts = sorted(set(recommended_by_planner) - active_agents)
+        override_reasoning_sections = [
+            "Planner expert recommendation was reviewed by a human before execution.",
+            f"Planner recommended experts: {_format_expert_list(recommended_by_planner)}.",
+            f"Human confirmed experts: {_format_expert_list(sorted(active_agents))}.",
+        ]
+        if added_experts:
+            override_reasoning_sections.append(f"Human added experts: {_format_expert_list(added_experts)}.")
+        if removed_experts:
+            override_reasoning_sections.append(f"Human removed experts: {_format_expert_list(removed_experts)}.")
+        if human_feedback.strip():
+            override_reasoning_sections.append(f"Human note: {human_feedback.strip()}")
+        llm_decision = SubagentOutput(
+            reasoning="\n".join(override_reasoning_sections),
+            artifacts={"active_agents": json.dumps(sorted(active_agents), ensure_ascii=False)},
+        )
+        decision_data = {"active_agents": sorted(active_agents), "source": "human_override"}
     else:
-        # If no experts are enabled, we MUST NOT fallback to "all"
-        print(f"[DEBUG] Planner: No design experts are enabled for this project. Clearing selection.")
-        active_agents = set()
+        try:
+            print("[DEBUG] Planner: Calling LLM for intent analysis...")
+            llm_decision = await asyncio.to_thread(
+                generate_with_llm, 
+                system_prompt, 
+                user_prompt, 
+                ["active_agents"],
+                llm_settings=runtime_llm_settings,
+                project_id=project_id,
+                version=version,
+                node_id="planner"
+            )
 
-    # Apply generic policy-driven auto-selection from expert YAML.
-    active_agents = _apply_policy_based_auto_selection(
-        active_agents=active_agents,
-        enabled_experts=enabled_experts,
-        requirement_text=requirement_text,
-        human_inputs=human_inputs,
-    )
+            decision_data = json.loads(llm_decision.artifacts.get("active_agents", "[]"))
+            if isinstance(decision_data, dict):
+                active_agents = set(decision_data.get("active_agents", []))
+                needs_human = bool(decision_data.get("needs_human"))
+                ask_human_question = (decision_data.get("question") or "").strip()
+                ask_human_context = _normalize_interrupt_context(decision_data.get("context"))
+            elif isinstance(decision_data, list):
+                active_agents = set(decision_data)
+            else:
+                active_agents = {"modular-design"}
+        except Exception as exc:
+            print(f"[ERROR] Planner LLM failed: {exc}. Falling back to default.")
+            active_agents = {"modular-design"}
+
+        active_agents = _normalize_active_agents(active_agents)
+        print(f"[DEBUG] Planner: active_agents after normalization: {sorted(active_agents)}")
+        print(f"[DEBUG] Planner: allowed design_experts for this project: {sorted(enabled_experts)}")
+
+        if enabled_experts:
+            # Only use experts that are explicitly enabled
+            active_agents = {agent for agent in active_agents if agent in enabled_experts}
+            print(f"[DEBUG] Planner: final filtered active_agents: {sorted(active_agents)}")
+        else:
+            # If no experts are enabled, we MUST NOT fallback to "all"
+            print(f"[DEBUG] Planner: No design experts are enabled for this project. Clearing selection.")
+            active_agents = set()
+
+        # Apply generic policy-driven auto-selection from expert YAML.
+        pre_policy_agents = set(active_agents)
+        active_agents = _apply_policy_based_auto_selection(
+            active_agents=active_agents,
+            enabled_experts=enabled_experts,
+            requirement_text=requirement_text,
+            human_inputs=human_inputs,
+        )
+        policy_auto_selected = sorted(active_agents - pre_policy_agents)
     
     # Early return if human intervention is needed - don't build full task queue yet
     if needs_human:
@@ -1456,6 +1575,84 @@ Output JSON format:
             "task_queue": _planner_waiting_task(),
             "history": [
                 "[SYSTEM] Planner: insufficient information detected, requesting human clarification.",
+            ],
+            "human_intervention_required": True,
+            "waiting_reason": pending_interrupt["question"],
+            "pending_interrupt": pending_interrupt,
+            "run_status": "waiting_human",
+            "last_worker": "planner",
+            "current_node": "planner",
+            "tool_results": tool_results,
+        }
+
+    if enabled_experts and planner_selection_override is None:
+        recommended_experts = sorted(active_agents)
+        pending_interrupt = _build_pending_interrupt(
+            node_id="planner",
+            node_type="planner",
+            question="Review the planner's expert selection. You can add experts or remove selected experts before execution starts.",
+            context=_build_expert_selection_interrupt_context(
+                enabled_expert_ids=design_expert_ids,
+                recommended_expert_ids=recommended_experts,
+                auto_selected_expert_ids=policy_auto_selected,
+            ),
+            resume_target="planner",
+            interrupt_kind=PLANNER_EXPERT_SELECTION_INTERACTION,
+        )
+
+        reasoning_sections = [
+            "### LLM Orchestration Reasoning",
+            "",
+            llm_decision.reasoning,
+            "",
+            f"**Planner Recommended Experts:** {_format_expert_list(recommended_experts)}",
+            "",
+            "**Status:** Waiting for human confirmation of the expert selection before execution.",
+        ]
+        reasoning_content = "\n".join(reasoning_sections)
+        (project_path / "logs" / "planner-reasoning.md").write_text(reasoning_content, encoding="utf-8")
+        topic_ownership = _build_topic_ownership_payload(set(recommended_experts))
+
+        baseline_payload = {
+            "project_name": project_id,
+            "project_id": project_id,
+            "version": version,
+            "requirement": requirement_text,
+            "uploaded_files": uploaded_files,
+            "candidate_files": candidate_files,
+            "project_layout": {
+                "project_root": ".",
+                "baseline_dir": "baseline",
+                "artifacts_dir": "artifacts",
+                "evidence_dir": "evidence",
+            },
+            "tool_context": tool_context_payload,
+            "active_agents": recommended_experts,
+            "topic_ownership": topic_ownership,
+            "domain_name": "Domain",
+            "aggregate_root": "Entity",
+            "provider": "ExternalSystem",
+            "consumer": "ConsumerSystem",
+        }
+        if asset_context:
+            baseline_payload["configured_assets"] = asset_context
+        if asset_insights and any(k.endswith("_insights") for k in asset_insights):
+            payload_insights = {k: v for k, v in asset_insights.items() if k.endswith("_insights")}
+            payload_insights["query_status"] = asset_insights.get("query_status", {})
+            payload_insights["query_errors"] = asset_insights.get("query_errors", [])
+            baseline_payload["asset_insights"] = payload_insights
+        if human_inputs:
+            baseline_payload["human_inputs"] = human_inputs
+        (baseline_dir / "requirements.json").write_text(
+            json.dumps(baseline_payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        return {
+            "workflow_phase": "PLANNING",
+            "task_queue": _planner_waiting_task(),
+            "history": [
+                "[SYSTEM] Planner: expert recommendation ready, waiting for human confirmation.",
             ],
             "human_intervention_required": True,
             "waiting_reason": pending_interrupt["question"],

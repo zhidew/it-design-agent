@@ -83,73 +83,44 @@ function extractApiErrorDetail(error: unknown): string {
   return typeof detail === 'string' ? detail : '';
 }
 
-function buildDependencyRecommendation(finding: DependencyFinding, isZh: boolean): string {
-  switch (finding.code) {
+function getDependencyRecommendationKey(code: string): string {
+  switch (code) {
     case 'MISSING_PHASE_BINDING':
-      return isZh
-        ? '先为该专家补齐明确的执行 Phase，再重新做整体依赖校验。'
-        : 'Assign this expert to a concrete execution phase, then rerun the overall dependency validation.';
+      return 'management.dependencyRecommendations.missingPhaseBinding';
     case 'BACKWARD_PHASE_DEPENDENCY':
-      return isZh
-        ? '把依赖专家前移到更早的 Phase，或重构这条依赖关系，确保依赖只来自更早阶段。'
-        : 'Move the dependency into an earlier phase or refactor the edge so dependencies only point to earlier phases.';
+      return 'management.dependencyRecommendations.backwardPhaseDependency';
     case 'DEPENDENCY_CYCLE':
-      return isZh
-        ? '拆开循环依赖，改成单向依赖链，或提取共享产物给更早阶段的公共专家产出。'
-        : 'Break the cycle into a one-way dependency chain, or extract shared outputs into an earlier common expert.';
+      return 'management.dependencyRecommendations.dependencyCycle';
     case 'MISSING_DEPENDENCY':
     case 'UNKNOWN_UPSTREAM_EXPERT':
-      return isZh
-        ? '把引用改成真实存在的专家 ID，或删除这条无效依赖/上游映射。'
-        : 'Replace the reference with a real expert ID, or remove the invalid dependency/upstream mapping.';
+      return 'management.dependencyRecommendations.missingDependency';
     case 'MISSING_UPSTREAM_ARTIFACT_MAPPING':
     case 'DEPENDENCY_WITHOUT_ARTIFACT_MAPPING':
-      return isZh
-        ? '为依赖补充 `upstream_artifacts`，只声明当前专家真正需要消费的上游产物。'
-        : 'Add `upstream_artifacts` for this dependency and declare only the upstream artifacts the expert really consumes.';
+      return 'management.dependencyRecommendations.missingUpstreamArtifactMapping';
     case 'UPSTREAM_NOT_IN_DEPENDENCIES':
-      return isZh
-        ? '让 `upstream_artifacts` 与 `dependencies` 保持一致：要么补上依赖，要么删除多余映射。'
-        : 'Keep `upstream_artifacts` aligned with `dependencies`: either add the dependency or remove the extra mapping.';
+      return 'management.dependencyRecommendations.upstreamNotInDependencies';
     case 'UNKNOWN_UPSTREAM_ARTIFACT':
-      return isZh
-        ? '把映射产物名改成上游专家 `expected_outputs` 中真实存在的文件名。'
-        : 'Change the mapped artifact names to files that actually exist in the upstream expert `expected_outputs`.';
+      return 'management.dependencyRecommendations.unknownUpstreamArtifact';
     case 'UPSTREAM_HAS_NO_EXPECTED_OUTPUTS':
-      return isZh
-        ? '如果确实依赖该上游，请先为上游专家补充 `expected_outputs`；否则移除这条产物映射。'
-        : 'If this upstream is intentional, add `expected_outputs` to it first; otherwise remove the artifact mapping.';
+      return 'management.dependencyRecommendations.upstreamHasNoExpectedOutputs';
     case 'EMPTY_UPSTREAM_ARTIFACT_MAPPING':
-      return isZh
-        ? '空的上游产物映射没有实际作用，建议补充具体产物名或直接删除。'
-        : 'An empty upstream artifact mapping is not useful; add concrete artifact names or remove the mapping.';
+      return 'management.dependencyRecommendations.emptyUpstreamArtifactMapping';
     case 'BOUNDARY_INPUT_MISMATCH':
-      return isZh
-        ? '让 `boundary_upstream_inputs` 与 `scheduling.dependencies` 对齐，避免边界契约和编排关系脱节。'
-        : 'Align `boundary_upstream_inputs` with `scheduling.dependencies` so the boundary contract matches orchestration.';
+      return 'management.dependencyRecommendations.boundaryInputMismatch';
     case 'DUPLICATE_EXPECTED_OUTPUT':
-      return isZh
-        ? '避免多个专家产出同名文件，建议统一命名规则或把共享产物收敛到单一上游专家。'
-        : 'Avoid multiple experts producing the same file name; standardize naming or consolidate the shared output into one upstream expert.';
+      return 'management.dependencyRecommendations.duplicateExpectedOutput';
     case 'SELF_DEPENDENCY':
     case 'SELF_UPSTREAM_ARTIFACT':
-      return isZh
-        ? '移除自依赖/自引用，上游关系应只指向其他专家。'
-        : 'Remove self-dependencies/self-references; upstream relationships should only point to other experts.';
+      return 'management.dependencyRecommendations.selfDependency';
     case 'DUPLICATE_PHASE_ASSIGNMENT':
-      return isZh
-        ? '确保每个专家只归属一个 Phase，避免在 phases 编排里重复挂载。'
-        : 'Ensure each expert belongs to exactly one phase and is not mounted multiple times in phase orchestration.';
+      return 'management.dependencyRecommendations.duplicatePhaseAssignment';
     default:
-      return isZh
-        ? '先修正这条依赖定义，再重新执行整体校验，确认专家图和产物映射已经一致。'
-        : 'Fix this dependency definition first, then rerun the overall validation to confirm the graph and artifact mappings are aligned.';
+      return 'management.dependencyRecommendations.default';
   }
 }
 
 export function PhaseOrchestrationPanel({ expertVersionKey }: PhaseOrchestrationPanelProps) {
   const { t, i18n } = useTranslation();
-  const isZh = i18n.language.toLowerCase().startsWith('zh');
   const [payload, setPayload] = useState<PhaseOrchestrationPayload | null>(null);
   const [draftPhases, setDraftPhases] = useState<PhaseItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -274,11 +245,11 @@ export function PhaseOrchestrationPanel({ expertVersionKey }: PhaseOrchestration
     validationReport.findings.forEach((finding) => {
       const key = finding.code;
       if (!uniqueSuggestions.has(key)) {
-        uniqueSuggestions.set(key, buildDependencyRecommendation(finding, isZh));
+        uniqueSuggestions.set(key, t(getDependencyRecommendationKey(finding.code)));
       }
     });
     return Array.from(uniqueSuggestions.values());
-  }, [validationReport, isZh]);
+  }, [validationReport, t]);
 
   const moveExpertToPhase = (expertId: string, phaseId: string) => {
     setDraftPhases((prev) =>
@@ -449,12 +420,10 @@ export function PhaseOrchestrationPanel({ expertVersionKey }: PhaseOrchestration
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div>
                 <div className="text-sm font-black text-gray-900">
-                  {isZh ? '整体依赖校验结果' : 'Dependency Validation Summary'}
+                  {t('management.validationSummaryTitle')}
                 </div>
                 <div className="mt-1 max-w-4xl text-sm leading-relaxed text-gray-500">
-                  {isZh
-                    ? '这里统一检查专家图的依赖、阶段顺序和产物映射，并给出建议。'
-                    : 'Run one unified check for the full expert graph, including dependencies, phase ordering, and artifact mappings, with actionable optimization guidance.'}
+                  {t('management.validationSummaryDescription')}
                 </div>
               </div>
               <div className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-xs font-black uppercase ${
@@ -487,7 +456,7 @@ export function PhaseOrchestrationPanel({ expertVersionKey }: PhaseOrchestration
             {optimizationSuggestions.length > 0 ? (
               <div className="mt-5 rounded-2xl border border-indigo-100 bg-indigo-50/70 p-4">
                 <div className="text-[10px] font-black uppercase tracking-widest text-indigo-500">
-                  {isZh ? '优化建议' : 'Optimization Suggestions'}
+                  {t('management.optimizationSuggestions')}
                 </div>
                 <div className="mt-3 grid grid-cols-1 gap-3 xl:grid-cols-2">
                   {optimizationSuggestions.map((suggestion) => (
@@ -513,7 +482,7 @@ export function PhaseOrchestrationPanel({ expertVersionKey }: PhaseOrchestration
                       : finding.severity === 'warning'
                         ? 'border-amber-200 bg-amber-50 text-amber-700'
                         : 'border-sky-200 bg-sky-50 text-sky-700';
-                    const recommendation = buildDependencyRecommendation(finding, isZh);
+                    const recommendation = t(getDependencyRecommendationKey(finding.code));
                     return (
                       <div key={`${finding.code}-${finding.expert_id ?? 'global'}-${finding.related_expert_id ?? 'none'}-${index}`} className={`rounded-2xl border p-4 ${severityClasses}`}>
                         <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
@@ -538,7 +507,7 @@ export function PhaseOrchestrationPanel({ expertVersionKey }: PhaseOrchestration
                             </div>
                             <div className="text-sm font-semibold leading-relaxed">{finding.message}</div>
                             <div className="rounded-xl border border-white/60 bg-white/70 px-4 py-3 text-sm leading-relaxed text-gray-700">
-                              <span className="font-black">{isZh ? '建议：' : 'Suggestion: '}</span>
+                              <span className="font-black">{t('management.recommendationLabel')}</span>
                               {recommendation}
                             </div>
                           </div>

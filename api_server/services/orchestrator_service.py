@@ -15,7 +15,7 @@ from graphs.builder import CHECKPOINT_DB_PATH, CHECKPOINTS_DIR, create_design_gr
 from graphs.state import merge_artifacts
 from models.events import dump_event, validate_event_payload
 from services.log_service import get_run_log, save_run_log
-from services.db_service import metadata_db
+from services.db_service import JSON_UNSET, metadata_db
 from registry.expert_registry import ExpertRegistry
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -31,6 +31,11 @@ RUN_STATUS_WAITING_HUMAN = "waiting_human"
 RUN_STATUS_SUCCESS = "success"
 RUN_STATUS_FAILED = "failed"
 RUN_STATUS_SCHEDULED = "scheduled"
+PLANNER_EXPERT_SELECTION_INTERACTION = "expert_selection"
+PLANNER_EXPERT_SELECTION_QUESTION = (
+    "Review the planner's expert selection. "
+    "You can add experts or remove selected experts before execution starts."
+)
 STALE_RUNNING_TIMEOUT_SECONDS = int(os.getenv("ORCHESTRATOR_STALE_TIMEOUT_SECONDS", "180"))
 
 jobs = {}
@@ -184,12 +189,13 @@ def _set_runtime_state(
     run_status: str,
     current_node: str | None = None,
     waiting_reason: str | None = None,
+    pending_interrupt: dict | None = None,
     can_resume: bool | None = None,
     job_id: str | None = None,
 ):
     thread_id = _thread_id(project_id, version)
     previous = runtime_registry.get(thread_id, {})
-    
+
     # Also update persistent metadata DB
     metadata_db.upsert_version(project_id, version, previous.get("requirement", ""), run_status)
 
@@ -201,6 +207,7 @@ def _set_runtime_state(
         "run_status": run_status,
         "current_node": current_node,
         "waiting_reason": waiting_reason,
+        "pending_interrupt": pending_interrupt if run_status == RUN_STATUS_WAITING_HUMAN else None,
         "can_resume": (
             can_resume
             if can_resume is not None
@@ -221,6 +228,7 @@ def _set_runtime_state(
         current_phase=current_phase,
         current_node=current_node,
         waiting_reason=waiting_reason,
+        pending_interrupt=pending_interrupt if run_status == RUN_STATUS_WAITING_HUMAN else None,
         started_at=started_at,
         finished_at=finished_at,
     )
@@ -239,8 +247,13 @@ def _sync_workflow_projection_from_payload(
     current_node = payload.get("current_node")
     run_status = payload.get("run_status")
     waiting_reason = payload.get("waiting_reason")
+    pending_interrupt = (
+        payload.get("pending_interrupt")
+        if "pending_interrupt" in payload
+        else (None if run_status and run_status != RUN_STATUS_WAITING_HUMAN else JSON_UNSET)
+    )
 
-    if workflow_phase or current_node or run_status or waiting_reason:
+    if workflow_phase or current_node or run_status or waiting_reason or pending_interrupt is not JSON_UNSET:
         existing = metadata_db.get_workflow_run(project_id, version) or {}
         metadata_db.upsert_workflow_run(
             project_id,
@@ -250,6 +263,7 @@ def _sync_workflow_projection_from_payload(
             current_phase=workflow_phase or existing.get("current_phase"),
             current_node=current_node if current_node is not None else existing.get("current_node"),
             waiting_reason=waiting_reason if waiting_reason is not None else existing.get("waiting_reason"),
+            pending_interrupt=pending_interrupt,
             started_at=existing.get("started_at"),
             finished_at=existing.get("finished_at"),
         )
@@ -435,6 +449,145 @@ def _derive_current_node(task_queue: list[dict], raw_state: dict | None) -> str 
     return raw_state.get("last_worker") if raw_state else None
 
 
+def _normalize_string_list(raw_items) -> list[str]:
+    if not isinstance(raw_items, list):
+        return []
+
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for item in raw_items:
+        normalized = str(item or "").strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        ordered.append(normalized)
+    return ordered
+
+
+def _parse_planner_recommended_experts(reasoning_content: str | None) -> list[str]:
+    if not isinstance(reasoning_content, str) or not reasoning_content.strip():
+        return []
+
+    marker = "**Planner Recommended Experts:**"
+    for line in reasoning_content.splitlines():
+        if marker not in line:
+            continue
+        raw_experts = line.split(marker, 1)[1].strip()
+        if not raw_experts or raw_experts == "(none)":
+            return []
+        return _normalize_string_list([item.strip() for item in raw_experts.split(",")])
+    return []
+
+
+def _infer_legacy_pending_interrupt(
+    project_id: str,
+    version: str,
+    state: dict,
+    *,
+    task_queue: list[dict],
+    run_status: str | None,
+    current_node: str | None,
+    waiting_reason: str | None,
+) -> dict | None:
+    if run_status != RUN_STATUS_WAITING_HUMAN:
+        return None
+
+    planner_waiting = any(
+        str(task.get("agent_type") or "").strip() == "planner"
+        and str(task.get("status") or "").strip() == "waiting_human"
+        for task in task_queue
+    )
+    if current_node != "planner" and not planner_waiting:
+        return None
+
+    reason_text = str(waiting_reason or "").casefold()
+    if "expert selection" not in reason_text and "planner" not in reason_text:
+        return None
+
+    artifacts = state.get("artifacts") or {}
+    requirements_payload = {}
+    raw_requirements = artifacts.get("requirements.json")
+    if isinstance(raw_requirements, str):
+        try:
+            requirements_payload = json.loads(raw_requirements) or {}
+        except Exception:
+            requirements_payload = {}
+
+    recommended_experts = _normalize_string_list(requirements_payload.get("active_agents"))
+    if not recommended_experts:
+        recommended_experts = _parse_planner_recommended_experts(artifacts.get("planner-reasoning.md"))
+
+    enabled_expert_ids = _normalize_string_list(metadata_db.list_enabled_expert_ids(project_id))
+    if not enabled_expert_ids:
+        enabled_expert_ids = list(recommended_experts)
+
+    available_expert_map = {
+        expert["id"]: expert
+        for expert in list_experts()
+        if expert.get("id") not in SYSTEM_EXPERTS
+    }
+    recommended_set = set(recommended_experts)
+    available_experts = []
+    available_ids = set()
+
+    for expert_id in enabled_expert_ids:
+        expert = available_expert_map.get(expert_id) or {}
+        available_experts.append(
+            {
+                "id": expert_id,
+                "name": expert.get("name") or expert_id,
+                "name_zh": expert.get("name_zh") or None,
+                "name_en": expert.get("name_en") or expert.get("name") or expert_id,
+                "description": expert.get("description") or "",
+                "phase": expert.get("phase") or "",
+                "recommended": expert_id in recommended_set,
+                "auto_selected": expert_id in recommended_set,
+            }
+        )
+        available_ids.add(expert_id)
+
+    for expert_id in recommended_experts:
+        if expert_id in available_ids:
+            continue
+        expert = available_expert_map.get(expert_id) or {}
+        available_experts.append(
+            {
+                "id": expert_id,
+                "name": expert.get("name") or expert_id,
+                "name_zh": expert.get("name_zh") or None,
+                "name_en": expert.get("name_en") or expert.get("name") or expert_id,
+                "description": expert.get("description") or "",
+                "phase": expert.get("phase") or "",
+                "recommended": True,
+                "auto_selected": True,
+            }
+        )
+
+    if not available_experts and not recommended_experts:
+        return None
+
+    return {
+        "node_id": "planner",
+        "node_type": "planner",
+        "interrupt_id": f"legacy-planner-expert-selection:{project_id}:{version}",
+        "question": PLANNER_EXPERT_SELECTION_QUESTION,
+        "context": {
+            "interaction_type": PLANNER_EXPERT_SELECTION_INTERACTION,
+            "selection_mode": "multi_select",
+            "why_needed": (
+                "Planner has finished the initial expert recommendation. "
+                "Please confirm the final experts before execution starts."
+            ),
+            "recommended_experts": recommended_experts,
+            "selected_experts": recommended_experts,
+            "available_experts": available_experts,
+            "allow_free_text": True,
+        },
+        "resume_target": "planner",
+        "interrupt_kind": PLANNER_EXPERT_SELECTION_INTERACTION,
+    }
+
+
 def _parse_iso_timestamp(value: str | None) -> datetime.datetime | None:
     if not value:
         return None
@@ -560,6 +713,7 @@ def _normalize_state(project_id: str, version: str, raw_state: dict | None, runt
     history = state.get("history") or []
     messages = state.get("messages") or []
     artifacts = merge_artifacts(_load_artifacts_from_disk(project_id, version), state.get("artifacts") or {})
+    state["artifacts"] = artifacts
     human_intervention_required = bool(state.get("human_intervention_required", False))
 
     derived_run_status = (
@@ -582,6 +736,24 @@ def _normalize_state(project_id: str, version: str, raw_state: dict | None, runt
     waiting_reason = runtime.get("waiting_reason") or workflow_run.get("waiting_reason")
     if waiting_reason is None:
         waiting_reason = state.get("waiting_reason")
+
+    pending_interrupt = (
+        state.get("pending_interrupt")
+        or runtime.get("pending_interrupt")
+        or workflow_run.get("pending_interrupt")
+    )
+    if not pending_interrupt:
+        pending_interrupt = _infer_legacy_pending_interrupt(
+            project_id,
+            version,
+            state,
+            task_queue=task_queue,
+            run_status=run_status,
+            current_node=current_node,
+            waiting_reason=waiting_reason,
+        )
+    if waiting_reason is None and pending_interrupt:
+        waiting_reason = pending_interrupt.get("question")
     if waiting_reason is None and run_status == RUN_STATUS_WAITING_HUMAN:
         waiting_reason = "human_intervention_required"
     if waiting_reason is None and run_status == RUN_STATUS_SCHEDULED:
@@ -654,7 +826,7 @@ def _normalize_state(project_id: str, version: str, raw_state: dict | None, runt
         "workflow_phase": workflow_run.get("current_phase") or state.get("workflow_phase"),
         "can_resume": can_resume,
         "waiting_reason": waiting_reason,
-        "pending_interrupt": state.get("pending_interrupt"),
+        "pending_interrupt": pending_interrupt,
         "human_answers": state.get("human_answers") or {},
         "updated_at": normalized_updated_at,
         "stale_execution_detected": stale_running_detected,
@@ -957,6 +1129,7 @@ def _record_graph_event(
         run_status=node_run_status,
         current_node=current_node,
         waiting_reason=payload.get("waiting_reason"),
+        pending_interrupt=payload.get("pending_interrupt") if payload.get("human_intervention_required") else None,
         job_id=job_id,
     )
     _sync_workflow_projection_from_payload(
@@ -1440,7 +1613,11 @@ async def resume_workflow(project_id: str, version: str, human_input: dict):
     if action == "answer":
         normalized_answer = answer.strip()
         normalized_feedback = normalized_answer
-        if not normalized_answer and not selected_option:
+        has_selected_experts_payload = isinstance((human_input or {}).get("selected_experts"), list)
+        selected_experts = _normalize_string_list((human_input or {}).get("selected_experts"))
+        interrupt_context = pending_interrupt.get("context") or {}
+        interaction_type = str(interrupt_context.get("interaction_type") or "").strip()
+        if not normalized_answer and not selected_option and not has_selected_experts_payload:
             return False
         resume_target_node = pending_interrupt.get("resume_target") or requested_node_id or "planner"
         target_key = requested_node_id or "planner"
@@ -1450,12 +1627,23 @@ async def resume_workflow(project_id: str, version: str, human_input: dict):
             summary = f"Selected option: {selected_option}"
             if normalized_answer:
                 summary = f"{summary}. {normalized_answer}"
+        if has_selected_experts_payload:
+            summary = f"Selected experts: {', '.join(selected_experts) if selected_experts else '(none)'}"
+            if normalized_answer:
+                summary = f"{summary}. {normalized_answer}"
         answer_entries.append(
             {
                 "interrupt_id": requested_interrupt_id,
                 "question": pending_interrupt.get("question") or current_state.get("waiting_reason"),
                 "answer": normalized_answer,
                 "selected_option": selected_option or None,
+                "selected_experts": selected_experts if has_selected_experts_payload else None,
+                "recommended_experts": (
+                    _normalize_string_list(interrupt_context.get("recommended_experts"))
+                    if has_selected_experts_payload
+                    else None
+                ),
+                "selection_type": interaction_type if has_selected_experts_payload else None,
                 "summary": summary,
             }
         )

@@ -74,6 +74,7 @@ export const api = {
       node_id?: string;
       interrupt_id?: string;
       selected_option?: string;
+      selected_experts?: string[];
       answer?: string;
       feedback?: string;
     },

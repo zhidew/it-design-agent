@@ -53,6 +53,7 @@ class ResumeRequest(BaseModel):
     node_id: Optional[str] = None
     interrupt_id: Optional[str] = None
     selected_option: Optional[str] = None
+    selected_experts: Optional[List[str]] = None
     answer: Optional[str] = None
     feedback: Optional[str] = None
 

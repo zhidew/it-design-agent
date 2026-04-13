@@ -14,6 +14,7 @@ ENV_PATH = BASE_DIR / ".env"
 LEGACY_EXPERT_ID_MIGRATIONS = {
     "architecture-mapping": "modular-design",
 }
+JSON_UNSET = object()
 
 try:
     from cryptography.fernet import Fernet, InvalidToken
@@ -267,6 +268,7 @@ class MetadataDB:
                     current_phase TEXT,
                     current_node TEXT,
                     waiting_reason TEXT,
+                    pending_interrupt_json TEXT,
                     started_at TEXT,
                     finished_at TEXT,
                     created_at TEXT NOT NULL,
@@ -350,6 +352,7 @@ class MetadataDB:
                 "CREATE INDEX IF NOT EXISTS idx_scheduled_runs_project_version ON scheduled_runs(project_id, version_id)"
             )
             self._ensure_column(conn, "project_model_configs", "headers", "TEXT")
+            self._ensure_column(conn, "workflow_runs", "pending_interrupt_json", "TEXT")
             self._migrate_legacy_project_experts(conn)
             conn.commit()
 
@@ -552,7 +555,11 @@ class MetadataDB:
     def get_project(self, project_id: str) -> Optional[Dict[str, Any]]:
         with self._get_connection() as conn:
             row = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
-        return dict(row) if row else None
+        if not row:
+            return None
+        data = dict(row)
+        data["pending_interrupt"] = self._loads_json(data.pop("pending_interrupt_json", None), None)
+        return data
 
     def list_projects(self, runtime_states: Optional[Dict[str, Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
         with self._get_connection() as conn:
@@ -648,24 +655,30 @@ class MetadataDB:
         current_phase: Optional[str] = None,
         current_node: Optional[str] = None,
         waiting_reason: Optional[str] = None,
+        pending_interrupt: Any = JSON_UNSET,
         started_at: Optional[str] = None,
         finished_at: Optional[str] = None,
     ) -> Dict[str, Any]:
         now = self._utcnow()
         existing = self.get_workflow_run(project_id, version_id)
+        if pending_interrupt is JSON_UNSET:
+            effective_pending_interrupt = existing.get("pending_interrupt") if existing else None
+        else:
+            effective_pending_interrupt = pending_interrupt
         with self._get_connection() as conn:
             conn.execute(
                 """
                 INSERT INTO workflow_runs (
-                    project_id, version_id, run_id, status, current_phase, current_node, waiting_reason,
+                    project_id, version_id, run_id, status, current_phase, current_node, waiting_reason, pending_interrupt_json,
                     started_at, finished_at, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(project_id, version_id) DO UPDATE SET
                     run_id=excluded.run_id,
                     status=excluded.status,
                     current_phase=COALESCE(excluded.current_phase, workflow_runs.current_phase),
                     current_node=excluded.current_node,
                     waiting_reason=excluded.waiting_reason,
+                    pending_interrupt_json=excluded.pending_interrupt_json,
                     started_at=COALESCE(workflow_runs.started_at, excluded.started_at),
                     finished_at=excluded.finished_at,
                     updated_at=excluded.updated_at
@@ -678,6 +691,7 @@ class MetadataDB:
                     current_phase,
                     current_node,
                     waiting_reason,
+                    self._dumps_json(effective_pending_interrupt),
                     started_at or (existing.get("started_at") if existing else now),
                     finished_at,
                     (existing.get("created_at") if existing else now),
@@ -693,7 +707,11 @@ class MetadataDB:
                 "SELECT * FROM workflow_runs WHERE project_id = ? AND version_id = ?",
                 (project_id, version_id),
             ).fetchone()
-        return dict(row) if row else None
+        if not row:
+            return None
+        data = dict(row)
+        data["pending_interrupt"] = self._loads_json(data.pop("pending_interrupt_json", None), None)
+        return data
 
     def create_scheduled_run(
         self,
@@ -775,7 +793,11 @@ class MetadataDB:
                 "SELECT * FROM scheduled_runs WHERE schedule_id = ?",
                 (schedule_id,),
             ).fetchone()
-        return dict(row) if row else None
+        if not row:
+            return None
+        data = dict(row)
+        data["pending_interrupt"] = self._loads_json(data.pop("pending_interrupt_json", None), None)
+        return data
 
     def list_scheduled_runs_for_version(
         self,
@@ -1097,7 +1119,11 @@ class MetadataDB:
                 "SELECT * FROM versions WHERE project_id = ? AND version_id = ?",
                 (project_id, version_id),
             ).fetchone()
-        return dict(row) if row else None
+        if not row:
+            return None
+        data = dict(row)
+        data["pending_interrupt"] = self._loads_json(data.pop("pending_interrupt_json", None), None)
+        return data
 
     def upsert_repository(self, project_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         now = self._utcnow()
@@ -1626,3 +1652,4 @@ class MetadataDB:
 
 
 metadata_db = MetadataDB()
+

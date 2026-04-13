@@ -25,11 +25,11 @@ def build_connection_url(config: Dict[str, object]) -> str:
     if db_type == "mysql":
         return f"mysql+pymysql://{username}:{password}@{host}:{port}/{database_name}"
     if db_type == "postgresql":
-        return f"postgresql+psycopg2://{username}:{password}@{host}:{port}/{database_name}"
+        return f"postgresql+psycopg://{username}:{password}@{host}:{port}/{database_name}"
     if db_type == "opengauss":
-        return f"postgresql+psycopg2://{username}:{password}@{host}:{port}/{database_name}"
+        return f"postgresql+psycopg://{username}:{password}@{host}:{port}/{database_name}"
     if db_type == "dws":
-        return f"postgresql+psycopg2://{username}:{password}@{host}:{port}/{database_name}"
+        return f"postgresql+psycopg://{username}:{password}@{host}:{port}/{database_name}"
     if db_type == "oracle":
         return f"oracle+cx_oracle://{username}:{password}@{host}:{port}/?service_name={database_name}"
     raise DatabaseConnectionError(f"Unsupported database type: {db_type}")

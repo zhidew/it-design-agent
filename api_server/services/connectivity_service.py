@@ -218,11 +218,11 @@ def test_database_connection(config: Dict[str, Any]) -> TestResult:
 
 def _test_postgresql(host: str, port: int, database: str, username: str, password: str) -> TestResult:
     try:
-        import psycopg2
-        conn = psycopg2.connect(
+        import psycopg
+        conn = psycopg.connect(
             host=host,
             port=port,
-            database=database,
+            dbname=database,
             user=username or "postgres",
             password=password or "",
             connect_timeout=10
@@ -238,7 +238,7 @@ def _test_postgresql(host: str, port: int, database: str, username: str, passwor
             {"server_version": version[0]}
         )
     except ImportError:
-        return TestResult(False, "psycopg2 library not installed. Cannot test PostgreSQL connection.")
+        return TestResult(False, "psycopg library not installed. Cannot test PostgreSQL connection.")
     except Exception as e:
         error_msg = str(e)
         if "connection refused" in error_msg.lower():
@@ -285,13 +285,12 @@ def _test_mysql(host: str, port: int, database: str, username: str, password: st
 
 
 def _test_opengauss(host: str, port: int, database: str, username: str, password: str) -> TestResult:
-    # OpenGauss uses psycopg2 as well
     try:
-        import psycopg2
-        conn = psycopg2.connect(
+        import psycopg
+        conn = psycopg.connect(
             host=host,
             port=port,
-            database=database,
+            dbname=database,
             user=username or "postgres",
             password=password or "",
             connect_timeout=10
@@ -307,13 +306,12 @@ def _test_opengauss(host: str, port: int, database: str, username: str, password
             {"server_version": version[0]}
         )
     except ImportError:
-        return TestResult(False, "psycopg2 library not installed. Cannot test OpenGauss connection.")
+        return TestResult(False, "psycopg library not installed. Cannot test OpenGauss connection.")
     except Exception as e:
         return TestResult(False, f"Connection failed: {str(e)}")
 
 
 def _test_dws(host: str, port: int, database: str, username: str, password: str) -> TestResult:
-    # DWS (Huawei GaussDB) also uses psycopg2
     return _test_opengauss(host, port, database, username, password)
 
 
