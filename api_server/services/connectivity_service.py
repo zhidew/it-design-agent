@@ -4,10 +4,16 @@ Provides reusable test functions for repositories, databases, and knowledge base
 """
 import os
 import subprocess
-from base64 import b64encode
 from pathlib import Path
 from typing import Any, Dict
-from urllib.parse import quote, urlsplit, urlunsplit
+
+from services.git_utils import (
+    build_git_auth_header,
+    build_git_url_with_credentials,
+    build_noninteractive_git_command,
+    default_git_username,
+    git_noninteractive_env,
+)
 
 
 class TestResult:
@@ -25,37 +31,9 @@ class TestResult:
         }
 
 
-def _default_git_username(url: str) -> str:
-    host = (urlsplit(url).hostname or "").lower()
-    if host == "github.com" or host.endswith(".github.com"):
-        return "x-access-token"
-    if host == "gitlab.com" or host.endswith(".gitlab.com"):
-        return "oauth2"
-    return "git"
-
-
-def _build_git_url_with_credentials(url: str, username: str | None, token: str | None) -> str:
-    if not token:
-        return url
-
-    parsed = urlsplit(url)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-        return url
-
-    auth_username = username or _default_git_username(url)
-    netloc = f"{quote(auth_username, safe='')}:{quote(token, safe='')}@{parsed.hostname}"
-    if parsed.port:
-        netloc = f"{netloc}:{parsed.port}"
-
-    return urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment))
-
-
-def _build_git_auth_header(username: str | None, token: str | None, url: str) -> str | None:
-    if not token:
-        return None
-    auth_username = username or _default_git_username(url)
-    encoded = b64encode(f"{auth_username}:{token}".encode("utf-8")).decode("ascii")
-    return f"Authorization: Basic {encoded}"
+_default_git_username = default_git_username
+_build_git_url_with_credentials = build_git_url_with_credentials
+_build_git_auth_header = build_git_auth_header
 
 
 def test_repository_connection(config: Dict[str, Any]) -> TestResult:
@@ -76,7 +54,7 @@ def test_repository_connection(config: Dict[str, Any]) -> TestResult:
     if repo_type != "git":
         return TestResult(False, f"Unsupported repository type: {repo_type}")
     
-    git_url = _build_git_url_with_credentials(url, username, token)
+    git_url = build_git_url_with_credentials(url, username, token)
     
     # If local path exists, test if it's a valid git directory
     if local_path:
@@ -101,28 +79,15 @@ def test_repository_connection(config: Dict[str, Any]) -> TestResult:
     
     # Test remote connection using git ls-remote
     try:
-        cmd = [
-            "git",
-            "-c",
-            "credential.helper=",
-            "-c",
-            "core.askPass=",
-            "-c",
-            "credential.interactive=never",
-            "ls-remote",
-            "--heads",
-        ]
-        auth_header = _build_git_auth_header(username, token, url)
+        extra_configs = []
+        auth_header = build_git_auth_header(username, token, url)
         if auth_header:
-            cmd.extend(["-c", f"http.extraHeader={auth_header}"])
-        cmd.extend([git_url, branch])
-        env = os.environ.copy()
-        # Force Git/GCM into non-interactive mode so the test reflects only the supplied config.
-        env["GIT_TERMINAL_PROMPT"] = "0"
-        env["GIT_ASKPASS"] = ""
-        env["SSH_ASKPASS"] = ""
-        env["GCM_INTERACTIVE"] = "never"
-        env["GCM_MODAL_PROMPT"] = "0"
+            extra_configs.append(f"http.extraHeader={auth_header}")
+        cmd = build_noninteractive_git_command(
+            ["ls-remote", "--heads", git_url, branch],
+            extra_configs=extra_configs,
+        )
+        env = git_noninteractive_env()
         
         result = subprocess.run(
             cmd,
@@ -414,3 +379,4 @@ def test_knowledge_base_connection(config: Dict[str, Any]) -> TestResult:
     
     else:
         return TestResult(False, f"Unsupported knowledge base type: {kb_type}")
+
