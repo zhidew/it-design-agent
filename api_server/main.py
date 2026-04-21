@@ -11,6 +11,9 @@ import sys
 from pathlib import Path
 from contextlib import asynccontextmanager
 
+import os
+os.environ['NO_PROXY'] = '127.0.0.1,localhost,.huawei.com'
+
 # 将项目根目录 (it-design-agent) 加入 sys.path 以便导入 scripts
 api_server_dir = Path(__file__).resolve().parent
 root_dir = api_server_dir.parent
