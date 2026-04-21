@@ -47,6 +47,8 @@ interface WorkflowTask {
 interface EvidenceSummary {
   expected_files?: string[];
   artifacts_generated?: string[];
+  selected_outputs?: string[];
+  candidate_output_files?: string[];
 }
 
 interface WorkflowState {
@@ -1176,7 +1178,7 @@ export function ProjectDetail() {
   };
 
   const filteredArtifacts = useMemo(() => {
-    if (!selectedNode || !AGENT_MAPPING[selectedNode]) {
+    if (!selectedNode) {
       return [];
     }
     const evidenceFilename = `${selectedNode}.json`;
@@ -1187,14 +1189,19 @@ export function ProjectDetail() {
         const evidence = JSON.parse(artifacts[evidenceFilename]) as EvidenceSummary;
         evidencePatterns = [
           ...(evidence.artifacts_generated || []),
+          ...(evidence.selected_outputs || []),
           ...(evidence.expected_files || []),
+          ...(evidence.candidate_output_files || []),
         ].filter((value, index, array) => Boolean(value) && array.indexOf(value) === index);
       } catch {
         evidencePatterns = [];
       }
     }
 
-    const patterns = evidencePatterns.length > 0 ? evidencePatterns : AGENT_MAPPING[selectedNode];
+    const patterns = evidencePatterns.length > 0 ? evidencePatterns : (AGENT_MAPPING[selectedNode] || []);
+    if (patterns.length === 0) {
+      return [];
+    }
     return Object.keys(artifacts).filter((filename) =>
       !filename.endsWith('-reasoning.md') && patterns.some(
         (pattern) => filename.startsWith(pattern) || filename === pattern ||
@@ -2916,4 +2923,3 @@ export function ProjectDetail() {
     </div>
   );
 }
-
