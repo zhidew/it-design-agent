@@ -183,8 +183,8 @@ def test_database_connection(config: Dict[str, Any]) -> TestResult:
 
 def _test_postgresql(host: str, port: int, database: str, username: str, password: str) -> TestResult:
     try:
-        import psycopg
-        conn = psycopg.connect(
+        import psycopg2
+        conn = psycopg2.connect(
             host=host,
             port=port,
             dbname=database,
@@ -251,8 +251,8 @@ def _test_mysql(host: str, port: int, database: str, username: str, password: st
 
 def _test_opengauss(host: str, port: int, database: str, username: str, password: str) -> TestResult:
     try:
-        import psycopg
-        conn = psycopg.connect(
+        import psycopg2
+        conn = psycopg2.connect(
             host=host,
             port=port,
             dbname=database,
