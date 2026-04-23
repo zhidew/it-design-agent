@@ -37,18 +37,15 @@ keywords:
 
 # 输出产物 (Output Artifacts)
 
-## 必需产物 (Always Required)
+## 运行时产物 (Runtime-Configured Artifacts)
 
-| 产物路径 | 说明 |
-|----------|------|
-| `artifacts/config-catalog.yaml` | 配置目录，列出配置键、类型、默认值、敏感级别和使用说明。 |
-| `artifacts/config-matrix.md` | 环境矩阵，对比 DEV、TEST、PROD 等环境的策略差异。 |
+- 目标输出文件名、条件产物和写入顺序以 runtime 注入的 `expected outputs` 与 `output plan` 为准，不在本 `SKILL.md` 中重复维护 canonical 文件清单。
+- 本技能只约束这些产物应该承载的内容、方法和校验方式；具体文件名与是否需要某个条件产物，由 `expert.yaml` 和 runtime 决定。
 
 ## 运行证据 (Execution Evidence)
 
-| 产物路径 | 说明 |
-|----------|------|
-| `evidence/config-design.json` | 记录配置来源、环境差异依据、敏感项判定和校验结果。 |
+- 执行证据用于记录本轮采用的事实来源、关键假设、校验结果和残余风险。
+- 证据文件名以 runtime / workspace 约定为准；不要把证据文件当作业务产物。
 
 # Tool Usage Notes
 
@@ -67,13 +64,13 @@ keywords:
 | `read_file_chunk` | 阅读需求、现有配置说明和生成结果。 |
 | `grep_search` | 搜索 timeout、feature flag、secret、Redis、Kafka 等线索。 |
 | `extract_structure` | 快速检查 YAML、Markdown 和结构化产物的层级。 |
-| `write_file` | 生成配置目录与矩阵。 |
+| `write_file` | 生成 runtime 选定的目标产物。 |
 | `patch_file` | 针对局部错误做小范围修订。 |
 
 # 参考资料 (References)
 
-- 模板参考 `assets/templates/config-catalog.yaml` 和 `assets/templates/config-matrix.md`。
-- 上游边界参考 `modular-design` 产出的 `architecture.md` 与 `module-map.json`。
+- 模板参考 `assets/templates/` 下本专家对应模板与结构示例，不在此重复声明 canonical 输出文件名。
+- 上游输入以 runtime 注入的边界与依赖工件为准；用它们确认配置归属、消费者和生命周期。
 - 可参考 12-Factor App 等配置治理原则，但必须以项目证据为准。
 
 # 注意事项 (Notes)
@@ -88,14 +85,14 @@ keywords:
 1. **研究 (Research)**：收集配置键、环境、外部依赖和治理要求。
 2. **对齐 (Align)**：依据上游边界确认配置归属、消费者和生命周期。
 3. **建模 (Model)**：定义配置键、类型、默认值、敏感级别和环境差异。
-4. **编写 (Write)**：分别生成 `config-catalog.yaml` 和 `config-matrix.md`。
+4. **编写 (Write)**：生成配置目录类结构化工件与环境差异说明，并保持两者语义对齐。
 5. **校验 (Verify)**：回读 YAML/Markdown，检查键名、类型和环境矩阵是否自洽。
-6. **完成 (Finalize)**：确认产物和 `evidence/config-design.json` 完整后结束。
+6. **完成 (Finalize)**：确认 runtime 选定的目标产物和执行证据完整后结束。
 
 ## ReAct 规则
 
 1. 默认每次只输出一个下一步动作；只有在收集独立、低风险的读取证据时，才可用 `actions` 并行返回最多 2 个只读动作。
-2. 仅当 `config-catalog.yaml`、`config-matrix.md` 和 `evidence/config-design.json` 都完成后才允许 `done=true`。
+2. 仅当 runtime 选定的目标产物与执行证据都完成后才允许 `done=true`。
 3. `tool_input` 必须是明确、可执行的 JSON，不要使用含糊路径或占位参数。
 4. 每一步都要通过 `evidence_note` 说明本步确认的配置事实或产出目标。
 5. 对缺失的配置事实要显式标注为假设或风险，不得伪造环境值和敏感信息。
@@ -126,13 +123,13 @@ keywords:
 
 ## 生成要求
 
-1. 配置目录必须明确键名、类型、默认值、敏感级别和配置说明。
-2. 环境矩阵必须突出策略差异、开关控制方式和敏感项处理原则，而不是暴露真实密钥。
+1. 配置目录类结构化产物必须明确键名、类型、默认值、敏感级别和配置说明。
+2. 环境差异说明类产物必须突出策略差异、开关控制方式和敏感项处理原则，而不是暴露真实密钥。
 3. 所有配置项都应能回溯到业务需求、上游依赖或运行约束。
 4. 模板只作为结构参考，最终内容必须贴合项目语境。
 
 ## 生成内容
 
-- **config-catalog.yaml**：列出配置键、分类、默认值、是否敏感、所属模块和使用说明。
-- **config-matrix.md**：展示不同环境的策略差异、开关控制和风险提示。
-- **config-design.json**：沉淀配置来源、敏感项判定依据、依赖映射和校验结论。
+- 配置目录类结构化产物：列出配置键、分类、默认值、敏感级别、归属模块和使用说明。
+- 环境差异说明类产物：展示不同环境的策略差异、开关控制和风险提示。
+- 执行证据：沉淀配置来源、敏感项判定依据、依赖映射和校验结论。

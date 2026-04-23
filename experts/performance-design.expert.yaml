@@ -82,6 +82,61 @@ metadata:
       - api-design
       - config-design
       - flow-design
+  topic_ownership:
+    topics:
+      - performance_budget
+      - capacity_assessment
+      - critical_path
+      - hotspot_analysis
+      - degradation_strategy
+    owns_shared_context: false
+  routing:
+    keywords:
+      - performance
+      - latency
+      - throughput
+      - qps
+      - tps
+      - p95
+      - p99
+      - capacity
+      - benchmark
+      - timeout
+      - rate limit
+      - degrade
+      - 性能
+      - 延迟
+      - 吞吐
+      - 并发
+      - 容量
+      - 压测
+      - 限流
+      - 降级
+      - 瓶颈
+  prompt_hints:
+    file_guidance:
+      performance-design.md: 分析关键链路、容量假设、性能预算、瓶颈、降级和缓存/批处理策略，引用上游设计事实而不重写它们。
+      performance-budget.yaml: 结构化定义延迟、吞吐、并发、资源、批量规模、超时、限流和降级预算。
+      capacity-assessment.json: 输出容量评估参数、峰值假设、增长模型、瓶颈判断和扩容/降级建议。
+    default_file_guidance: 聚焦性能预算、容量边界和关键链路，不重新设计 API、数据模型、运维告警或测试用例。
+  delivery_contract:
+    must_answer:
+      - 关键链路、峰值负载、吞吐、延迟、并发和资源预算是否明确。
+      - 容量假设、瓶颈、限流、降级、缓存或批处理策略是否可执行。
+      - 性能预算是否与上游 API、数据、集成、配置和流程设计保持一致。
+    evidence_expectations:
+      - 性能判断需要引用上游设计事实、业务峰值假设或明确标注假设来源。
+      - 对无法量化的指标要给出估算边界、验证方式和后续压测建议。
+    artifact_review_checklist:
+      performance-design.md:
+        - 需要覆盖关键链路、容量假设、预算、瓶颈、降级和验证建议。
+        - 不应泛泛写性能原则，必须落到本次设计的具体路径和约束。
+      performance-budget.yaml:
+        - 延迟、吞吐、并发、资源、超时、限流和降级预算必须结构化。
+        - 指标单位、适用场景和假设来源需要明确。
+      capacity-assessment.json:
+        - 峰值假设、容量模型、瓶颈判断、扩容策略和风险必须可机器读取。
+        - 需要标出低置信度假设和后续验证动作。
 policies:
   asset_baseline_required: true
   evidence_required: true
@@ -124,3 +179,4 @@ error_handling:
   on_missing_required_input: fail
   on_validation_failure: fail
   on_partial_generation: emit_evidence_and_fail
+

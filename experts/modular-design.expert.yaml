@@ -47,6 +47,54 @@ metadata:
       - detailed schema or index design
       - config matrix, ops runbook, and test case design
     upstream_inputs: []
+  topic_ownership:
+    topics:
+      - shared_context
+      - system_boundary
+      - container_decomposition
+      - module_ownership
+      - reuse_points
+    owns_shared_context: true
+    shared_context_topics:
+      - project_background
+      - requirement_overview
+      - scope
+      - global_goals
+      - cross_cutting_constraints
+      - target_outcomes
+  routing:
+    keywords:
+      - 模块化
+      - 模块
+      - 边界
+      - 容器
+      - 上下文
+      - 依赖
+      - 复用点
+      - 架构边界
+      - system context
+      - container
+      - module ownership
+  prompt_hints:
+    file_guidance:
+      architecture.md: 描述系统上下文、容器划分、模块职责、关键交互和边界约束，为后续专家提供共享结构事实。
+      module-map.json: 保持结构化模块映射稳定，明确模块标识、职责、依赖、复用点、禁止依赖和下游专家可引用字段。
+    default_file_guidance: 聚焦模块边界、容器职责、复用点和允许依赖，不展开下游专家的详细契约、DDL、配置或测试内容。
+  delivery_contract:
+    must_answer:
+      - 系统边界、外部依赖、核心容器和模块职责是否清晰可追踪。
+      - 模块之间允许依赖、禁止依赖、复用点和下游设计输入是否明确。
+      - 哪些共享背景由本专家承接，哪些细节必须交给下游专家继续展开。
+    evidence_expectations:
+      - 需要引用需求中的关键业务边界、上下游系统和约束来源。
+      - module-map.json 中的模块标识、职责和依赖关系必须能支撑后续专家引用。
+    artifact_review_checklist:
+      architecture.md:
+        - 必须覆盖系统上下文、容器划分、模块职责、关键交互和边界约束。
+        - 不能展开 API、DDL、配置、运维或测试细节，只保留下游需要的结构事实。
+      module-map.json:
+        - 模块标识、职责、依赖、复用点和禁止依赖需要结构化且命名稳定。
+        - 下游专家可引用字段必须完整，不能只写自然语言描述。
 policies:
   asset_baseline_required: true
   evidence_required: true
@@ -57,3 +105,4 @@ error_handling:
   on_missing_required_input: fail
   on_validation_failure: fail
   on_partial_generation: emit_evidence_and_fail
+

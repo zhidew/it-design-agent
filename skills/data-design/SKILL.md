@@ -37,19 +37,15 @@ keywords:
 
 # 输出产物 (Output Artifacts)
 
-## 必需产物 (Always Required)
+## 运行时产物 (Runtime-Configured Artifacts)
 
-| 产物路径 | 说明 |
-|----------|------|
-| `artifacts/schema.sql` | 表结构、约束、索引和注释定义。 |
-| `artifacts/er.md` | 实体关系说明和关键关系解释。 |
-| `artifacts/migration-plan.md` | 数据迁移、回滚和兼容策略。 |
+- 目标输出文件名、条件产物和写入顺序以 runtime 注入的 `expected outputs` 与 `output plan` 为准，不在本 `SKILL.md` 中重复维护 canonical 文件清单。
+- 本技能只约束这些产物应该承载的内容、方法和校验方式；具体文件名与是否需要某个条件产物，由 `expert.yaml` 和 runtime 决定。
 
 ## 运行证据 (Execution Evidence)
 
-| 产物路径 | 说明 |
-|----------|------|
-| `evidence/data-design.json` | 记录实体来源、索引依据、迁移假设和校验结果。 |
+- 执行证据用于记录本轮采用的事实来源、关键假设、校验结果和残余风险。
+- 证据文件名以 runtime / workspace 约定为准；不要把证据文件当作业务产物。
 
 # Tool Usage Notes
 
@@ -68,13 +64,13 @@ keywords:
 | `grep_search` | 搜索字段、状态、索引、唯一约束和审计要求。 |
 | `query_database` | 读取库表元数据或只读结构信息。 |
 | `extract_structure` | 快速检查 SQL、Markdown 和结构化输出。 |
-| `write_file` | 生成 schema、ER 和迁移计划。 |
+| `write_file` | 生成 runtime 选定的目标产物。 |
 | `patch_file` | 修补局部字段、索引或迁移描述。 |
 
 # 参考资料 (References)
 
-- 模板参考 `assets/templates/schema.sql`、`assets/templates/er.md`、`assets/templates/migration-plan.md`。
-- 上游边界参考 `modular-design`，必要时吸收字段与命名约束。
+- 模板参考 `assets/templates/` 下本专家对应模板与结构示例，不在此重复声明 canonical 输出文件名。
+- 上游输入以 runtime 注入的架构边界与既有资产为准；必要时吸收字段与命名约束。
 - 若已有公共审计字段、软删除或多租户规范，应显式沿用。
 
 # 注意事项 (Notes)
@@ -88,15 +84,15 @@ keywords:
 
 1. **研究 (Research)**：收集实体、字段、查询模式和历史数据资产。
 2. **对齐 (Align)**：核对模块边界、命名和跨模块依赖。
-3. **编写 (Write)**：先落 `schema.sql`，再补 `er.md` 和 `migration-plan.md`。
+3. **编写 (Write)**：先落主结构化数据定义，再补关系说明与迁移/回滚策略。
 4. **校验 (Verify)**：回读 SQL 与文档，检查主外键、索引和迁移步骤的一致性。
 5. **修补 (Patch)**：只在证据充分时做局部修订，不凭空新增表或字段。
-6. **完成 (Finalize)**：确认三份产物和 `evidence/data-design.json` 完整后结束。
+6. **完成 (Finalize)**：确认 runtime 选定的目标产物和执行证据完整后结束。
 
 ## ReAct 规则
 
 1. 默认每次只输出一个下一步动作；只有在收集独立、低风险的读取证据时，才可用 `actions` 并行返回最多 2 个只读动作。
-2. 仅当 `schema.sql`、`er.md`、`migration-plan.md` 和 `evidence/data-design.json` 均完成后才允许 `done=true`。
+2. 仅当 runtime 选定的目标产物与执行证据都完成后才允许 `done=true`。
 3. `tool_input` 必须是明确的 JSON，尤其要给出精确的路径、模式名或搜索关键词。
 4. 每一步都要写清 `evidence_note`，说明本步要确认的结构事实或迁移目标。
 5. 对无法确认的字段、索引或回滚步骤，必须标注假设与风险，不得伪造实现细节。
@@ -127,14 +123,14 @@ keywords:
 
 ## 生成要求
 
-1. `schema.sql` 必须体现表、字段、约束、索引和必要注释。
-2. `er.md` 要解释实体关系、主外键含义和关键业务约束。
-3. `migration-plan.md` 要给出升级、回滚、灰度或数据修复策略。
+1. 主结构化数据定义产物必须体现表、字段、约束、索引和必要注释。
+2. 关系说明类产物要解释实体关系、主外键含义和关键业务约束。
+3. 迁移与回滚策略类产物要给出升级、回滚、灰度或数据修复策略。
 4. 所有结构决策都要能回溯到需求、既有资产或上游边界。
 
 ## 生成内容
 
-- **schema.sql**：定义表结构、字段类型、索引和约束。
-- **er.md**：解释实体关系、聚合边界和关键数据流向。
-- **migration-plan.md**：说明上线步骤、回滚方案和风险控制。
-- **data-design.json**：沉淀实体来源、索引依据、迁移假设和校验结果。
+- 主结构化数据定义产物：定义表结构、字段类型、索引和约束。
+- 关系说明类产物：解释实体关系、聚合边界和关键数据流向。
+- 迁移与回滚策略类产物：说明上线步骤、回滚方案和风险控制。
+- 执行证据：沉淀实体来源、索引依据、迁移假设和校验结论。

@@ -49,13 +49,12 @@ Input:
 - Never batch `write_file`, `patch_file`, `run_command`, `clone_repository`, `query_database`, or `query_knowledge_base`.
 - Set `done=true` as soon as the evidence is sufficient for final generation; do not wait for ReAct to write final artifacts.
 
-## Output Artifacts
+## Runtime Artifact Handling
 
-| File | Description |
-|------|-------------|
-{% for output in outputs %}
-| {{ output.file }} | {{ output.description }} |
-{% endfor %}
+- Read upstream artifacts provided by the runtime instead of hardcoding canonical upstream file lists in this SKILL.
+- Generate only the runtime-configured expected outputs for this expert.
+- Keep exact output filenames, upstream dependencies, routing keywords, ownership metadata, and delivery checklist in the expert YAML rather than duplicating them here.
+- If you include a path example for explanation, mark it as illustrative instead of authoritative.
 
 ## Tools Used
 

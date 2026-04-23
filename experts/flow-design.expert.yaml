@@ -51,6 +51,48 @@ metadata:
       - ops and test design
     upstream_inputs:
       - modular-design
+  topic_ownership:
+    topics:
+      - main_flow
+      - recalculation_flow
+      - exception_flow
+      - state_transitions
+    owns_shared_context: false
+  routing:
+    keywords:
+      - 流程
+      - 时序
+      - 状态
+      - 状态机
+      - 生命周期
+      - 批次
+      - 重算
+      - 回溯
+      - 异常路径
+      - sequence
+      - state
+      - transition
+      - lifecycle
+  prompt_hints:
+    file_guidance:
+      sequence.md: 用时序视角表达参与方、触发条件、主流程、异常流程和关键交互顺序，不展开接口字段或消息载荷细节。
+      state.md: 描述核心对象生命周期、状态定义、状态迁移条件、幂等/回退/终止状态和异常恢复路径。
+    default_file_guidance: 聚焦流程顺序和状态迁移，引用接口、集成或数据事实但不重写其详细契约。
+  delivery_contract:
+    must_answer:
+      - 主流程、异常流程、重算/回溯流程和关键参与方是否清晰。
+      - 状态集合、迁移条件、触发事件、终止状态和恢复路径是否闭环。
+      - 流程中的权限、幂等、补偿或人工介入点是否被标出。
+    evidence_expectations:
+      - 每个流程节点要能回指需求或上游模块职责，避免凭空增加参与方。
+      - 状态迁移需要说明触发条件和失败后的落点。
+    artifact_review_checklist:
+      sequence.md:
+        - 时序图/时序说明需要覆盖参与方、触发条件、主流程、异常流程和关键交互顺序。
+        - 不应下钻到完整 API schema、AsyncAPI payload 或 DDL。
+      state.md:
+        - 状态定义、迁移事件、前置条件、后置结果和异常恢复路径必须一致。
+        - 需要覆盖幂等、回退、终止和人工处理状态。
 policies:
   asset_baseline_required: true
   evidence_required: true
@@ -61,3 +103,4 @@ error_handling:
   on_missing_required_input: fail
   on_validation_failure: fail
   on_partial_generation: emit_evidence_and_fail
+

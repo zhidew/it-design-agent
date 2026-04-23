@@ -69,6 +69,52 @@ metadata:
       - modular-design
       - data-design
       - ddd-structure
+  topic_ownership:
+    topics:
+      - endpoint_contracts
+      - request_response_models
+      - error_model
+      - query_and_recalc_interfaces
+    owns_shared_context: false
+  routing:
+    keywords:
+      - API
+      - 接口
+      - OpenAPI
+      - endpoint
+      - request
+      - response
+      - error
+      - 错误码
+      - 查询
+      - 重算
+      - 明细
+      - 权限
+      - 鉴权
+      - 幂等
+      - RFC 9457
+  prompt_hints:
+    file_guidance:
+      api-design.md: 明确接口路径、方法、认证授权、核心入参/出参、分页筛选、幂等、错误返回和兼容演进策略。
+      errors-rfc9457.json: 保持 RFC 9457 problem details 结构稳定，错误码、标题、状态码、detail 语义和扩展字段必须一致。
+      api-internal.yaml: 面向内部调用方输出可联调的 OpenAPI 契约，标明内部权限、幂等键、追踪字段和敏感字段处理。
+      api-public.yaml: 面向外部调用方输出稳定 OpenAPI 契约，强调版本、鉴权、限流、错误模型和向后兼容边界。
+    default_file_guidance: 聚焦同步 API 契约可联调性，避免重写数据模型、异步事件或测试方案。
+  delivery_contract:
+    must_answer:
+      - 每个核心接口的路径、方法、调用方、鉴权、入参、出参和错误返回是否明确。
+      - 查询、重算、明细、批量或分页场景是否有清晰的契约边界与兼容策略。
+      - 错误模型是否符合 RFC 9457 结构，并能支撑调用方定位和恢复。
+    evidence_expectations:
+      - 接口字段需要回指上游数据模型、领域对象或模块职责，不凭空新增语义。
+      - 如涉及内部/外部调用方差异，必须说明权限、敏感字段和版本兼容边界。
+    artifact_review_checklist:
+      api-design.md:
+        - 接口清单要覆盖路径、方法、调用方、鉴权、入参、出参、幂等、错误和兼容策略。
+        - 不应重复 DDL、AsyncAPI 或测试用例细节，只引用必要上游事实。
+      errors-rfc9457.json:
+        - 错误码、HTTP 状态、title、detail 和扩展字段必须语义一致且可机器读取。
+        - 错误模型需要覆盖校验失败、权限失败、资源不存在、冲突和系统异常等核心场景。
 policies:
   asset_baseline_required: true
   evidence_required: true
@@ -79,3 +125,4 @@ error_handling:
   on_missing_required_input: fail
   on_validation_failure: fail
   on_partial_generation: emit_evidence_and_fail
+

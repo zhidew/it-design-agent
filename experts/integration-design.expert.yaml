@@ -53,6 +53,50 @@ metadata:
       - config matrix, ops, and test design
     upstream_inputs:
       - modular-design
+  topic_ownership:
+    topics:
+      - external_integrations
+      - async_contracts
+      - idempotency
+      - timeout_retry_compensation
+    owns_shared_context: false
+  routing:
+    keywords:
+      - 集成
+      - 协议
+      - 异步
+      - 消息
+      - 事件
+      - 回调
+      - Webhook
+      - MQ
+      - Kafka
+      - AsyncAPI
+      - 幂等
+      - 重试
+      - 超时
+      - 补偿
+      - external system
+  prompt_hints:
+    file_guidance:
+      integration.md: 描述跨服务/外部系统交互边界、同步/异步选择、调用时序、幂等、超时、重试和补偿策略。
+      asyncapi.yaml: 输出可被实现方消费的事件/消息契约，明确 topic/channel、payload、headers、幂等键、版本和错误处理语义。
+    default_file_guidance: 聚焦集成边界和事件契约，引用 API/数据/模块事实但不重写它们的详细设计。
+  delivery_contract:
+    must_answer:
+      - 需要集成的内部服务、外部系统、协议类型和方向是否明确。
+      - 异步事件、消息载荷、幂等键、超时、重试和补偿策略是否闭环。
+      - 失败、重复投递、顺序错乱、下游不可用和版本演进场景是否有处理策略。
+    evidence_expectations:
+      - 每个集成点需要说明触发条件、消费者/提供方、依赖上游设计事实和失败处理依据。
+      - AsyncAPI 字段不能凭空发明，必须与上游模块/API/数据命名保持一致。
+    artifact_review_checklist:
+      integration.md:
+        - 集成清单需要覆盖系统边界、协议选择、调用方向、幂等、超时、重试和补偿。
+        - 需要明确哪些是同步调用、哪些是异步事件，以及它们的失败恢复路径。
+      asyncapi.yaml:
+        - channel/topic、message name、payload、headers、版本和幂等字段必须结构化且一致。
+        - 必须体现错误处理、重试语义和兼容演进约束。
 policies:
   asset_baseline_required: true
   evidence_required: true
@@ -63,3 +107,4 @@ error_handling:
   on_missing_required_input: fail
   on_validation_failure: fail
   on_partial_generation: emit_evidence_and_fail
+

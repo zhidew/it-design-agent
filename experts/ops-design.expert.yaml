@@ -52,6 +52,55 @@ metadata:
       - detailed test case design
     upstream_inputs:
       - config-design
+  topic_ownership:
+    topics:
+      - observability
+      - alerts
+      - audit_visibility
+      - failure_recovery
+      - batch_operations
+    owns_shared_context: false
+  routing:
+    keywords:
+      - 运维
+      - SLO
+      - SLA
+      - 监控
+      - 指标
+      - 告警
+      - 可观测
+      - 日志
+      - 链路追踪
+      - 审计
+      - 发布
+      - 回滚
+      - Runbook
+      - observability
+      - alert
+  prompt_hints:
+    file_guidance:
+      slo.yaml: 结构化定义可用性、延迟、吞吐、错误率、数据新鲜度等 SLO/SLI，并说明预算和降级触发条件。
+      observability-spec.yaml: 明确指标、日志、链路追踪、审计字段、采集位置、标签维度和告警规则。
+      deployment-runbook.md: 描述发布前检查、灰度步骤、验证点、回滚触发条件、人工处理和故障恢复流程。
+    default_file_guidance: 聚焦生产可观测性、发布回滚和故障恢复，不重新设计 API、事件、数据或配置矩阵。
+  delivery_contract:
+    must_answer:
+      - 关键 SLO/SLI、错误预算、告警阈值和降级触发条件是否明确。
+      - 指标、日志、链路追踪和审计字段是否能覆盖核心链路和异常路径。
+      - 发布、灰度、验证、回滚和故障恢复 runbook 是否可执行。
+    evidence_expectations:
+      - 运维指标需要关联关键业务链路、上游配置或性能预算。
+      - 告警和 runbook 必须说明触发条件、责任人动作和验证方式。
+    artifact_review_checklist:
+      slo.yaml:
+        - SLO/SLI、阈值、时间窗口、错误预算和降级触发条件必须结构化。
+        - 需要覆盖可用性、延迟、错误率和关键业务成功率。
+      observability-spec.yaml:
+        - 指标、日志、追踪、审计字段、标签维度和告警规则需要可实现。
+        - 告警应避免只写原则，必须有阈值或判断条件。
+      deployment-runbook.md:
+        - 发布前检查、灰度步骤、验证点、回滚条件和故障恢复动作必须完整。
+        - 需要明确人工介入点和失败后的沟通/升级路径。
 policies:
   asset_baseline_required: true
   evidence_required: true
@@ -62,3 +111,4 @@ error_handling:
   on_missing_required_input: fail
   on_validation_failure: fail
   on_partial_generation: emit_evidence_and_fail
+

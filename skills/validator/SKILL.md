@@ -37,17 +37,15 @@ keywords:
 
 # 输出产物 (Output Artifacts)
 
-## 必需产物 (Always Required)
+## 运行时产物 (Runtime-Configured Artifacts)
 
-| 产物路径 | 说明 |
-|----------|------|
-| `artifacts/validation-report.md` | 记录通过项、警告、失败项、缺口与建议动作。 |
+- 目标输出文件名、条件产物和写入顺序以 runtime 注入的 `expected outputs` 与 `output plan` 为准，不在本 `SKILL.md` 中重复维护 canonical 文件清单。
+- 本技能只约束这些产物应该承载的内容、方法和校验方式；具体文件名与是否需要某个条件产物，由 `expert.yaml` 和 runtime 决定。
 
 ## 运行证据 (Execution Evidence)
 
-| 产物路径 | 说明 |
-|----------|------|
-| `evidence/validator.json` | 记录验证范围、检查结果、命令输出摘要和证据来源。 |
+- 执行证据用于记录本轮采用的事实来源、关键假设、校验结果和残余风险。
+- 证据文件名以 runtime / workspace 约定为准；不要把证据文件当作业务产物。
 
 # Tool Usage Notes
 
@@ -65,14 +63,14 @@ keywords:
 | `read_file_chunk` | 阅读需求、详细设计、追踪矩阵和上游产物。 |
 | `validate_artifacts` | 对结构化产物做一致性或格式校验。 |
 | `run_command` | 在显式暴露时执行轻量验证命令。 |
-| `write_file` | 生成验证报告和证据文件。 |
+| `write_file` | 生成 runtime 选定的目标产物。 |
 | `patch_file` | 修补报告中的排版或分类问题。 |
 
 # 参考资料 (References)
 
-- 上游输入重点参考 `design-assembler` 产出的 `detailed-design.md`、`traceability.json`、`review-checklist.md`。
+- 模板参考 `assets/templates/` 下本专家对应模板与结构示例，不在此重复声明 canonical 输出文件名。
+- 上游输入以 runtime 注入的聚合设计、追踪、评审和需求基线工件为准。
 - 验证标准应与基线需求、专家边界和结构化产物约束一致。
-- 报告目标是暴露问题和缺口，而不是替代设计工作。
 
 # 注意事项 (Notes)
 
@@ -86,14 +84,14 @@ keywords:
 1. **研究 (Research)**：盘点待验证产物、需求基线和关键检查维度。
 2. **校验 (Validate)**：按结构完整性、格式正确性和跨产物一致性逐项检查。
 3. **归类 (Classify)**：把发现的问题按严重级别和影响范围分类。
-4. **编写 (Write)**：生成 `validation-report.md` 和 `evidence/validator.json`。
+4. **编写 (Write)**：生成验证报告类产物与对应执行证据。
 5. **复核 (Verify)**：回读报告，确认引用、分类和证据摘要准确。
-6. **完成 (Finalize)**：确认验证报告与证据文件满足要求后结束。
+6. **完成 (Finalize)**：确认 runtime 选定的目标产物和执行证据满足要求后结束。
 
 ## ReAct 规则
 
 1. 默认每次只输出一个下一步动作；只有在收集独立、低风险的读取证据时，才可用 `actions` 并行返回最多 2 个只读动作。
-2. 仅当 `validation-report.md` 和 `evidence/validator.json` 完成后才允许 `done=true`。
+2. 仅当 runtime 选定的目标产物与执行证据都完成后才允许 `done=true`。
 3. `tool_input` 必须是明确的 JSON，尤其要给出被验证文件、命令参数或检查范围。
 4. 每一步都要写清 `evidence_note`，说明本步在验证什么事实或记录什么问题。
 5. 不得将“猜测”写成结论；若证据不足，必须明确标记为待确认或信息缺口。
@@ -110,7 +108,7 @@ keywords:
     {
       "tool_name": "可并行的只读工具",
       "tool_input": {
-        "path": "artifacts/detailed-design.md",
+        "path": "artifacts/<runtime-selected-artifact>.md",
         "start_line": 1,
         "end_line": 120
       }
@@ -124,12 +122,12 @@ keywords:
 
 ## 生成要求
 
-1. `validation-report.md` 必须清晰区分通过项、警告、失败项和待确认问题。
+1. 验证报告类产物必须清晰区分通过项、警告、失败项和待确认问题。
 2. 每个问题都要标注来源产物、影响范围和简要证据说明。
 3. 对结构化产物的验证应尽量采用可重复、可解释的检查方式。
 4. 报告要帮助团队定位问题，而不是给出无依据的重设计建议。
 
 ## 生成内容
 
-- **validation-report.md**：汇总验证结论、问题分类、证据摘要和建议动作。
-- **validator.json**：沉淀验证范围、命令摘要、检查结果和引用来源。
+- 验证报告类产物：汇总验证结论、问题分类、证据摘要和建议动作。
+- 执行证据：沉淀验证范围、命令摘要、检查结果和引用来源。

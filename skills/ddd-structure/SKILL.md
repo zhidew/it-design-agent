@@ -38,19 +38,15 @@ keywords:
 
 # 输出产物 (Output Artifacts)
 
-## 必需产物 (Always Required)
+## 运行时产物 (Runtime-Configured Artifacts)
 
-| 产物路径 | 说明 |
-|----------|------|
-| `artifacts/class-diagram.md` | 领域类图，表达核心实体、值对象和关系。 |
-| `artifacts/ddd-structure.md` | 领域结构说明，解释聚合、职责与约束。 |
-| `artifacts/context-map.md` | 上下文映射，描述边界上下文关系和协作方式。 |
+- 目标输出文件名、条件产物和写入顺序以 runtime 注入的 `expected outputs` 与 `output plan` 为准，不在本 `SKILL.md` 中重复维护 canonical 文件清单。
+- 本技能只约束这些产物应该承载的内容、方法和校验方式；具体文件名与是否需要某个条件产物，由 `expert.yaml` 和 runtime 决定。
 
 ## 运行证据 (Execution Evidence)
 
-| 产物路径 | 说明 |
-|----------|------|
-| `evidence/ddd-structure.json` | 记录术语来源、边界依据、聚合划分和校验结果。 |
+- 执行证据用于记录本轮采用的事实来源、关键假设、校验结果和残余风险。
+- 证据文件名以 runtime / workspace 约定为准；不要把证据文件当作业务产物。
 
 # Tool Usage Notes
 
@@ -69,13 +65,13 @@ keywords:
 | `grep_search` | 搜索业务规则、命令、状态和领域事件线索。 |
 | `query_database` | 必要时读取现有结构，辅助识别实体与关系。 |
 | `extract_structure` | 快速检查 Markdown、JSON 或结构化文档层级。 |
-| `write_file` | 生成类图、DDD 结构说明和上下文映射。 |
+| `write_file` | 生成 runtime 选定的目标产物。 |
 | `patch_file` | 修补局部关系、术语或边界描述。 |
 
 # 参考资料 (References)
 
-- 模板参考 `assets/templates/class.md` 和 `assets/templates/ddd-structure.md`。
-- 上游输入重点参考 `data-design` 的 `schema.sql`、`er.md`、`migration-plan.md`。
+- 模板参考 `assets/templates/` 下本专家对应模板与结构示例，不在此重复声明 canonical 输出文件名。
+- 上游输入以 runtime 注入的数据设计与需求工件为准；用它们确认术语、实体关系和上下文边界。
 - 术语、命名和边界必须优先贴合业务事实而不是通用 DDD 示例。
 
 # 注意事项 (Notes)
@@ -89,15 +85,15 @@ keywords:
 
 1. **研究 (Research)**：收集术语、业务规则、实体候选和上下文线索。
 2. **对齐 (Align)**：对照数据设计和需求，确认实体关系与边界上下文。
-3. **编写 (Write)**：先产出 `class-diagram.md`，再补 `ddd-structure.md` 与 `context-map.md`。
+3. **编写 (Write)**：先产出核心领域结构表达，再补领域说明与上下文协作视图。
 4. **校验 (Verify)**：回读产物，检查术语、职责、关系和边界是否一致。
 5. **修补 (Patch)**：仅在证据充分时修补局部边界或命名，不凭空添加领域概念。
-6. **完成 (Finalize)**：确认三份产物和 `evidence/ddd-structure.json` 满足要求后结束。
+6. **完成 (Finalize)**：确认 runtime 选定的目标产物和执行证据满足要求后结束。
 
 ## ReAct 规则
 
 1. 默认每次只输出一个下一步动作；只有在收集独立、低风险的读取证据时，才可用 `actions` 并行返回最多 2 个只读动作。
-2. 仅当 `class-diagram.md`、`ddd-structure.md`、`context-map.md` 和 `evidence/ddd-structure.json` 均完成后才允许 `done=true`。
+2. 仅当 runtime 选定的目标产物与执行证据都完成后才允许 `done=true`。
 3. `tool_input` 必须是明确的 JSON，尤其要给出精确路径、关键词或结构范围。
 4. 每一步都要写清 `evidence_note`，说明本步要确认的术语、边界或关系。
 5. 对无法确认的领域边界必须标注假设与风险，不得伪造聚合职责或上下文关系。
@@ -128,14 +124,14 @@ keywords:
 
 ## 生成要求
 
-1. 类图、领域结构和上下文映射必须使用同一套术语和边界。
+1. 领域结构表达、说明和上下文协作类产物必须使用同一套术语和边界。
 2. 聚合、实体、值对象和上下文关系都要能回溯到业务需求或上游事实。
 3. 说明文档要突出职责边界、不变量和协作关系，而非空泛概念堆砌。
 4. 模板只作为结构参考，最终内容必须贴合项目语境。
 
 ## 生成内容
 
-- **class-diagram.md**：展示领域对象、关键关系和职责边界。
-- **ddd-structure.md**：解释聚合、不变量、领域服务和核心设计决策。
-- **context-map.md**：说明边界上下文、上下游关系和协作模式。
-- **ddd-structure.json**：沉淀术语来源、边界依据和校验结论。
+- 核心领域结构表达产物：展示领域对象、关键关系和职责边界。
+- 领域说明类产物：解释聚合、不变量、领域服务和核心设计决策。
+- 上下文协作视图产物：说明边界上下文、上下游关系和协作模式。
+- 执行证据：沉淀术语来源、边界依据和校验结论。

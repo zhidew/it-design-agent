@@ -37,19 +37,15 @@ keywords:
 
 # 输出产物 (Output Artifacts)
 
-## 必需产物 (Always Required)
+## 运行时产物 (Runtime-Configured Artifacts)
 
-| 产物路径 | 说明 |
-|----------|------|
-| `artifacts/slo.yaml` | SLI/SLO 目标与测量方式。 |
-| `artifacts/observability-spec.yaml` | 指标、日志、追踪和告警规范。 |
-| `artifacts/deployment-runbook.md` | 发布检查、回滚触发和处置流程。 |
+- 目标输出文件名、条件产物和写入顺序以 runtime 注入的 `expected outputs` 与 `output plan` 为准，不在本 `SKILL.md` 中重复维护 canonical 文件清单。
+- 本技能只约束这些产物应该承载的内容、方法和校验方式；具体文件名与是否需要某个条件产物，由 `expert.yaml` 和 runtime 决定。
 
 ## 运行证据 (Execution Evidence)
 
-| 产物路径 | 说明 |
-|----------|------|
-| `evidence/ops-design.json` | 记录指标来源、阈值依据、运行依赖和校验结论。 |
+- 执行证据用于记录本轮采用的事实来源、关键假设、校验结果和残余风险。
+- 证据文件名以 runtime / workspace 约定为准；不要把证据文件当作业务产物。
 
 # Tool Usage Notes
 
@@ -67,13 +63,13 @@ keywords:
 | `read_file_chunk` | 阅读需求、配置矩阵和既有运维资料。 |
 | `grep_search` | 搜索 availability、latency、rollback、alert、tracing、error rate 等线索。 |
 | `extract_structure` | 快速检查 YAML 和 Markdown 结构。 |
-| `write_file` | 生成 SLO、可观测性规范和 runbook。 |
+| `write_file` | 生成 runtime 选定的目标产物。 |
 | `patch_file` | 修补阈值、检查项或回滚描述。 |
 
 # 参考资料 (References)
 
-- 模板参考 `assets/templates/slo.yaml`、`assets/templates/observability-spec.yaml`、`assets/templates/deployment-runbook.md`。
-- 上游输入重点参考 `config-design` 的 `config-catalog.yaml` 与 `config-matrix.md`。
+- 模板参考 `assets/templates/` 下本专家对应模板与结构示例，不在此重复声明 canonical 输出文件名。
+- 上游输入以 runtime 注入的配置、性能和运行依赖工件为准；用它们确认监控、告警和发布约束。
 - 可参考组织级 SRE 原则，但最终阈值和检查项必须以项目证据为准。
 
 # 注意事项 (Notes)
@@ -87,15 +83,15 @@ keywords:
 
 1. **研究 (Research)**：收集运行目标、故障风险、发布约束和观测线索。
 2. **对齐 (Align)**：核对环境差异、运行依赖和可观测性基础能力。
-3. **编写 (Write)**：先产出 `slo.yaml`，再补 `observability-spec.yaml` 和 `deployment-runbook.md`。
+3. **编写 (Write)**：先产出服务目标与指标边界，再补可观测性规范和发布 / 回滚说明。
 4. **校验 (Verify)**：回读产物，检查指标、阈值、检查项和回滚逻辑是否一致。
 5. **修补 (Patch)**：仅在证据充分时修补局部目标或流程，不凭空发明平台能力。
-6. **完成 (Finalize)**：确认三份产物和 `evidence/ops-design.json` 满足要求后结束。
+6. **完成 (Finalize)**：确认 runtime 选定的目标产物和执行证据满足要求后结束。
 
 ## ReAct 规则
 
 1. 默认每次只输出一个下一步动作；只有在收集独立、低风险的读取证据时，才可用 `actions` 并行返回最多 2 个只读动作。
-2. 仅当 `slo.yaml`、`observability-spec.yaml`、`deployment-runbook.md` 和 `evidence/ops-design.json` 完成后才允许 `done=true`。
+2. 仅当 runtime 选定的目标产物与执行证据都完成后才允许 `done=true`。
 3. `tool_input` 必须是明确的 JSON，尤其要给出阈值来源、路径或搜索范围。
 4. 每一步都要写清 `evidence_note`，说明本步要确认的运行目标或风险控制点。
 5. 对无法确认的监控、告警或回滚策略必须标注假设与风险，不得伪造平台能力。
@@ -126,14 +122,14 @@ keywords:
 
 ## 生成要求
 
-1. `slo.yaml` 必须定义可测量的服务目标和测量口径。
-2. `observability-spec.yaml` 必须说明指标、告警、日志或追踪的最小闭环。
-3. `deployment-runbook.md` 必须给出发布检查、回滚触发和处置步骤。
+1. 服务目标与指标边界类产物必须定义可测量的目标和测量口径。
+2. 可观测性规范类产物必须说明指标、告警、日志或追踪的最小闭环。
+3. 发布 / 回滚说明类产物必须给出发布检查、回滚触发和处置步骤。
 4. 所有阈值、检查项和流程都应有明确证据或合理约束来源。
 
 ## 生成内容
 
-- **slo.yaml**：定义服务目标、测量指标和目标阈值。
-- **observability-spec.yaml**：说明指标、日志、追踪和告警要求。
-- **deployment-runbook.md**：描述发布前检查、上线步骤和回滚处理。
-- **ops-design.json**：沉淀指标依据、阈值来源和校验结论。
+- 服务目标与指标边界类产物：定义服务目标、测量指标和目标阈值。
+- 可观测性规范类产物：说明指标、日志、追踪和告警要求。
+- 发布 / 回滚说明类产物：描述发布前检查、上线步骤和回滚处理。
+- 执行证据：沉淀指标依据、阈值来源和校验结论。

@@ -37,18 +37,15 @@ keywords:
 
 # 输出产物 (Output Artifacts)
 
-## 必需产物 (Always Required)
+## 运行时产物 (Runtime-Configured Artifacts)
 
-| 产物路径 | 说明 |
-|----------|------|
-| `artifacts/architecture.md` | 系统上下文、容器划分和模块边界说明。 |
-| `artifacts/module-map.json` | 模块清单、责任归属和允许依赖关系。 |
+- 目标输出文件名、条件产物和写入顺序以 runtime 注入的 `expected outputs` 与 `output plan` 为准，不在本 `SKILL.md` 中重复维护 canonical 文件清单。
+- 本技能只约束这些产物应该承载的内容、方法和校验方式；具体文件名与是否需要某个条件产物，由 `expert.yaml` 和 runtime 决定。
 
 ## 运行证据 (Execution Evidence)
 
-| 产物路径 | 说明 |
-|----------|------|
-| `evidence/modular-design.json` | 记录边界依据、容器划分理由和依赖约束说明。 |
+- 执行证据用于记录本轮采用的事实来源、关键假设、校验结果和残余风险。
+- 证据文件名以 runtime / workspace 约定为准；不要把证据文件当作业务产物。
 
 # Tool Usage Notes
 
@@ -67,19 +64,19 @@ keywords:
 | `read_file_chunk` | 阅读需求、历史架构和边界说明。 |
 | `extract_structure` | 快速理解代码或文档结构。 |
 | `grep_search` | 搜索模块名、服务边界、外部系统和调用关系。 |
-| `write_file` | 生成 `architecture.md` 与 `module-map.json`。 |
+| `write_file` | 生成 runtime 选定的目标产物。 |
 | `patch_file` | 修补局部边界、命名或依赖关系。 |
 
 # 参考资料 (References)
 
-- 模板参考 `assets/templates/architecture.md` 和 `assets/templates/module-map.json`。
-- 可参考 C4 视角组织上下文和容器描述，但最终以项目事实为准。
-- 该专家是其他设计专家的重要上游输入，命名和边界要保持稳定。
+- 模板参考 `assets/templates/` 下本专家对应模板与结构示例，不在此重复声明 canonical 输出文件名。
+- 上游输入以 runtime 注入的需求、现有结构和约束为准；优先复用系统术语、部署单元和边界事实。
+- 内容要服务于后续专家协同，而不是为了凑结构扩展系统范围。
 
 # 注意事项 (Notes)
 
 - **上下文先行**：必须先明确系统与外部角色/系统的关系，再讨论内部模块。
-- **依赖可控**：`module-map.json` 中的依赖必须清晰表达允许关系和边界约束。
+- **依赖可控**：模块映射类产物中的依赖必须清晰表达允许关系和边界约束。
 - **专家边界**：只负责系统上下文、容器和模块边界，不展开 API、AsyncAPI、DDL、配置矩阵、运维或测试细节。
 - **依赖协同**：后续专家会直接消费本专家产物；若发现风险，只记录约束、输入和影响，不抢做下游设计。
 
@@ -87,15 +84,15 @@ keywords:
 
 1. **研究 (Research)**：收集系统目标、外部参与方、部署单元和已有结构事实。
 2. **建模 (Model)**：定义上下文、容器和模块边界。
-3. **编写 (Write)**：先产出 `architecture.md`，再生成 `module-map.json`。
+3. **编写 (Write)**：先产出共享结构主说明，再补模块映射与依赖约束表达。
 4. **校验 (Verify)**：回读产物，确认上下文、容器与依赖映射一致。
 5. **修补 (Patch)**：仅对边界或依赖做局部修正，不凭空新增系统范围。
-6. **完成 (Finalize)**：确认产物和 `evidence/modular-design.json` 满足要求后结束。
+6. **完成 (Finalize)**：确认 runtime 选定的目标产物和执行证据满足要求后结束。
 
 ## ReAct 规则
 
 1. 默认每次只输出一个下一步动作；只有在收集独立、低风险的读取证据时，才可用 `actions` 并行返回最多 2 个只读动作。
-2. 仅当 `architecture.md`、`module-map.json` 和 `evidence/modular-design.json` 完成后才允许 `done=true`。
+2. 仅当 runtime 选定的目标产物与执行证据都完成后才允许 `done=true`。
 3. `tool_input` 必须是明确的 JSON，避免模糊的目录、文件或搜索范围。
 4. 每一步都要写清 `evidence_note`，说明正在确认的边界事实或结构决策。
 5. 不得在缺乏证据时擅自定义下游契约、表结构或运维方案。
@@ -126,13 +123,13 @@ keywords:
 
 ## 生成要求
 
-1. `architecture.md` 必须清楚说明系统上下文、容器角色和模块边界。
-2. `module-map.json` 必须给出稳定的模块清单和允许依赖关系。
+1. 共享结构主说明类产物必须清楚说明系统上下文、容器角色和模块边界。
+2. 模块映射类结构化产物必须给出稳定的模块清单和允许依赖关系。
 3. 所有边界和命名都应能回溯到需求、现有结构或明确约束。
 4. 内容要为下游专家提供可复用的结构输入，而不是零散观点集合。
 
 ## 生成内容
 
-- **architecture.md**：描述系统上下文、容器划分、关键交互和边界原则。
-- **module-map.json**：列出模块名称、职责归属和允许依赖关系。
-- **modular-design.json**：沉淀边界依据、风险、命名选择和校验结论。
+- 共享结构主说明类产物：描述系统上下文、容器划分、关键交互和边界原则。
+- 模块映射类结构化产物：列出模块名称、职责归属和允许依赖关系。
+- 执行证据：沉淀边界依据、风险、命名选择和校验结论。

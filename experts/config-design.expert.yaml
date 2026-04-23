@@ -51,6 +51,49 @@ metadata:
       - observability runbooks and test plans
     upstream_inputs:
       - modular-design
+  topic_ownership:
+    topics:
+      - feature_flags
+      - rules_binding
+      - environment_matrix
+      - permissions
+      - rollback_switches
+    owns_shared_context: false
+  routing:
+    keywords:
+      - 配置
+      - 配置项
+      - 环境
+      - 环境矩阵
+      - 功能开关
+      - 灰度
+      - 开关
+      - 权限
+      - 密钥
+      - secret
+      - config
+      - feature flag
+      - rollback switch
+  prompt_hints:
+    file_guidance:
+      config-catalog.yaml: 结构化列出配置键、类型、默认值、取值范围、敏感级别、 owner、热更新能力和回滚开关。
+      config-matrix.md: 对比 dev/test/staging/prod 等环境差异，说明配置来源、变更审批、灰度策略和回滚策略。
+    default_file_guidance: 聚焦配置键、环境差异、功能开关、权限与敏感信息治理，不重写 API、DDL、运维或测试设计。
+  delivery_contract:
+    must_answer:
+      - 哪些配置键、功能开关、权限或规则绑定需要新增或调整。
+      - 各环境默认值、差异项、敏感信息处理和审批流程是否明确。
+      - 配置变更、灰度、回滚和失效兜底策略是否可执行。
+    evidence_expectations:
+      - 配置项需要绑定具体模块、业务规则或上游约束，避免抽象占位。
+      - 敏感信息和权限相关配置必须说明存储、读取和审计要求。
+    artifact_review_checklist:
+      config-catalog.yaml:
+        - 每个配置键需要包含类型、默认值、范围、敏感级别、owner、热更新和回滚说明。
+        - 配置名应稳定且能被实现方直接引用。
+      config-matrix.md:
+        - 环境差异、灰度策略、审批流程和回滚触发条件必须清晰。
+        - 需要标出生产环境高风险配置及保护措施。
 policies:
   asset_baseline_required: true
   evidence_required: true
@@ -61,3 +104,4 @@ error_handling:
   on_missing_required_input: fail
   on_validation_failure: fail
   on_partial_generation: emit_evidence_and_fail
+

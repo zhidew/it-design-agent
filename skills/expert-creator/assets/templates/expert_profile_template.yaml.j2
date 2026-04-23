@@ -27,6 +27,18 @@ metadata:
     owns: {{ owns | default([expert_id + " domain design artifacts"]) }}
     excludes: {{ excludes | default(["full architecture narrative", "ops runbooks and test inventory"]) }}
     upstream_inputs: {{ upstream_inputs | default(dependencies | default([])) }}
+  topic_ownership:
+    topics: {{ topic_ownership_topics | default([expert_id.replace("-", "_")]) }}
+    owns_shared_context: {{ owns_shared_context | default(false) }}
+  routing:
+    keywords: {{ routing_keywords | default(keywords | default([])) }}
+  prompt_hints:
+    file_guidance: {{ file_guidance | default({}) }}
+    default_file_guidance: {{ default_file_guidance | default("Use the runtime-provided output plan and evidence to generate only this expert's configured artifacts.") }}
+  delivery_contract:
+    must_answer: {{ must_answer | default(["What expert-specific decisions and deliverables are required?"]) }}
+    evidence_expectations: {{ evidence_expectations | default(["Cite requirement facts and upstream artifacts instead of inventing unsupported details."]) }}
+    artifact_review_checklist: {{ artifact_review_checklist | default({}) }}
 policies:
   asset_baseline_required: {{ asset_baseline_required | default(true) }}
   evidence_required: {{ evidence_required | default(true) }}

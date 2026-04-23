@@ -38,25 +38,15 @@ keywords:
 
 # 输出产物 (Output Artifacts)
 
-## 必需产物 (Always Required)
+## 运行时产物 (Runtime-Configured Artifacts)
 
-| 产物路径 | 说明 |
-|----------|------|
-| `artifacts/api-design.md` | API 设计说明，解释资源、操作、字段、错误和兼容性决策。 |
-| `artifacts/errors-rfc9457.json` | 基于 RFC 9457 的错误响应模型定义。 |
-
-## 条件产物 (Conditional)
-
-| 条件 | 产物路径 | 说明 |
-|------|----------|------|
-| `audience` 为 `internal` 或 `both` | `artifacts/api-internal.yaml` | 面向内部调用方的 OpenAPI 契约。 |
-| `audience` 为 `external` 或 `both` | `artifacts/api-public.yaml` | 面向外部调用方的 OpenAPI 契约。 |
+- 目标输出文件名、条件产物和写入顺序以 runtime 注入的 `expected outputs` 与 `output plan` 为准，不在本 `SKILL.md` 中重复维护 canonical 文件清单。
+- 本技能只约束这些产物应该承载的内容、方法和校验方式；具体文件名与是否需要某个条件产物，由 `expert.yaml` 和 runtime 决定。
 
 ## 运行证据 (Execution Evidence)
 
-| 产物路径 | 说明 |
-|----------|------|
-| `evidence/api-design.json` | 记录需求依据、接口决策、枚举来源和校验结论。 |
+- 执行证据用于记录本轮采用的事实来源、关键假设、校验结果和残余风险。
+- 证据文件名以 runtime / workspace 约定为准；不要把证据文件当作业务产物。
 
 # Tool Usage Notes
 
@@ -75,13 +65,13 @@ keywords:
 | `read_file_chunk` | 阅读需求、上游文档和已生成契约。 |
 | `grep_search` | 搜索接口动作、状态、错误和兼容性约束。 |
 | `extract_lookup_values` | 提取枚举、字典值或状态码候选。 |
-| `write_file` | 生成 API 说明、错误模型和契约文件。 |
+| `write_file` | 生成 runtime 选定的目标产物。 |
 | `patch_file` | 针对回读发现的问题做小范围修订。 |
 
 # 参考资料 (References)
 
-- 模板参考 `assets/templates/api-design.md`、`assets/templates/api-internal.yaml`、`assets/templates/api-public.yaml`、`assets/templates/errors-rfc9457.json`。
-- 优先复用上游的领域名词、聚合边界、数据字段与模块划分。
+- 模板参考 `assets/templates/` 下本专家对应模板与结构示例，不在此重复声明 canonical 输出文件名。
+- 上游输入以 runtime 注入的架构、数据、领域等工件为准；优先复用上游的领域名词、聚合边界、数据字段与模块划分。
 - 错误模型应兼容 RFC 9457，枚举值应与需求或 lookup 来源保持一致。
 
 # 注意事项 (Notes)
@@ -95,15 +85,15 @@ keywords:
 
 1. **研究 (Research)**：收集需求、既有接口和上游结构，确认资源、动作和受众。
 2. **对齐 (Align)**：核对模块边界、领域命名、字段结构和枚举来源。
-3. **编写 (Write)**：先产出 `api-design.md`，再落错误模型与契约文件。
+3. **编写 (Write)**：先产出面向评审的主说明，再补错误模型与按受众拆分的契约工件。
 4. **校验 (Verify)**：回读生成结果，检查字段命名、枚举值、错误结构和引用一致性。
 5. **修补 (Patch)**：仅在证据充分时做局部修正，不新增无依据的接口范围。
-6. **完成 (Finalize)**：确认必需产物、条件产物和执行证据满足要求后结束。
+6. **完成 (Finalize)**：确认 runtime 选定的目标产物和执行证据满足要求后结束。
 
 ## ReAct 规则
 
 1. 默认每次只输出一个下一步动作；只有在收集独立、低风险的读取证据时，才可用 `actions` 并行返回最多 2 个只读动作。
-2. 仅当 `api-design.md`、`errors-rfc9457.json`、所需 OpenAPI 文件和 `evidence/api-design.json` 均完成后才允许 `done=true`。
+2. 仅当 runtime 选定的目标产物与执行证据都完成后才允许 `done=true`。
 3. `tool_input` 必须保持为机器可读的 JSON，对路径、行号和关键参数给出明确值。
 4. 每一步都要写明 `evidence_note`，说明本步要确认什么事实或生成什么结果。
 5. 若发现上游边界不清，先记录假设与风险，再决定是否继续；不得直接编造接口契约细节。
@@ -134,15 +124,14 @@ keywords:
 
 ## 生成要求
 
-1. 只输出有证据支撑的接口、字段、状态和错误定义。
-2. 对外暴露的命名、路径、枚举和值对象要与上游事实和需求语义一致。
-3. 对兼容性、幂等性、分页、过滤、错误语义等关键决策给出明确说明。
-4. 模板只作为结构参考，最终内容必须贴合项目语境。
+1. 主 API 说明类产物必须解释接口边界、资源模型、操作语义、兼容性与关键设计取舍。
+2. 错误模型类结构化产物必须给出统一错误语义、字段含义和约束。
+3. 若 runtime 选中了按受众拆分的契约产物，必须明确内部/外部调用边界、鉴权和兼容策略。
+4. 所有接口、字段、状态和错误定义都要能回溯到需求或上游事实。
 
 ## 生成内容
 
-- **api-design.md**：解释接口边界、资源模型、操作语义、错误处理和兼容性原则。
-- **errors-rfc9457.json**：定义统一错误结构、字段含义和错误响应示例。
-- **api-internal.yaml**：在需要时产出内部契约，覆盖内部服务调用路径与结构。
-- **api-public.yaml**：在需要时产出外部契约，突出外部受众关心的稳定接口。
-- **api-design.json**：沉淀接口设计证据、上游依赖与校验结论。
+- 主 API 说明类产物：承载接口边界、资源模型、操作语义、错误处理和兼容性原则。
+- 错误模型类结构化产物：承载统一错误结构、字段语义和错误响应约束。
+- 按受众拆分的契约产物：在需要时承载内部/外部受众关心的契约细节。
+- 执行证据：沉淀接口设计依据、上游依赖与校验结论。

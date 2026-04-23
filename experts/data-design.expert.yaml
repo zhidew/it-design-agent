@@ -52,6 +52,50 @@ metadata:
       - config, ops, and test design
     upstream_inputs:
       - modular-design
+  topic_ownership:
+    topics:
+      - schema
+      - entity_relationships
+      - indexes
+      - migration
+      - rollback
+    owns_shared_context: false
+  routing:
+    keywords:
+      - 数据
+      - 数据模型
+      - 表结构
+      - 表
+      - 字段
+      - 索引
+      - 迁移
+      - 回滚
+      - DDL
+      - ER
+      - segment
+      - 税差
+  prompt_hints:
+    file_guidance:
+      schema.sql: 落到可执行 DDL，明确复用表、新增/改造表、字段、唯一键、索引、约束、审计字段与兼容策略。
+      er.md: 说明核心实体关系、主外键、基数、生命周期状态，并与 schema.sql 的命名保持一致。
+      migration-plan.md: 说明上线顺序、历史数据回填、校验方式、灰度放量、失败回滚和数据修复策略。
+    default_file_guidance: 围绕数据模型可实施性展开，必须落到真实表名、字段名、索引名、约束和迁移影响。
+  delivery_contract:
+    must_answer:
+      - 哪些存量表直接复用，哪些表需要新增字段或新增表。
+      - 唯一键、索引、审计字段、历史兼容和迁移/回滚策略是否闭环。
+      - 最终 SQL 是否能支撑批次、员工、segment、税差等关键查询路径。
+    evidence_expectations:
+      - 尽量落到真实表名/字段名/索引名，而不是抽象描述。
+      - 迁移方案要说明增量上线顺序、历史数据兼容、失败回滚。
+    artifact_review_checklist:
+      schema.sql:
+        - 表、字段、主键/唯一键、索引、默认值和审计字段要相互一致。
+        - 需要交代存量兼容、增量变更顺序，以及高风险变更的保护措施。
+      er.md:
+        - ER 关系要标出核心实体、主外键、基数与约束，并与 SQL 命名保持一致。
+      migration-plan.md:
+        - 迁移步骤要覆盖执行顺序、数据回填、校验、灰度放量与回滚触发条件。
 policies:
   asset_baseline_required: true
   evidence_required: true

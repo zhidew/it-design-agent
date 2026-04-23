@@ -38,18 +38,15 @@ keywords:
 
 # 输出产物 (Output Artifacts)
 
-## 必需产物 (Always Required)
+## 运行时产物 (Runtime-Configured Artifacts)
 
-| 产物路径 | 说明 |
-|----------|------|
-| `artifacts/integration.md` | 集成设计说明，解释协议、交互模式和失败处理策略。 |
-| `artifacts/asyncapi.yaml` | 异步事件契约定义。 |
+- 目标输出文件名、条件产物和写入顺序以 runtime 注入的 `expected outputs` 与 `output plan` 为准，不在本 `SKILL.md` 中重复维护 canonical 文件清单。
+- 本技能只约束这些产物应该承载的内容、方法和校验方式；具体文件名与是否需要某个条件产物，由 `expert.yaml` 和 runtime 决定。
 
 ## 运行证据 (Execution Evidence)
 
-| 产物路径 | 说明 |
-|----------|------|
-| `evidence/integration-design.json` | 记录调用链路依据、事件来源、补偿假设和校验结论。 |
+- 执行证据用于记录本轮采用的事实来源、关键假设、校验结果和残余风险。
+- 证据文件名以 runtime / workspace 约定为准；不要把证据文件当作业务产物。
 
 # Tool Usage Notes
 
@@ -68,14 +65,14 @@ keywords:
 | `grep_search` | 搜索 callback、retry、timeout、idempotent、event 等线索。 |
 | `query_knowledge_base` | 查询业务术语、事件语义和补充上下文。 |
 | `extract_structure` | 检查 YAML、Markdown 或现有契约结构。 |
-| `write_file` | 生成 `integration.md` 和 `asyncapi.yaml`。 |
+| `write_file` | 生成 runtime 选定的目标产物。 |
 | `patch_file` | 修补局部事件、字段或失败处理描述。 |
 
 # 参考资料 (References)
 
-- 模板参考 `assets/templates/integration.md` 和 `assets/templates/asyncapi.yaml`。
-- 上游输入重点参考 `modular-design` 的边界定义。
-- 如已有 API 或消息资料，可作为交互方向和字段命名参考，但必须以当前需求为准。
+- 模板参考 `assets/templates/` 下本专家对应模板与结构示例，不在此重复声明 canonical 输出文件名。
+- 上游输入以 runtime 注入的模块边界、接口事实和外部系统信息为准。
+- 协议与消息命名必须优先贴合业务事实和外部约束，不要为了补全格式虚构链路细节。
 
 # 注意事项 (Notes)
 
@@ -88,15 +85,15 @@ keywords:
 
 1. **研究 (Research)**：收集调用方、被调方、消息通道、失败模式和补偿线索。
 2. **对齐 (Align)**：核对系统边界、外部系统角色和交互方向。
-3. **编写 (Write)**：先产出 `integration.md`，再生成 `asyncapi.yaml`。
+3. **编写 (Write)**：先产出集成说明，再补异步契约与失败处理约束。
 4. **校验 (Verify)**：回读产物，检查事件命名、交互模式和失败处理是否一致。
 5. **修补 (Patch)**：仅在证据充分时修补局部字段或策略，不凭空新增集成链路。
-6. **完成 (Finalize)**：确认两份产物和 `evidence/integration-design.json` 满足要求后结束。
+6. **完成 (Finalize)**：确认 runtime 选定的目标产物和执行证据满足要求后结束。
 
 ## ReAct 规则
 
 1. 默认每次只输出一个下一步动作；只有在收集独立、低风险的读取证据时，才可用 `actions` 并行返回最多 2 个只读动作。
-2. 仅当 `integration.md`、`asyncapi.yaml` 和 `evidence/integration-design.json` 完成后才允许 `done=true`。
+2. 仅当 runtime 选定的目标产物与执行证据都完成后才允许 `done=true`。
 3. `tool_input` 必须是明确的 JSON，尤其要给出交互来源、消息主题或关键词。
 4. 每一步都要写清 `evidence_note`，说明本步要确认的协议事实或失败处理目标。
 5. 对无法确认的重试、补偿或事件细节，必须标注假设与风险，不得伪造契约细节。
@@ -127,13 +124,13 @@ keywords:
 
 ## 生成要求
 
-1. `integration.md` 必须说明同步与异步交互边界、失败处理和补偿思路。
-2. `asyncapi.yaml` 必须给出清晰的主题、消息结构和责任方语义。
+1. 集成说明类产物必须说明同步与异步交互边界、失败处理和补偿思路。
+2. 异步契约类结构化产物必须给出清晰的主题、消息结构和责任方语义。
 3. 幂等、超时、重试和补偿都要有明确触发条件和约束说明。
 4. 所有决策都应能回溯到需求、上游边界或明确的运行约束。
 
 ## 生成内容
 
-- **integration.md**：描述交互模式、失败处理、补偿路径和设计取舍。
-- **asyncapi.yaml**：定义异步事件主题、消息结构和消费语义。
-- **integration-design.json**：沉淀协议依据、事件来源和校验结论。
+- 集成说明类产物：描述交互模式、失败处理、补偿路径和设计取舍。
+- 异步契约类结构化产物：定义事件主题、消息结构和消费语义。
+- 执行证据：沉淀协议依据、事件来源和校验结论。

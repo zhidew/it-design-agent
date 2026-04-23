@@ -26,6 +26,20 @@ from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
 from graphs.tools.permissions import DEFAULT_READ_TOOLS, DEFAULT_WRITE_TOOLS, build_effective_tools
 from services.llm_service import SubagentOutput, resolve_runtime_llm_settings
+from registry.expert_runtime_profile import ExpertRuntimeProfile, resolve_expert_runtime_profile
+from subgraphs.artifact_dependencies import (
+    discover_upstream_artifacts as _discover_upstream_artifacts_from_profiles,
+    get_upstream_artifact_mapping as _get_upstream_artifact_mapping_from_profiles,
+)
+from subgraphs.delivery_contract import build_delivery_checklist as _build_delivery_checklist_from_profile
+from subgraphs.prompt_guidance import (
+    render_boundary_note as _render_boundary_note_from_profile,
+    resolve_file_guidance as _resolve_file_guidance_from_profile,
+)
+from subgraphs.topic_ownership import (
+    build_default_topic_ownership as _build_default_topic_ownership_from_profiles,
+    resolve_topic_ownership as _resolve_topic_ownership_from_profile,
+)
 
 if TYPE_CHECKING:
     from registry.agent_registry import AgentFullConfig
@@ -94,55 +108,6 @@ OUTPUT_PLAN_REQUIRED_MUST_COVER_GROUPS_BY_FILE: Dict[tuple[str, str], List[Dict[
     ],
 }
 
-CAPABILITY_SCOPE_NOTES = {
-    "modular-design": (
-        "Focus on system boundary, container decomposition, module ownership, and allowed dependencies only. "
-        "Do not absorb downstream experts' detailed integration protocols, event payloads, schema/index design, "
-        "configuration matrices, deployment/ops plans, or test cases."
-    ),
-    "data-design": (
-        "Own schema, ER relationships, indexes, and migration/rollback design. "
-        "Do not re-derive the full architecture narrative, REST/Async contracts, config matrices, ops runbooks, or test cases."
-    ),
-    "ddd-structure": (
-        "Own aggregates, bounded contexts, invariants, domain services, and context mapping. "
-        "Do not expand into full DDL, full API/interface payloads, deployment/runbook content, or test plans."
-    ),
-    "api-design": (
-        "Own request/response contracts, endpoint semantics, and error models for synchronous APIs. "
-        "Reference async integration behavior only briefly when necessary; do not duplicate AsyncAPI/event payload design, DDL, config matrices, or test plans."
-    ),
-    "integration-design": (
-        "Focus on cross-service and external integration contracts, async/sync interaction choices, idempotency, "
-        "retry, timeout, and compensation. Do not expand into full REST schema catalogs, full DDL, deployment/runbook details, or exhaustive test cases."
-    ),
-    "flow-design": (
-        "Own sequence and state/lifecycle views. "
-        "Do not restate full API schemas, AsyncAPI payload details, DDL/index design, config matrices, ops runbooks, or test inventories."
-    ),
-    "config-design": (
-        "Own configuration keys, environment differences, feature flags, and secret handling rules. "
-        "Do not redesign APIs, event contracts, schema structures, observability specs, or test plans."
-    ),
-    "ops-design": (
-        "Own SLOs, metrics, alerts, deployment checks, rollback triggers, and runbooks. "
-        "Reference config keys, APIs, and events only as operational dependencies; do not redefine their detailed designs."
-    ),
-    "test-design": (
-        "Own IR-level test strategy design, test solution design, verification themes, strategy reuse assessment, and IR granularity assessment. "
-        "Test strategy design must come before test solution design unless an applicable existing strategy is explicitly reused and cited. "
-        "Do not redesign architecture, domain models, API/event contracts, schema DDL, config matrices, ops policies, or expand into test case steps, equivalence-class tables, and boundary-value enumerations."
-    ),
-    "design-assembler": (
-        "Own synthesis, cross-artifact alignment, and traceability only. "
-        "Do not invent new detailed designs that were not produced by upstream experts except for minimal consistency stitching."
-    ),
-    "validator": (
-        "Own validation findings only. "
-        "Do not create replacement designs; report gaps, conflicts, and missing evidence instead."
-    ),
-}
-
 SHARED_CONTEXT_OWNER_CAPABILITIES = {"modular-design", "design-assembler"}
 GENERIC_SHARED_CONTEXT_HEADING_MARKERS = (
     "背景",
@@ -192,64 +157,11 @@ ARCHITECTURE_SCOPE_EXCLUSION_RE = re.compile(
 
 
 def build_default_topic_ownership(active_agents: List[str]) -> Dict[str, Any]:
-    normalized_agents = _dedupe_preserve_order(
-        [str(agent).strip() for agent in active_agents if str(agent).strip()]
-    )
-    shared_context_owners = [
-        capability for capability in normalized_agents if capability in SHARED_CONTEXT_OWNER_CAPABILITIES
-    ]
-    if not shared_context_owners:
-        if normalized_agents:
-            shared_context_owners = [normalized_agents[0]]
-        else:
-            shared_context_owners = sorted(SHARED_CONTEXT_OWNER_CAPABILITIES)
-
-    capability_topics = {
-        capability: list(DEFAULT_CAPABILITY_TOPICS.get(capability, [capability.replace("-", "_")]))
-        for capability in normalized_agents
-    }
-
-    return {
-        "shared_context_owner_capabilities": shared_context_owners,
-        "shared_context_topics": list(DEFAULT_SHARED_CONTEXT_TOPICS),
-        "capability_topics": capability_topics,
-        "generic_shared_context_section_examples": GENERIC_SHARED_CONTEXT_SECTION_EXAMPLES,
-    }
+    return _build_default_topic_ownership_from_profiles(active_agents)
 
 
 def _resolve_topic_ownership(topic_ownership: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    if not isinstance(topic_ownership, dict):
-        return build_default_topic_ownership([])
-
-    shared_context_owners = _dedupe_preserve_order(
-        [str(item).strip() for item in topic_ownership.get("shared_context_owner_capabilities") or [] if str(item).strip()]
-    )
-    if not shared_context_owners:
-        shared_context_owners = build_default_topic_ownership([])["shared_context_owner_capabilities"]
-
-    shared_context_topics = _dedupe_preserve_order(
-        [str(item).strip() for item in topic_ownership.get("shared_context_topics") or [] if str(item).strip()]
-    ) or list(DEFAULT_SHARED_CONTEXT_TOPICS)
-
-    raw_capability_topics = topic_ownership.get("capability_topics") or {}
-    capability_topics: Dict[str, List[str]] = {}
-    if isinstance(raw_capability_topics, dict):
-        for capability, topics in raw_capability_topics.items():
-            normalized_capability = str(capability).strip()
-            if not normalized_capability:
-                continue
-            capability_topics[normalized_capability] = _dedupe_preserve_order(
-                [str(item).strip() for item in topics or [] if str(item).strip()]
-            )
-
-    return {
-        "shared_context_owner_capabilities": shared_context_owners,
-        "shared_context_topics": shared_context_topics,
-        "capability_topics": capability_topics,
-        "generic_shared_context_section_examples": str(
-            topic_ownership.get("generic_shared_context_section_examples") or GENERIC_SHARED_CONTEXT_SECTION_EXAMPLES
-        ).strip(),
-    }
+    return _resolve_topic_ownership_from_profile(topic_ownership)
 
 
 def _owns_shared_context(capability: str, topic_ownership: Optional[Dict[str, Any]] = None) -> bool:
@@ -595,6 +507,10 @@ def _default_output_plan(
     }
 
 
+def _canonical_legacy_capability(capability: str) -> str:
+    return "modular-design" if capability == "architecture-mapping" else capability
+
+
 def _resolve_output_char_budget(
     state: Dict[str, Any],
     capability: str,
@@ -610,7 +526,7 @@ def _resolve_output_char_budget(
             if explicit is not None:
                 return explicit
 
-    explicit = OUTPUT_CHAR_BUDGET_BY_FILE.get((capability, basename))
+    explicit = OUTPUT_CHAR_BUDGET_BY_FILE.get((_canonical_legacy_capability(capability), basename))
     if explicit is not None:
         return explicit
     return OUTPUT_CHAR_BUDGET_BY_SUFFIX.get(Path(normalized_target).suffix.lower(), 12000)
@@ -619,29 +535,38 @@ def _resolve_output_char_budget(
 def _resolve_must_cover_limit(capability: str, target_file: str) -> int:
     normalized_target = _normalize_relative_path(target_file)
     basename = Path(normalized_target).name
-    explicit = OUTPUT_MUST_COVER_LIMIT_BY_FILE.get((capability, basename))
+    explicit = OUTPUT_MUST_COVER_LIMIT_BY_FILE.get((_canonical_legacy_capability(capability), basename))
     if explicit is not None:
         return explicit
     return OUTPUT_MUST_COVER_LIMIT_BY_SUFFIX.get(Path(normalized_target).suffix.lower(), 4)
 
 
-def _scope_boundary_note(capability: str) -> str:
-    return CAPABILITY_SCOPE_NOTES.get(
-        capability,
-        "Keep each artifact concise and limited to this expert's primary responsibility.",
-    )
+def _scope_boundary_note(
+    capability: str,
+    *,
+    agent_config: Optional["AgentFullConfig"] = None,
+    runtime_profile: Optional[ExpertRuntimeProfile] = None,
+) -> str:
+    profile = runtime_profile or resolve_expert_runtime_profile(capability, agent_config)
+    return _render_boundary_note_from_profile(profile, capability)
 
 
 def _filter_scope_items_for_capability(capability: str, items: List[str]) -> List[str]:
     normalized_items = [str(item).strip() for item in items if str(item).strip()]
-    if capability != "modular-design":
+    if _canonical_legacy_capability(capability) != "modular-design":
         return normalized_items
 
     filtered = [item for item in normalized_items if not ARCHITECTURE_SCOPE_EXCLUSION_RE.search(item)]
     return filtered if filtered else normalized_items
 
 
-def _constrain_output_plan(capability: str, output_plan: Dict[str, Any]) -> Dict[str, Any]:
+def _constrain_output_plan(
+    capability: str,
+    output_plan: Dict[str, Any],
+    *,
+    agent_config: Optional["AgentFullConfig"] = None,
+    runtime_profile: Optional[ExpertRuntimeProfile] = None,
+) -> Dict[str, Any]:
     normalized = dict(output_plan)
     selected_outputs = _normalize_output_candidate_list(normalized.get("selected_outputs") or [])
     must_cover_by_file = dict(normalized.get("must_cover_by_file") or {})
@@ -656,7 +581,7 @@ def _constrain_output_plan(capability: str, output_plan: Dict[str, Any]) -> Dict
     )[:6]
 
     planning_notes = str(normalized.get("planning_notes") or "").strip()
-    boundary_note = _scope_boundary_note(capability)
+    boundary_note = _scope_boundary_note(capability, agent_config=agent_config, runtime_profile=runtime_profile)
     if boundary_note not in planning_notes:
         planning_notes = f"{planning_notes} {boundary_note}".strip()
 
@@ -898,6 +823,8 @@ def _normalize_output_plan(
     *,
     capability: str,
     candidate_outputs: List[str],
+    agent_config: Optional["AgentFullConfig"] = None,
+    runtime_profile: Optional[ExpertRuntimeProfile] = None,
 ) -> Dict[str, Any]:
     default_plan = _default_output_plan(capability, candidate_outputs)
     if not isinstance(raw_plan, dict):
@@ -979,7 +906,12 @@ def _normalize_output_plan(
         "evidence_focus": evidence_focus,
         "planning_notes": str(raw_plan.get("planning_notes") or "").strip(),
     }
-    return _constrain_output_plan(capability, normalized)
+    return _constrain_output_plan(
+        capability,
+        normalized,
+        agent_config=agent_config,
+        runtime_profile=runtime_profile,
+    )
 
 
 def _normalize_react_action(action: Any) -> Optional[Dict[str, Any]]:
@@ -1247,22 +1179,34 @@ def _extract_bullet_items(section_body: str, max_items: int = 8) -> List[str]:
     return bullet_items
 
 
-def _capability_keywords(capability: str) -> List[str]:
-    base_keywords = capability.replace("-", " ").split()
-    capability_map = {
-        "modular-design": ["模块化", "模块", "边界", "交互", "容器", "上下文", "复用点"],
-        "data-design": ["数据", "表", "字段", "索引", "迁移", "兼容", "约束", "审计"],
-        "integration-design": ["集成", "协议", "异步", "消息", "回调", "审批", "考勤", "通知", "组织"],
-        "ddd-structure": ["聚合", "实体", "值对象", "领域", "命令", "DDD"],
-        "flow-design": ["流程", "批次", "重算", "回溯", "差异解释"],
-        "api-design": ["API", "接口", "查询", "重算", "明细", "权限"],
-        "config-design": ["配置", "灰度", "开关", "权限", "回滚", "规则"],
-        "ops-design": ["运维", "可观测", "监控", "告警", "指标", "审计"],
-        "test-design": ["测试", "策略", "方案", "验证", "验收", "回归", "IR", "颗粒度", "拆分", "复用策略", "策略设计", "方案设计"],
-        "validator": ["约束", "一致性", "风险", "校验"],
-        "design-assembler": ["汇总", "方案", "整合", "结论"],
-    }
-    return _dedupe_preserve_order(base_keywords + capability_map.get(capability, []))
+def _capability_keywords(
+    capability: str,
+    *,
+    agent_config: Optional["AgentFullConfig"] = None,
+    runtime_profile: Optional[ExpertRuntimeProfile] = None,
+) -> List[str]:
+    profile = runtime_profile or resolve_expert_runtime_profile(capability, agent_config)
+    return list(profile.routing_keywords)
+
+
+def _matched_routing_keywords(
+    text: str,
+    capability: str,
+    *,
+    agent_config: Optional["AgentFullConfig"] = None,
+    runtime_profile: Optional[ExpertRuntimeProfile] = None,
+) -> List[str]:
+    haystack = str(text or "").lower()
+    matches: List[str] = []
+    for keyword in _capability_keywords(
+        capability,
+        agent_config=agent_config,
+        runtime_profile=runtime_profile,
+    ):
+        normalized = str(keyword or "").strip()
+        if normalized and normalized.lower() in haystack and normalized not in matches:
+            matches.append(normalized)
+    return matches
 
 
 def _score_section_for_capability(
@@ -1270,6 +1214,9 @@ def _score_section_for_capability(
     capability: str,
     expected_files: List[str],
     topic_ownership: Optional[Dict[str, Any]] = None,
+    *,
+    agent_config: Optional["AgentFullConfig"] = None,
+    runtime_profile: Optional[ExpertRuntimeProfile] = None,
 ) -> int:
     heading = str(section.get("heading") or "")
     body = str(section.get("body") or "")
@@ -1284,7 +1231,11 @@ def _score_section_for_capability(
     if not _owns_shared_context(capability, topic_ownership) and _is_generic_shared_context_heading(heading):
         score -= 3
 
-    for keyword in _capability_keywords(capability):
+    for keyword in _capability_keywords(
+        capability,
+        agent_config=agent_config,
+        runtime_profile=runtime_profile,
+    ):
         if keyword and keyword.lower() in combined.lower():
             score += 2
 
@@ -1303,6 +1254,8 @@ def _select_focus_sections(
     *,
     max_sections: int = 6,
     topic_ownership: Optional[Dict[str, Any]] = None,
+    agent_config: Optional["AgentFullConfig"] = None,
+    runtime_profile: Optional[ExpertRuntimeProfile] = None,
 ) -> List[Dict[str, Any]]:
     sections = _extract_markdown_sections(requirement_text)
     if not sections:
@@ -1312,7 +1265,20 @@ def _select_focus_sections(
         (
             {
                 **section,
-                "score": _score_section_for_capability(section, capability, expected_files, topic_ownership),
+                "score": _score_section_for_capability(
+                    section,
+                    capability,
+                    expected_files,
+                    topic_ownership,
+                    agent_config=agent_config,
+                    runtime_profile=runtime_profile,
+                ),
+                "matched_keywords": _matched_routing_keywords(
+                    f"{section.get('heading') or ''}\n{section.get('body') or ''}",
+                    capability,
+                    agent_config=agent_config,
+                    runtime_profile=runtime_profile,
+                ),
             }
             for section in sections
         ),
@@ -1326,187 +1292,26 @@ def _select_focus_sections(
     return selected
 
 
-def _build_expected_file_guidance(capability: str, expected_files: List[str]) -> List[Dict[str, str]]:
-    guidance_map = {
-        ".sql": "落到可执行 DDL，明确新增/改造表、关键字段、索引、约束与兼容策略。",
-        ".md": "覆盖设计动机、关键结构、约束、边界与引用证据。",
-        ".json": "保持结构化、可被下游稳定消费，字段命名一致。",
-        ".yaml": "输出可落地的契约/配置，不只给概念性描述。",
-        ".yml": "输出可落地的契约/配置，不只给概念性描述。",
-    }
-    capability_hint = {
-        "data-design": "重点回答表结构、字段、唯一键、索引、迁移/回滚。",
-        "modular-design": "重点回答模块边界、复用点、上下文/容器职责。",
-        "integration-design": "重点回答外部系统交互、消息契约、异常补偿与幂等。",
-        "api-design": "重点回答接口路径、入参出参、幂等与权限边界。",
-    }.get(capability, "重点回答该专家负责的核心设计问题，并确保内容可落地。")
-
-    guidance_rows: List[Dict[str, str]] = []
-    for file_name in expected_files:
-        suffix = Path(file_name).suffix.lower()
-        guidance_rows.append(
-            {
-                "path": _normalize_relative_path(file_name),
-                "guidance": f"{guidance_map.get(suffix, '输出需完整、结构化、可直接交付。')} {capability_hint}",
-            }
-        )
-    return guidance_rows
+def _build_expected_file_guidance(
+    capability: str,
+    expected_files: List[str],
+    *,
+    agent_config: Optional["AgentFullConfig"] = None,
+    runtime_profile: Optional[ExpertRuntimeProfile] = None,
+) -> List[Dict[str, str]]:
+    profile = runtime_profile or resolve_expert_runtime_profile(capability, agent_config)
+    return _resolve_file_guidance_from_profile(profile, expected_files)
 
 
-def _build_capability_delivery_checklist(capability: str, expected_files: List[str]) -> Dict[str, Any]:
-    checklist_map = {
-        "data-design": {
-            "must_answer": [
-                "哪些存量表直接复用，哪些表需要新增字段或新增表。",
-                "唯一键、索引、审计字段、历史兼容和迁移/回滚策略是否闭环。",
-                "最终 SQL 是否能支撑批次、员工、segment、税差等关键查询路径。",
-            ],
-            "evidence_expectations": [
-                "尽量落到真实表名/字段名/索引名，而不是抽象描述。",
-                "迁移方案要说明增量上线顺序、历史数据兼容、失败回滚。",
-            ],
-        },
-        "modular-design": {
-            "must_answer": [
-                "新老模块边界如何划分，哪些容器/模块复用，哪些需要新增。",
-                "前后端交互链路与上下文边界是否清晰。",
-                "是否明确标注现有代码复用点和缺口。",
-            ],
-            "evidence_expectations": [
-                "尽量引用真实模块名、类名、入口、容器职责。",
-                "设计图和模块映射要能解释为什么这么拆。",
-            ],
-        },
-        "integration-design": {
-            "must_answer": [
-                "外部系统之间的同步/异步边界、消息契约、补偿与幂等策略。",
-                "失败重试、回调/Webhook、超时和降级策略。",
-                "审批、考勤、组织、通知等系统如何参与主流程和异常流程。",
-            ],
-            "evidence_expectations": [
-                "能落到具体接口、事件名、关键字段更好。",
-                "必须解释错误处理和补偿，而不只是 happy path。",
-            ],
-        },
-        "api-design": {
-            "must_answer": [
-                "接口路径、核心入参/出参、分页/筛选、幂等与权限边界。",
-                "员工重算、segment 重算、差异解释、明细查询等能力是否覆盖。",
-            ],
-            "evidence_expectations": [
-                "契约要清晰到前后端可以直接讨论联调。",
-            ],
-        },
-        "flow-design": {
-            "must_answer": [
-                "批次主流程、补发回溯、员工/segment 重算、差异解释流程是否闭环。",
-                "异常分支、回滚点、审计节点是否明确。",
-            ],
-            "evidence_expectations": [
-                "流程图或步骤必须区分主干和异常路径。",
-            ],
-        },
-        "config-design": {
-            "must_answer": [
-                "灰度矩阵、开关、权限、规则版本绑定和回滚策略。",
-                "配置项如何作用于不同法人、薪资组、月份。",
-            ],
-            "evidence_expectations": [
-                "配置设计不能只有字段清单，要说明生效范围和优先级。",
-            ],
-        },
-        "ops-design": {
-            "must_answer": [
-                "指标、日志、审计、告警和故障恢复方案。",
-                "批次、segment、税差异常、局部重算的可观测性。",
-            ],
-            "evidence_expectations": [
-                "监控项要能转成实际运维检查项。",
-            ],
-        },
-        "test-design": {
-            "must_answer": [
-                "当前 IR 的颗粒度是否适中，是否需要拆分、并入或保持当前边界。",
-                "当前 IR 是否需要新增测试策略设计；若不需要，复用哪份既有策略以及它的适用边界是什么。",
-                "测试策略设计是否明确测试目标、范围边界、风险优先级、测试层级和进入/退出准则。",
-                "测试方案设计是否基于策略设计结果展开，并说明验证主题簇、回归影响面、非功能关注点，以及数据/环境/观测方案。",
-            ],
-            "evidence_expectations": [
-                "若只输出 test-solution-design.md，必须引用既有测试策略来源并解释继承关系。",
-                "测试方案设计必须回指 IR 验收项与上游设计事实，禁止直接展开为测试用例步骤、等价类明细或边界值枚举。",
-            ],
-        },
-        "ddd-structure": {
-            "must_answer": [
-                "聚合根、实体、值对象、命令模型与边界上下文。",
-                "segment 的建模方式是否合理并解释取舍。",
-            ],
-            "evidence_expectations": [
-                "命名和职责边界要与领域语言一致。",
-            ],
-        },
-        "validator": {
-            "must_answer": [
-                "方案内部的一致性、约束满足情况、遗漏风险。",
-            ],
-            "evidence_expectations": [
-                "指出冲突项、模糊项和残余风险。",
-            ],
-        },
-        "design-assembler": {
-            "must_answer": [
-                "多专家输出是否整合成一套一致方案。",
-                "跨文档术语、边界、命名和结论是否统一。",
-            ],
-            "evidence_expectations": [
-                "合并时要标出仍待确认的风险或空白。",
-            ],
-        },
-    }
-    base = checklist_map.get(
-        capability,
-        {
-            "must_answer": ["该专家负责的核心设计问题是否被完整回答。"],
-            "evidence_expectations": ["输出必须结构化、可交付，并与证据一致。"],
-        },
-    )
-
-    artifact_review_checklist: Dict[str, List[str]] = {}
-    for file_name in expected_files:
-        suffix = Path(file_name).suffix.lower()
-        review_items = [
-            "内容不能为空，且结构完整。",
-            "命名与其他产物保持一致。",
-            "能回指需求约束或已收集证据，而不是纯推测。",
-        ]
-        if suffix == ".sql":
-            review_items.extend(
-                [
-                    "DDL 可执行，包含必要字段、约束、索引和注释。",
-                    "变更对历史兼容、迁移和回滚有交代。",
-                ]
-            )
-        elif suffix in {".yaml", ".yml", ".json"}:
-            review_items.extend(
-                [
-                    "结构化字段完整，便于程序消费或联调。",
-                    "示例值和字段语义不冲突。",
-                ]
-            )
-        else:
-            review_items.extend(
-                [
-                    "文档章节覆盖目标问题、设计决策、约束、风险和结论。",
-                    "不是只有概念说明，而是包含可落地细节。",
-                ]
-            )
-        artifact_review_checklist[_normalize_relative_path(file_name)] = review_items
-
-    return {
-        "must_answer": base["must_answer"],
-        "evidence_expectations": base["evidence_expectations"],
-        "artifact_review_checklist": artifact_review_checklist,
-    }
+def _build_capability_delivery_checklist(
+    capability: str,
+    expected_files: List[str],
+    *,
+    agent_config: Optional["AgentFullConfig"] = None,
+    runtime_profile: Optional[ExpertRuntimeProfile] = None,
+) -> Dict[str, Any]:
+    profile = runtime_profile or resolve_expert_runtime_profile(capability, agent_config)
+    return _build_delivery_checklist_from_profile(profile, capability, expected_files)
 
 
 def _build_coverage_brief(
@@ -1517,14 +1322,19 @@ def _build_coverage_brief(
     *,
     candidate_output_files: Optional[List[str]] = None,
     output_plan: Optional[Dict[str, Any]] = None,
+    agent_config: Optional["AgentFullConfig"] = None,
+    runtime_profile: Optional[ExpertRuntimeProfile] = None,
 ) -> Dict[str, Any]:
     requirement_text = str(payload.get("requirement") or "").strip()
     topic_ownership = payload.get("topic_ownership") if isinstance(payload.get("topic_ownership"), dict) else None
+    profile = runtime_profile or resolve_expert_runtime_profile(capability, agent_config)
     focus_sections = _select_focus_sections(
         requirement_text,
         capability,
         expected_files,
         topic_ownership=topic_ownership,
+        agent_config=agent_config,
+        runtime_profile=profile,
     )
     candidate_output_files = _normalize_output_candidate_list(candidate_output_files or expected_files)
     output_plan = output_plan or _default_output_plan(
@@ -1552,12 +1362,33 @@ def _build_coverage_brief(
         "must_cover_by_file": dict(output_plan.get("must_cover_by_file") or {}),
         "evidence_focus": list(output_plan.get("evidence_focus") or []),
         "planning_notes": str(output_plan.get("planning_notes") or ""),
-        "expected_file_guidance": _build_expected_file_guidance(capability, expected_files),
-        "delivery_checklist": _build_capability_delivery_checklist(capability, expected_files),
+        "expected_file_guidance": _build_expected_file_guidance(
+            capability,
+            expected_files,
+            agent_config=agent_config,
+            runtime_profile=profile,
+        ),
+        "delivery_checklist": _build_capability_delivery_checklist(
+            capability,
+            expected_files,
+            agent_config=agent_config,
+            runtime_profile=profile,
+        ),
+        "routing_debug": {
+            "source": str((profile.source_map or {}).get("routing_keywords") or ""),
+            "keywords": list(profile.routing_keywords),
+            "matched_keywords": _matched_routing_keywords(
+                requirement_text,
+                capability,
+                agent_config=agent_config,
+                runtime_profile=profile,
+            ),
+        },
         "focus_sections": [
             {
                 "heading": section.get("heading"),
                 "score": section.get("score"),
+                "matched_keywords": list(section.get("matched_keywords") or []),
                 "must_cover_points": _extract_bullet_items(str(section.get("body") or ""), max_items=6),
                 "excerpt": _summarize_value_for_prompt(str(section.get("body") or ""), max_string=600),
             }
@@ -1578,6 +1409,8 @@ def _build_requirement_digest(
     *,
     candidate_output_files: Optional[List[str]] = None,
     output_plan: Optional[Dict[str, Any]] = None,
+    agent_config: Optional["AgentFullConfig"] = None,
+    runtime_profile: Optional[ExpertRuntimeProfile] = None,
 ) -> str:
     requirement_text = str(payload.get("requirement") or "").strip()
     topic_ownership = payload.get("topic_ownership") if isinstance(payload.get("topic_ownership"), dict) else None
@@ -1589,6 +1422,8 @@ def _build_requirement_digest(
         expected_files,
         candidate_output_files=candidate_output_files,
         output_plan=output_plan,
+        agent_config=agent_config,
+        runtime_profile=runtime_profile,
     )
     structure_entries = ((payload.get("tool_context") or {}).get("extract_structure") or {}).get("files") or []
     headings: List[str] = []
@@ -1693,6 +1528,9 @@ def _build_requirement_digest(
         for section in focus_sections:
             heading = section.get("heading") or "Unknown Section"
             lines.append(f"### {heading}")
+            matched_keywords = [str(item).strip() for item in (section.get("matched_keywords") or []) if str(item).strip()]
+            if matched_keywords:
+                lines.append(f"- Routing keyword hits: {', '.join(matched_keywords)}")
             points = section.get("must_cover_points") or []
             if points:
                 lines.extend(f"- {point}" for point in points)
@@ -1709,6 +1547,20 @@ def _build_requirement_digest(
         items = coverage_brief.get(key) or []
         if items:
             lines.extend(["", f"## {title}", *[f"- {item}" for item in items]])
+
+    routing_debug = coverage_brief.get("routing_debug") or {}
+    routing_keywords = [str(item).strip() for item in (routing_debug.get("keywords") or []) if str(item).strip()]
+    if routing_keywords:
+        matched_keywords = [str(item).strip() for item in (routing_debug.get("matched_keywords") or []) if str(item).strip()]
+        lines.extend(
+            [
+                "",
+                "## Routing Debug",
+                f"- Keyword source: {routing_debug.get('source') or 'unknown'}",
+                f"- Configured keywords: {', '.join(routing_keywords)}",
+                f"- Matched keywords in requirement: {', '.join(matched_keywords) if matched_keywords else '(none)'}",
+            ]
+        )
 
     if requirement_text and is_shared_context_owner:
         excerpt_limit = 2400
@@ -1793,6 +1645,7 @@ def _persist_workspace_snapshot(
     artifacts_dir: Path,
     work_dir: Path,
     final_trace: Optional[List[Dict[str, Any]]] = None,
+    agent_config: Optional["AgentFullConfig"] = None,
 ) -> Dict[str, str]:
     final_trace = final_trace or []
     project_root = project_path
@@ -1815,6 +1668,7 @@ def _persist_workspace_snapshot(
             expected_files,
             candidate_output_files=candidate_output_files,
             output_plan=output_plan,
+            agent_config=agent_config,
         ),
         encoding="utf-8",
     )
@@ -1827,6 +1681,7 @@ def _persist_workspace_snapshot(
                 expected_files,
                 candidate_output_files=candidate_output_files,
                 output_plan=output_plan,
+                agent_config=agent_config,
             ),
             ensure_ascii=False,
             indent=2,
@@ -2603,6 +2458,7 @@ def default_plan_outputs(
         candidate_outputs,
         candidate_output_files=candidate_outputs,
         output_plan=_default_output_plan(capability, candidate_outputs),
+        agent_config=agent_config,
     )
     user_prompt = json.dumps(
         {
@@ -2639,6 +2495,7 @@ def default_plan_outputs(
         parsed,
         capability=capability,
         candidate_outputs=candidate_outputs,
+        agent_config=agent_config,
     )
     if llm_output.reasoning:
         normalized["planning_notes"] = str(normalized.get("planning_notes") or llm_output.reasoning).strip()
@@ -2866,12 +2723,15 @@ def build_targeted_artifact_prompt(
     batch_index: int = 1,
     batch_total: int = 1,
     total_char_budget: int = 12000,
+    agent_config: Optional["AgentFullConfig"] = None,
+    runtime_profile: Optional[ExpertRuntimeProfile] = None,
 ) -> str:
     must_cover = section_focus or (output_plan.get("must_cover_by_file", {}).get(target_file) or [])
     evidence_focus = output_plan.get("evidence_focus") or []
     skipped_outputs = output_plan.get("skipped_outputs") or []
     topic_ownership = output_plan.get("topic_ownership") if isinstance(output_plan.get("topic_ownership"), dict) else None
     shared_context_block = _build_shared_context_prompt_block(capability, topic_ownership)
+    boundary_note = _scope_boundary_note(capability, agent_config=agent_config, runtime_profile=runtime_profile)
     opening_guardrail = (
         "If you include shared context, write it once and keep it short."
         if _owns_shared_context(capability, topic_ownership)
@@ -2930,7 +2790,7 @@ Rules:
 2. If information is already covered by code/KB/DB evidence, reference it inside this file instead of inventing extra artifacts.
 3. Produce deliverable-ready content, not meta commentary.
 4. Keep this batch within about {batch_char_budget} characters, and keep the full `{target_file}` within about {total_char_budget} characters.
-5. {_scope_boundary_note(capability)}
+5. {boundary_note}
 6. {opening_guardrail}
 7. Do not restate the requirement digest, coverage brief, or upstream artifacts verbatim. Convert them into expert-specific deltas and cite the source briefly when needed.
 8. If shared context is needed, keep it to at most two bullets before moving to expert-specific design.
@@ -3016,6 +2876,7 @@ def default_generate_artifact_for_output(
             batch_index=batch_index,
             batch_total=batch_total,
             total_char_budget=total_char_budget,
+            agent_config=agent_config,
         ),
         user_prompt,
         [target_file],
@@ -3036,6 +2897,8 @@ def build_react_system_prompt(
     configured_assets: Optional[Dict[str, Any]] = None,
     selected_outputs: Optional[List[str]] = None,
     output_plan: Optional[Dict[str, Any]] = None,
+    agent_config: Optional["AgentFullConfig"] = None,
+    runtime_profile: Optional[ExpertRuntimeProfile] = None,
 ) -> str:
     """
     Build the ReAct system prompt from agent configuration.
@@ -3056,6 +2919,7 @@ def build_react_system_prompt(
     output_plan = output_plan or {}
     topic_ownership = output_plan.get("topic_ownership") if isinstance(output_plan.get("topic_ownership"), dict) else None
     shared_context_block = _build_shared_context_prompt_block(capability, topic_ownership)
+    boundary_note = _scope_boundary_note(capability, agent_config=agent_config, runtime_profile=runtime_profile)
     tool_contract_section = _build_tool_contract_section(tools_allowed, candidate_files)
     available_tools_section = _build_available_tool_section(tools_allowed)
     tools_section = f"""
@@ -3126,7 +2990,7 @@ Choose one next action at a time to ground design artifacts.
 {asset_examples_section}
 {output_plan_section}
 Scope boundary:
-- {_scope_boundary_note(capability)}
+- {boundary_note}
 
 {shared_context_block}
 
@@ -3188,6 +3052,8 @@ def build_final_artifacts_prompt(
     expected_files: List[str],
     templates: Dict[str, str],
     topic_ownership: Optional[Dict[str, Any]] = None,
+    agent_config: Optional["AgentFullConfig"] = None,
+    runtime_profile: Optional[ExpertRuntimeProfile] = None,
 ) -> str:
     """
     Build the final artifacts generation prompt.
@@ -3216,6 +3082,7 @@ Additional Guidelines:
 {prompt_instructions}
 """
     shared_context_block = _build_shared_context_prompt_block(capability, topic_ownership)
+    boundary_note = _scope_boundary_note(capability, agent_config=agent_config, runtime_profile=runtime_profile)
     opening_guardrail = (
         "If you include shared context, write it once and keep it short."
         if _owns_shared_context(capability, topic_ownership)
@@ -3233,7 +3100,7 @@ Requirements:
 2. Use consistent naming conventions.
 3. Include enough structure for downstream consumers.
 4. Use the templates as style references.
-5. {_scope_boundary_note(capability)}
+5. {boundary_note}
 6. {opening_guardrail}
 7. Do not restate shared context or upstream artifacts verbatim; synthesize them and cite briefly when needed.
 
@@ -3253,6 +3120,8 @@ def build_finalization_system_prompt(
     workspace_paths: Dict[str, str],
     topic_ownership: Optional[Dict[str, Any]] = None,
     configured_assets: Optional[Dict[str, Any]] = None,
+    agent_config: Optional["AgentFullConfig"] = None,
+    runtime_profile: Optional[ExpertRuntimeProfile] = None,
 ) -> str:
     tool_contract_section = _build_tool_contract_section(tools_allowed, candidate_files)
     available_tools_section = _build_available_tool_section(tools_allowed)
@@ -3260,6 +3129,7 @@ def build_finalization_system_prompt(
     tool_name_options = _build_tool_name_options(tools_allowed, configured_assets)
     expected_block = "\n".join(f"- {file_name}" for file_name in expected_files)
     shared_context_block = _build_shared_context_prompt_block(capability, topic_ownership)
+    boundary_note = _scope_boundary_note(capability, agent_config=agent_config, runtime_profile=runtime_profile)
     workspace_block = "\n".join(
         [
             f"- workspace index: artifacts/{workspace_paths['workspace_index']}",
@@ -3290,6 +3160,9 @@ Workspace files you should use first:
 {workspace_block}
 
 {shared_context_block}
+
+Scope boundary:
+- {boundary_note}
 
 {custom_section}
 {available_tools_section}
@@ -3353,6 +3226,7 @@ def default_next_finalization_decision(
         workspace_paths=workspace_paths,
         topic_ownership=payload.get("topic_ownership") if isinstance(payload.get("topic_ownership"), dict) else None,
         configured_assets=payload.get("configured_assets") if isinstance(payload.get("configured_assets"), dict) else None,
+        agent_config=agent_config,
     )
 
     payload_summary = _compact_payload_for_finalization_prompt(payload, expected_files)
@@ -3447,6 +3321,7 @@ def default_next_react_decision(
         configured_assets=configured_assets,
         selected_outputs=selected_outputs,
         output_plan=output_plan,
+        agent_config=agent_config,
     )
     
     # Build template hints — pass full content to preserve structural meaning
@@ -3528,6 +3403,7 @@ def default_generate_final_artifacts(
         expected_files=expected_files,
         templates=templates,
         topic_ownership=payload.get("topic_ownership") if isinstance(payload.get("topic_ownership"), dict) else None,
+        agent_config=agent_config,
     )
     
     project_root = _get_runtime_project_root(payload)
@@ -3860,6 +3736,7 @@ async def run_dynamic_subagent(
         output_plan,
         capability=capability,
         candidate_outputs=candidate_output_files,
+        agent_config=agent_config,
     )
     output_plan["topic_ownership"] = payload.get("topic_ownership") or build_default_topic_ownership(
         payload.get("active_agents") or []
@@ -4333,6 +4210,7 @@ async def run_dynamic_subagent(
             artifacts_dir=artifacts_dir,
             work_dir=work_dir,
             final_trace=final_trace,
+            agent_config=agent_config,
         )
 
         artifacts_output: Dict[str, str] = {}
@@ -4417,6 +4295,7 @@ async def run_dynamic_subagent(
                         artifacts_dir=artifacts_dir,
                         work_dir=work_dir,
                         final_trace=final_trace,
+                        agent_config=agent_config,
                     )
                     artifact_status = _collect_artifact_status(artifacts_dir, expected_files)
                     coverage_brief_for_batch = _read_workspace_json(artifacts_dir / workspace_paths["coverage_brief"])
@@ -4662,6 +4541,7 @@ async def run_dynamic_subagent(
                     artifacts_dir=artifacts_dir,
                     work_dir=work_dir,
                     final_trace=final_trace,
+                    agent_config=agent_config,
                 )
                 reasoning_sections = [entry.get("reasoning", "") for entry in react_trace if entry.get("reasoning")]
                 reasoning_sections.extend(final_reasoning_sections)
@@ -4735,6 +4615,7 @@ async def run_dynamic_subagent(
             artifacts_dir=artifacts_dir,
             work_dir=work_dir,
             final_trace=final_trace,
+            agent_config=agent_config,
         )
 
         # Write reasoning
@@ -4885,57 +4766,12 @@ def _get_expected_artifacts_by_agent() -> Dict[str, List[str]]:
 
 
 def _get_upstream_artifact_mapping() -> Dict[str, Dict[str, List[str]]]:
-    """Get upstream artifact mapping from registry config.
-    
-    Reads from expert.yaml `upstream_artifacts` field if defined.
-    Falls back to UPSTREAM_ARTIFACT_MAPPING_FALLBACK.
-    """
-    try:
-        from registry.expert_registry import ExpertRegistry
-        registry = ExpertRegistry.get_instance()
-        result: Dict[str, Dict[str, List[str]]] = {}
-        for manifest in registry.get_all_manifests():
-            if manifest.upstream_artifacts:
-                result[manifest.capability] = manifest.upstream_artifacts
-        return result if result else UPSTREAM_ARTIFACT_MAPPING_FALLBACK
-    except RuntimeError:
-        return UPSTREAM_ARTIFACT_MAPPING_FALLBACK
+    """Get upstream artifact mapping from normalized runtime configuration."""
+    return _get_upstream_artifact_mapping_from_profiles()
 
 
 def _discover_upstream_artifacts(capability: str, artifacts_dir: Path) -> Dict[str, List[str]]:
-    """
-    Discover upstream artifacts that exist in the artifacts directory.
-    
-    This enables cross-agent memory: downstream agents can read artifacts
-    produced by upstream agents.
-    
-    Args:
-        capability: Current agent's capability
-        artifacts_dir: Path to the artifacts directory
-        
-    Returns:
-        Dict mapping upstream agent -> list of existing artifact files
-    """
-    upstream_map = _get_upstream_artifact_mapping().get(capability, {})
-    if not upstream_map:
-        return {}
-    
-    discovered: Dict[str, List[str]] = {}
-    
-    if not artifacts_dir.exists():
-        return discovered
-    
-    existing_files = set()
-    for f in artifacts_dir.iterdir():
-        if f.is_file():
-            existing_files.add(f.name)
-    
-    for upstream_agent, expected_files in upstream_map.items():
-        found = [f for f in expected_files if f in existing_files]
-        if found:
-            discovered[upstream_agent] = found
-    
-    return discovered
+    return _discover_upstream_artifacts_from_profiles(capability, artifacts_dir)
 
 
 def _default_expected_files(capability: str) -> List[str]:

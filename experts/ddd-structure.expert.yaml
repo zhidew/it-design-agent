@@ -54,6 +54,52 @@ metadata:
       - ops and test design
     upstream_inputs:
       - data-design
+  topic_ownership:
+    topics:
+      - aggregates
+      - entities
+      - value_objects
+      - bounded_contexts
+      - domain_commands
+    owns_shared_context: false
+  routing:
+    keywords:
+      - DDD
+      - 领域
+      - 聚合
+      - 实体
+      - 值对象
+      - 领域服务
+      - 上下文
+      - 限界上下文
+      - 命令
+      - 事件风暴
+      - invariant
+      - bounded context
+  prompt_hints:
+    file_guidance:
+      class-diagram.md: 表达核心领域对象、聚合根、实体、值对象、关系和关键不变量，避免变成数据库表结构复述。
+      ddd-structure.md: 说明领域术语、聚合边界、领域服务、命令、事件、不变量和一致性边界。
+      context-map.md: 描述限界上下文、上下游关系、防腐层、共享内核或开放主机服务等上下文协作模式。
+    default_file_guidance: 聚焦领域模型和上下文边界，引用数据设计事实但不重写 DDL、API、事件或测试内容。
+  delivery_contract:
+    must_answer:
+      - 核心聚合、实体、值对象、领域服务和不变量是否明确。
+      - 限界上下文、上下游关系和上下文映射模式是否可追踪。
+      - 领域模型与数据设计/API 设计之间的命名和职责是否保持一致。
+    evidence_expectations:
+      - 领域对象需要回指需求术语或上游数据实体，避免抽象泛化。
+      - 不变量和一致性边界必须说明触发命令或状态变化来源。
+    artifact_review_checklist:
+      class-diagram.md:
+        - 类图需要区分聚合根、实体、值对象和领域服务，并标出关键关系。
+        - 不应退化为表结构或 DTO 字段清单。
+      ddd-structure.md:
+        - 需要覆盖领域术语、聚合边界、命令、事件、不变量和一致性边界。
+        - 聚合职责与上游数据模型/API 契约应保持命名一致。
+      context-map.md:
+        - 限界上下文、上下游关系和协作模式必须清楚。
+        - 需要说明防腐层、共享内核或开放主机服务等边界策略。
 policies:
   asset_baseline_required: true
   evidence_required: true
@@ -64,3 +110,4 @@ error_handling:
   on_missing_required_input: fail
   on_validation_failure: fail
   on_partial_generation: emit_evidence_and_fail
+

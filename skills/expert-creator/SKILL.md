@@ -133,11 +133,16 @@ keywords:
 - `tools.allowed`
 - `outputs.expected`
 - `metadata.boundary_contract`
+- `metadata.topic_ownership`
+- `metadata.routing.keywords`
+- `metadata.prompt_hints`
+- `metadata.delivery_contract`
 - `policies` 与 `error_handling`
 
 要求：
 
 - 边界说明必须明确 owns、excludes、upstream_inputs
+- `expert.yaml` 是结构化真相源；`outputs.expected`、`upstream_artifacts`、`routing.keywords`、`topic_ownership`、`prompt_hints`、`delivery_contract` 只能在这里维护 canonical 版本
 - 产物清单必须和模板、SKILL 指南保持一致
 - 描述优先中文，避免空泛措辞
 
@@ -164,6 +169,9 @@ keywords:
 - 自然语言说明默认用中文
 - 保留必要的英文工具名、文件名、协议名和格式名
 - 输出产物、证据文件和边界说明必须与 profile 一致
+- `SKILL.md` 不要重复维护 `outputs.expected` 或 `upstream_artifacts` 的 canonical 文件名清单；应改写为“使用 runtime 注入的上游工件 / 目标产物”
+- `SKILL.md` 不要再维护与 YAML 等价的 boundary、routing keywords、delivery checklist；这里只保留方法论、执行顺序、写作风格、ReAct 策略和示例
+- 如果必须展示路径示例，必须明确标注为 illustrative example，而不是专家契约真相源
 
 ### Step 5: Generate Templates
 

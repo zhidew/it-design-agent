@@ -37,20 +37,15 @@ keywords:
 
 # 输出产物 (Output Artifacts)
 
-## 必需产物 (Always Required)
+## 运行时产物 (Runtime-Configured Artifacts)
 
-| 产物路径 | 说明 |
-|----------|------|
-| `artifacts/detailed-design.md` | 聚合后的详细设计主文档。 |
-| `artifacts/implementation-plan.json` | 面向 code agent 的可执行实施计划（模块、文件、任务拆解、风险与验收标准）。 |
-| `artifacts/traceability.json` | 需求到设计决策的追踪关系。 |
-| `artifacts/review-checklist.md` | 面向评审和交付的检查清单。 |
+- 目标输出文件名、条件产物和写入顺序以 runtime 注入的 `expected outputs` 与 `output plan` 为准，不在本 `SKILL.md` 中重复维护 canonical 文件清单。
+- 本技能只约束这些产物应该承载的内容、方法和校验方式；具体文件名与是否需要某个条件产物，由 `expert.yaml` 和 runtime 决定。
 
 ## 运行证据 (Execution Evidence)
 
-| 产物路径 | 说明 |
-|----------|------|
-| `evidence/design-assembler.json` | 记录输入清单、冲突归一化、缺口和校验结论。 |
+- 执行证据用于记录本轮采用的事实来源、关键假设、校验结果和残余风险。
+- 证据文件名以 runtime / workspace 约定为准；不要把证据文件当作业务产物。
 
 # Tool Usage Notes
 
@@ -68,13 +63,13 @@ keywords:
 | `read_file_chunk` | 阅读需求和各上游专家产物。 |
 | `grep_search` | 搜索同名概念、冲突字段和关键设计决策。 |
 | `extract_structure` | 快速理解 Markdown、JSON、YAML 等结构。 |
-| `write_file` | 生成详细设计、追踪矩阵和评审清单。 |
+| `write_file` | 生成 runtime 选定的目标产物。 |
 | `patch_file` | 做最小范围的归一化修订。 |
 
 # 参考资料 (References)
 
-- 模板参考 `assets/templates/detailed-design.md`、`assets/templates/implementation-plan.json`、`assets/templates/traceability.json`、`assets/templates/review-checklist.md`。
-- 上游输入来自所有活动专家产物，应保留来源可追溯性。
+- 模板参考 `assets/templates/` 下本专家对应模板与结构示例，不在此重复声明 canonical 输出文件名。
+- 上游输入来自 runtime 选中的活动专家产物，应保留来源可追溯性。
 - 详细设计必须是“聚合与对齐”结果，而不是绕过上游专家重新发明设计。
 
 # 注意事项 (Notes)
@@ -88,15 +83,15 @@ keywords:
 
 1. **研究 (Research)**：盘点需求和全部上游产物，确认输入覆盖范围。
 2. **对齐 (Align)**：识别冲突、空洞和可复用的统一结构。
-3. **编写 (Write)**：先产出 `detailed-design.md`，再补 `traceability.json` 与 `review-checklist.md`。
+3. **编写 (Write)**：先形成最终汇总说明，再补追踪、实施计划和评审材料。
 4. **校验 (Verify)**：回读产物，检查追踪关系、术语和结构是否一致。
 5. **修补 (Patch)**：只做最小必要的归一化修正，不新增无来源设计范围。
-6. **完成 (Finalize)**：确认三份产物和 `evidence/design-assembler.json` 满足要求后结束。
+6. **完成 (Finalize)**：确认 runtime 选定的目标产物和执行证据满足要求后结束。
 
 ## ReAct 规则
 
 1. 默认每次只输出一个下一步动作；只有在收集独立、低风险的读取证据时，才可用 `actions` 并行返回最多 2 个只读动作。
-2. 仅当 `detailed-design.md`、`traceability.json`、`review-checklist.md` 和 `evidence/design-assembler.json` 完成后才允许 `done=true`。
+2. 仅当 runtime 选定的目标产物与执行证据都完成后才允许 `done=true`。
 3. `tool_input` 必须是明确的 JSON，尤其要给出源文件、章节或追踪范围。
 4. 每一步都要写清 `evidence_note`，说明本步正在归一化什么输入或确认什么冲突。
 5. 不得绕过上游专家直接编造新的设计主张；若证据不足，必须记录缺口。
@@ -127,14 +122,14 @@ keywords:
 
 ## 生成要求
 
-1. `detailed-design.md` 必须忠实聚合上游事实，并清晰呈现整体设计主线。
-2. `traceability.json` 必须把需求、设计决策和来源产物串联起来。
-3. `review-checklist.md` 必须覆盖评审关心的结构完整性、一致性和风险点。
+1. 最终汇总说明类产物必须忠实聚合上游事实，并清晰呈现整体设计主线。
+2. 追踪与实施计划类结构化产物必须把需求、设计决策、任务拆解和来源产物串联起来。
+3. 评审材料类产物必须覆盖结构完整性、一致性、风险点和待确认事项。
 4. 所有统一化处理都要保留来源可追溯性和冲突说明。
 
 ## 生成内容
 
-- **detailed-design.md**：汇总架构、领域、数据、接口、流程、集成、配置、测试和运维决策。
-- **traceability.json**：建立需求到设计决策与来源产物的映射关系。
-- **review-checklist.md**：列出评审关注点、风险和待确认事项。
-- **design-assembler.json**：沉淀输入盘点、冲突归一化和校验结论。
+- 最终汇总说明类产物：汇总架构、领域、数据、接口、流程、集成、配置、测试和运维决策。
+- 追踪与实施计划类结构化产物：建立需求到设计决策、任务拆解与来源产物的映射关系。
+- 评审材料类产物：列出评审关注点、风险和待确认事项。
+- 执行证据：沉淀输入盘点、冲突归一化和校验结论。

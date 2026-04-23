@@ -39,19 +39,15 @@ keywords:
 
 # 输出产物 (Output Artifacts)
 
-## 必需产物 (Always Required)
+## 运行时产物 (Runtime-Configured Artifacts)
 
-| 产物路径 | 说明 |
-|----------|------|
-| `artifacts/performance-design.md` | 性能设计说明，覆盖预算、热点、瓶颈与降级策略。 |
-| `artifacts/performance-budget.yaml` | 关键链路与关键处理单元的结构化性能预算与容量边界。 |
-| `artifacts/capacity-assessment.json` | 容量评估、瓶颈风险与治理建议。 |
+- 目标输出文件名、条件产物和写入顺序以 runtime 注入的 `expected outputs` 与 `output plan` 为准，不在本 `SKILL.md` 中重复维护 canonical 文件清单。
+- 本技能只约束这些产物应该承载的内容、方法和校验方式；具体文件名与是否需要某个条件产物，由 `expert.yaml` 和 runtime 决定。
 
 ## 运行证据 (Execution Evidence)
 
-| 产物路径 | 说明 |
-|----------|------|
-| `evidence/performance-design.json` | 记录预算依据、负载假设、颗粒度判断和校验结论。 |
+- 执行证据用于记录本轮采用的事实来源、关键假设、校验结果和残余风险。
+- 证据文件名以 runtime / workspace 约定为准；不要把证据文件当作业务产物。
 
 # Tool Usage Notes
 
@@ -68,13 +64,13 @@ keywords:
 | `read_file_chunk` | 阅读需求说明、上游设计产物和历史性能资料。 |
 | `grep_search` | 搜索 QPS、TPS、latency、timeout、batch、cache、pool、retry 等性能线索。 |
 | `extract_structure` | 快速检查 YAML、JSON、Markdown 结构，确认关键场景、处理边界和约束字段。 |
-| `write_file` | 生成性能设计说明、预算 YAML 和粒度分析 JSON。 |
+| `write_file` | 生成 runtime 选定的目标产物。 |
 | `patch_file` | 修补局部预算、瓶颈说明、粒度建议或风险描述。 |
 
 # 参考资料 (References)
 
-- 模板参考 `assets/templates/performance-design.md`、`assets/templates/performance-budget.yaml`、`assets/templates/capacity-assessment.json`。
-- 上游输入重点参考 `flow-design` 的时序与状态、`api-design` 的接口边界、`integration-design` 的跨系统依赖、`data-design` 的数据访问路径、`config-design` 的开关与限流/缓存配置。
+- 模板参考 `assets/templates/` 下本专家对应模板与结构示例，不在此重复声明 canonical 输出文件名。
+- 上游输入以 runtime 注入的流程、接口、集成、数据、配置和现有性能证据为准。
 - 可参考历史压测报告、性能事故复盘和组织级容量经验，但最终结论必须以当前项目证据和合理假设为准。
 
 # 注意事项 (Notes)
@@ -90,15 +86,15 @@ keywords:
 1. **研究 (Research)**：收集业务场景、链路步骤、访问路径、依赖系统和工作负载事实。
 2. **对齐 (Align)**：核对上游架构、接口、数据、集成、配置与流程设计是否足以支撑性能预算建模。
 3. **评估 (Assess)**：判断当前实现边界是否过粗、过细或适中，并给出拆分/合并建议及原因。
-4. **编写 (Write)**：先产出 `performance-budget.yaml`，再形成 `performance-design.md` 和 `capacity-assessment.json`。
+4. **编写 (Write)**：先产出结构化预算与容量边界，再补性能说明和容量评估材料。
 5. **校验 (Verify)**：回读产物，检查预算是否与链路时序、依赖数量、数据访问和配置约束一致。
 6. **修补 (Patch)**：仅在证据充分时修补局部预算、风险等级或降级策略，不凭空扩展业务设计。
-7. **完成 (Finalize)**：确认三份产物和 `evidence/performance-design.json` 满足要求后结束。
+7. **完成 (Finalize)**：确认 runtime 选定的目标产物和执行证据满足要求后结束。
 
 ## ReAct 规则
 
 1. 默认每次只输出一个下一步动作；只有在收集独立、低风险的只读证据时，才可用 `actions` 并行返回最多 2 个只读动作。
-2. 仅当 `performance-design.md`、`performance-budget.yaml`、`capacity-assessment.json` 和 `evidence/performance-design.json` 完成后才允许 `done=true`。
+2. 仅当 runtime 选定的目标产物与执行证据都完成后才允许 `done=true`。
 3. `tool_input` 必须是明确的 JSON，尤其要给出路径、场景标识、关键字、预算维度或校验范围。
 4. 每一步都要写清 `evidence_note`，说明本步要确认的边界判断、性能预算或风险控制点。
 5. 对无法确认的流量、并发、缓存命中率、数据库耗时和下游耗时必须标注假设与风险，不得伪造基线。
@@ -129,14 +125,14 @@ keywords:
 
 ## 生成要求
 
-1. `performance-design.md` 必须围绕业务场景和关键链路给出性能目标、瓶颈分析、预算拆解和治理策略。
-2. `performance-budget.yaml` 必须按关键链路或关键处理单元列出吞吐、并发、时延、容量、访问次数和降级策略等预算。
-3. `capacity-assessment.json` 必须标明容量风险、瓶颈判断、建议动作和追踪依据。
+1. 性能说明类产物必须围绕业务场景和关键链路给出性能目标、瓶颈分析、预算拆解和治理策略。
+2. 结构化预算类产物必须按关键链路或关键处理单元列出吞吐、并发、时延、容量和降级策略等预算。
+3. 容量评估类结构化产物必须标明容量风险、瓶颈判断、建议动作和追踪依据。
 4. 所有预算、风险和建议都应服务于实现、评审和后续测试，而不是停留在抽象口号。
 
 ## 生成内容
 
-- **performance-design.md**：描述性能上下文、关键链路、预算、热点与降级策略。
-- **performance-budget.yaml**：沉淀关键链路或关键处理单元的预算值、资源假设、依赖成本和验收门槛。
-- **capacity-assessment.json**：给出容量判断、瓶颈建议、风险等级和证据。
-- **performance-design.json**：沉淀预算来源、假设、校验结果和待确认问题。
+- 性能说明类产物：描述性能上下文、关键链路、预算、热点与降级策略。
+- 结构化预算类产物：沉淀关键链路或关键处理单元的预算值、资源假设、依赖成本和验收门槛。
+- 容量评估类结构化产物：给出容量判断、瓶颈建议、风险等级和证据。
+- 执行证据：沉淀预算来源、假设、校验结果和待确认问题。

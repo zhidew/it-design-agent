@@ -12,7 +12,8 @@ from services.llm_service import SubagentOutput, generate_with_llm, resolve_runt
 from .state import DesignState, Task
 from .tools import execute_tool
 from services.db_service import metadata_db
-from subgraphs.dynamic_subagent import build_default_topic_ownership, run_dynamic_subagent
+from subgraphs.dynamic_subagent import run_dynamic_subagent
+from subgraphs.topic_ownership import build_topic_ownership_payload as build_topic_ownership_payload_from_registry
 
 # Ensure project root is on sys.path so config module can be resolved
 _project_root = str(Path(__file__).resolve().parent.parent.parent)
@@ -1082,7 +1083,7 @@ def _normalize_active_agents(active_agents: set[str]) -> set[str]:
 
 
 def _build_topic_ownership_payload(active_agents: set[str]) -> Dict[str, Any]:
-    return build_default_topic_ownership(sorted(active_agents))
+    return build_topic_ownership_payload_from_registry(sorted(active_agents))
 
 
 def _build_pending_interrupt(
@@ -1758,3 +1759,4 @@ Output JSON format:
         "current_node": "planner",
         "tool_results": tool_results,
     }
+
