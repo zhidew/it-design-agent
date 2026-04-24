@@ -167,14 +167,14 @@ export function HumanInteractionPanel({
         </div>
       </div>
 
-      {whyNeeded && (
+      {whyNeeded && !isPlannerExpertSelectionInterrupt && (
         <div className="rounded-2xl border border-amber-200 bg-white/80 px-4 py-3 text-sm font-medium text-amber-900">
           <span className="font-black">{t('projectDetail.waitingHuman.whyMatters')}: </span>
           {whyNeeded}
         </div>
       )}
 
-      <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+      <div className={isPlannerExpertSelectionInterrupt ? 'grid gap-4' : 'grid gap-4 xl:grid-cols-[1.1fr_0.9fr]'}>
         <section className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4">
           <div className="flex items-center justify-between gap-3">
             <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-500">
@@ -275,22 +275,24 @@ export function HumanInteractionPanel({
                     {selectedPlannerExpertCards.map((expert) => (
                       <label
                         key={`selected-${expert.id}`}
-                        className="group relative min-w-0 cursor-pointer rounded-xl border border-amber-200 bg-white/90 px-3 py-2.5 pl-10 shadow-sm transition-all hover:-translate-y-0.5 hover:border-amber-300"
+                        className="group grid min-w-0 cursor-pointer grid-cols-[auto_minmax(0,1fr)] gap-3 rounded-xl border border-amber-200 bg-white/90 px-4 py-3 shadow-sm transition-all hover:-translate-y-0.5 hover:border-amber-300"
                       >
                         <input
                           type="checkbox"
                           checked
                           onChange={() => onTogglePlannerExpertSelection(expert.id)}
-                          className="absolute left-3 top-3.5 h-4 w-4 rounded border-amber-300 text-amber-600 focus:ring-amber-400"
+                          className="mt-1 h-4 w-4 rounded border-amber-300 text-amber-600 focus:ring-amber-400"
                         />
-                        <span className="absolute right-3 top-3 inline-flex max-w-[112px] truncate rounded-full border border-amber-200 bg-amber-100/80 px-2 py-0.5 text-[9px] font-black tracking-[0.14em] text-amber-800" title={expert.phaseTitle}>
-                          {expert.phaseLabel}
-                        </span>
-                        <div className="min-w-0 pr-20">
-                          <div className="truncate text-[13px] font-black leading-5 text-slate-900">
-                            {expert.name}
+                        <div className="min-w-0 space-y-2">
+                          <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
+                            <div className="min-w-0 flex-1 basis-56 break-words text-sm font-black leading-5 text-slate-900">
+                              {expert.name}
+                            </div>
+                            <span className="inline-flex max-w-full shrink-0 rounded-full border border-amber-200 bg-amber-100/80 px-2 py-0.5 text-[9px] font-black tracking-[0.14em] text-amber-800" title={expert.phaseTitle}>
+                              {expert.phaseLabel}
+                            </span>
                           </div>
-                          <div className="mt-0.5 truncate text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+                          <div className="break-all text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">
                             {expert.id}
                           </div>
                         </div>
@@ -318,22 +320,24 @@ export function HumanInteractionPanel({
                     {availablePlannerExpertCards.map((expert) => (
                       <label
                         key={`available-${expert.id}`}
-                        className="group relative min-w-0 cursor-pointer rounded-xl border border-slate-200 bg-white px-3 py-2.5 pl-10 shadow-sm transition-all hover:-translate-y-0.5 hover:border-amber-200"
+                        className="group grid min-w-0 cursor-pointer grid-cols-[auto_minmax(0,1fr)] gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm transition-all hover:-translate-y-0.5 hover:border-amber-200"
                       >
                         <input
                           type="checkbox"
                           checked={false}
                           onChange={() => onTogglePlannerExpertSelection(expert.id)}
-                          className="absolute left-3 top-3.5 h-4 w-4 rounded border-amber-300 text-amber-600 focus:ring-amber-400"
+                          className="mt-1 h-4 w-4 rounded border-amber-300 text-amber-600 focus:ring-amber-400"
                         />
-                        <span className="absolute right-3 top-3 inline-flex max-w-[112px] truncate rounded-full border border-slate-200 bg-slate-100 px-2 py-0.5 text-[9px] font-black tracking-[0.14em] text-slate-600" title={expert.phaseTitle}>
-                          {expert.phaseLabel}
-                        </span>
-                        <div className="min-w-0 pr-20">
-                          <div className="truncate text-[13px] font-black leading-5 text-slate-900">
-                            {expert.name}
+                        <div className="min-w-0 space-y-2">
+                          <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
+                            <div className="min-w-0 flex-1 basis-56 break-words text-sm font-black leading-5 text-slate-900">
+                              {expert.name}
+                            </div>
+                            <span className="inline-flex max-w-full shrink-0 rounded-full border border-slate-200 bg-slate-100 px-2 py-0.5 text-[9px] font-black tracking-[0.14em] text-slate-600" title={expert.phaseTitle}>
+                              {expert.phaseLabel}
+                            </span>
                           </div>
-                          <div className="mt-0.5 truncate text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+                          <div className="break-all text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">
                             {expert.id}
                           </div>
                         </div>
@@ -436,58 +440,60 @@ export function HumanInteractionPanel({
           </div>
         </section>
 
-        <div className="space-y-4">
-          <section className="rounded-2xl border border-slate-200 bg-white p-5 space-y-3">
-            <div className="flex items-center justify-between gap-3">
-              <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-500">
-                {requirementSummaryTitle}
-              </h3>
-              <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-slate-500">
-                {clarificationLog.length}
-              </span>
-            </div>
-            <p className="whitespace-pre-wrap text-sm font-medium leading-6 text-slate-700">
-              {clarificationSummary || requirementSummaryEmpty}
-            </p>
-          </section>
+        {!isPlannerExpertSelectionInterrupt && (
+          <div className="space-y-4">
+            <section className="rounded-2xl border border-slate-200 bg-white p-5 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+                  {requirementSummaryTitle}
+                </h3>
+                <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-slate-500">
+                  {clarificationLog.length}
+                </span>
+              </div>
+              <p className="whitespace-pre-wrap text-sm font-medium leading-6 text-slate-700">
+                {clarificationSummary || requirementSummaryEmpty}
+              </p>
+            </section>
 
-          <section className="rounded-2xl border border-slate-200 bg-white p-5 space-y-3">
-            <div className="flex items-center justify-between gap-3">
-              <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-500">
-                {historyTitle}
-              </h3>
-              <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-slate-500">
-                {orderedInteractions.length}
-              </span>
-            </div>
-            {orderedInteractions.length > 0 ? (
-              <div className="space-y-3">
-                {orderedInteractions.map((interaction, index) => (
-                  <div key={interaction.interaction_id} className="rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">
-                        {t('projectDetail.waitingHuman.historyRound', { count: index + 1 })}
+            <section className="rounded-2xl border border-slate-200 bg-white p-5 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+                  {historyTitle}
+                </h3>
+                <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-slate-500">
+                  {orderedInteractions.length}
+                </span>
+              </div>
+              {orderedInteractions.length > 0 ? (
+                <div className="space-y-3">
+                  {orderedInteractions.map((interaction, index) => (
+                    <div key={interaction.interaction_id} className="rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+                          {t('projectDetail.waitingHuman.historyRound', { count: index + 1 })}
+                        </div>
+                        <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-slate-500">
+                          {formatInteractionScope(interaction.scope, interaction.owner_node)}
+                        </span>
                       </div>
-                      <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-slate-500">
-                        {formatInteractionScope(interaction.scope, interaction.owner_node)}
-                      </span>
+                      <div className="mt-2 text-sm font-semibold text-slate-900">
+                        {interaction.question_text}
+                      </div>
+                      <div className="mt-2 text-sm font-medium text-slate-600 whitespace-pre-wrap">
+                        {interaction.summary || t('projectDetail.waitingHuman.noResponseYet')}
+                      </div>
                     </div>
-                    <div className="mt-2 text-sm font-semibold text-slate-900">
-                      {interaction.question_text}
-                    </div>
-                    <div className="mt-2 text-sm font-medium text-slate-600 whitespace-pre-wrap">
-                      {interaction.summary || t('projectDetail.waitingHuman.noResponseYet')}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-500">
-                {historyEmpty}
-              </div>
-            )}
-          </section>
-        </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-500">
+                  {historyEmpty}
+                </div>
+              )}
+            </section>
+          </div>
+        )}
       </div>
     </section>
   );
