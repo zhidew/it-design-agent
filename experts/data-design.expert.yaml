@@ -42,6 +42,20 @@ outputs:
     - migration-plan.md
   evidence:
     - data-design.json
+interaction:
+  clarification:
+    supported_question_types:
+      - single_select
+      - multi_select
+      - long_text
+      - artifact_confirm
+    default_topics:
+      - data_scope
+      - consistency_constraint
+      - migration_constraint
+    answer_merge_targets:
+      - clarified_requirements
+      - decision_log
 metadata:
   boundary_contract:
     owns:

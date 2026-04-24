@@ -41,6 +41,19 @@ outputs:
     - config-matrix.md
   evidence:
     - config-design.json
+interaction:
+  clarification:
+    supported_question_types:
+      - single_select
+      - long_text
+      - artifact_confirm
+    default_topics:
+      - configuration_scope
+      - environment_constraint
+      - deployment_dependency
+    answer_merge_targets:
+      - clarified_requirements
+      - decision_log
 metadata:
   boundary_contract:
     owns:

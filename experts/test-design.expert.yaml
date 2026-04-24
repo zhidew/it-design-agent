@@ -63,6 +63,20 @@ outputs:
     - test-solution-design.md
   evidence:
     - test-design.json
+interaction:
+  clarification:
+    supported_question_types:
+      - single_select
+      - multi_select
+      - long_text
+      - artifact_confirm
+    default_topics:
+      - test_scope
+      - acceptance_criteria
+      - quality_gate
+    answer_merge_targets:
+      - clarified_requirements
+      - decision_log
 metadata:
   boundary_contract:
     owns:

@@ -41,6 +41,19 @@ outputs:
     - state.md
   evidence:
     - flow-design.json
+interaction:
+  clarification:
+    supported_question_types:
+      - single_select
+      - multi_select
+      - long_text
+    default_topics:
+      - process_scope
+      - exception_flow
+      - state_transition_rule
+    answer_merge_targets:
+      - clarified_requirements
+      - decision_log
 metadata:
   boundary_contract:
     owns:

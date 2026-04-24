@@ -42,6 +42,19 @@ outputs:
     - deployment-runbook.md
   evidence:
     - ops-design.json
+interaction:
+  clarification:
+    supported_question_types:
+      - single_select
+      - multi_select
+      - long_text
+    default_topics:
+      - operational_scope
+      - reliability_target
+      - environment_constraint
+    answer_merge_targets:
+      - clarified_requirements
+      - decision_log
 metadata:
   boundary_contract:
     owns:
