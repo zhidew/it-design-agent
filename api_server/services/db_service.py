@@ -319,6 +319,45 @@ class MetadataDB:
             )
             conn.execute(
                 """
+                CREATE TABLE IF NOT EXISTS human_interactions (
+                    interaction_id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    version_id TEXT NOT NULL,
+                    run_id TEXT,
+                    scope TEXT NOT NULL,
+                    owner_node TEXT NOT NULL,
+                    owner_expert_id TEXT,
+                    status TEXT NOT NULL,
+                    turn_index INTEGER NOT NULL DEFAULT 0,
+                    parent_interaction_id TEXT,
+                    question_text TEXT NOT NULL,
+                    question_schema_json TEXT,
+                    context_json TEXT,
+                    answer_json TEXT,
+                    summary TEXT,
+                    knowledge_refs_json TEXT,
+                    affected_artifacts_json TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    completed_at TEXT,
+                    FOREIGN KEY (project_id, version_id) REFERENCES workflow_runs(project_id, version_id) ON DELETE CASCADE
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS human_interaction_events (
+                    event_id TEXT PRIMARY KEY,
+                    interaction_id TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    payload_json TEXT,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (interaction_id) REFERENCES human_interactions(interaction_id) ON DELETE CASCADE
+                )
+                """
+            )
+            conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS scheduled_runs (
                     schedule_id TEXT PRIMARY KEY,
                     project_id TEXT NOT NULL,
@@ -344,6 +383,15 @@ class MetadataDB:
             )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_workflow_task_events_run_created ON workflow_task_events(project_id, version_id, created_at)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_human_interactions_project_version ON human_interactions(project_id, version_id, updated_at)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_human_interactions_status ON human_interactions(status, updated_at)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_human_interaction_events_interaction_created ON human_interaction_events(interaction_id, created_at)"
             )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_scheduled_runs_status_time ON scheduled_runs(status, scheduled_for)"
@@ -1063,6 +1111,216 @@ class MetadataDB:
             )
             conn.commit()
 
+    def create_human_interaction(
+        self,
+        *,
+        interaction_id: str,
+        project_id: str,
+        version_id: str,
+        run_id: Optional[str],
+        scope: str,
+        owner_node: str,
+        owner_expert_id: Optional[str] = None,
+        status: str = "created",
+        turn_index: int = 0,
+        parent_interaction_id: Optional[str] = None,
+        question_text: str,
+        question_schema: Optional[Dict[str, Any]] = None,
+        context: Optional[Dict[str, Any]] = None,
+        answer: Optional[Dict[str, Any]] = None,
+        summary: Optional[str] = None,
+        knowledge_refs: Optional[List[str]] = None,
+        affected_artifacts: Optional[List[str]] = None,
+        completed_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        now = self._utcnow()
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO human_interactions (
+                    interaction_id, project_id, version_id, run_id, scope, owner_node, owner_expert_id,
+                    status, turn_index, parent_interaction_id, question_text, question_schema_json,
+                    context_json, answer_json, summary, knowledge_refs_json, affected_artifacts_json,
+                    created_at, updated_at, completed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    interaction_id,
+                    project_id,
+                    version_id,
+                    run_id,
+                    scope,
+                    owner_node,
+                    owner_expert_id,
+                    status,
+                    turn_index,
+                    parent_interaction_id,
+                    question_text,
+                    self._dumps_json(question_schema or {}),
+                    self._dumps_json(context or {}),
+                    self._dumps_json(answer or {}),
+                    summary or "",
+                    self._dumps_json(knowledge_refs or []),
+                    self._dumps_json(affected_artifacts or []),
+                    now,
+                    now,
+                    completed_at,
+                ),
+            )
+            conn.commit()
+        return self.get_human_interaction(interaction_id) or {}
+
+    def update_human_interaction(
+        self,
+        interaction_id: str,
+        *,
+        run_id: Optional[str] = None,
+        status: Optional[str] = None,
+        question_text: Optional[str] = None,
+        question_schema: Any = JSON_UNSET,
+        context: Any = JSON_UNSET,
+        answer: Any = JSON_UNSET,
+        summary: Optional[str] = None,
+        knowledge_refs: Any = JSON_UNSET,
+        affected_artifacts: Any = JSON_UNSET,
+        completed_at: Any = JSON_UNSET,
+    ) -> Optional[Dict[str, Any]]:
+        existing = self.get_human_interaction(interaction_id)
+        if not existing:
+            return None
+
+        effective_question_schema = existing.get("question_schema") if question_schema is JSON_UNSET else (question_schema or {})
+        effective_context = existing.get("context") if context is JSON_UNSET else (context or {})
+        effective_answer = existing.get("answer") if answer is JSON_UNSET else (answer or {})
+        effective_knowledge_refs = existing.get("knowledge_refs") if knowledge_refs is JSON_UNSET else (knowledge_refs or [])
+        effective_affected_artifacts = existing.get("affected_artifacts") if affected_artifacts is JSON_UNSET else (affected_artifacts or [])
+        effective_completed_at = existing.get("completed_at") if completed_at is JSON_UNSET else completed_at
+
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                UPDATE human_interactions
+                SET run_id = ?,
+                    status = ?,
+                    question_text = ?,
+                    question_schema_json = ?,
+                    context_json = ?,
+                    answer_json = ?,
+                    summary = ?,
+                    knowledge_refs_json = ?,
+                    affected_artifacts_json = ?,
+                    completed_at = ?,
+                    updated_at = ?
+                WHERE interaction_id = ?
+                """,
+                (
+                    run_id if run_id is not None else existing.get("run_id"),
+                    status or existing.get("status"),
+                    question_text or existing.get("question_text"),
+                    self._dumps_json(effective_question_schema),
+                    self._dumps_json(effective_context),
+                    self._dumps_json(effective_answer),
+                    summary if summary is not None else existing.get("summary", ""),
+                    self._dumps_json(effective_knowledge_refs),
+                    self._dumps_json(effective_affected_artifacts),
+                    effective_completed_at,
+                    self._utcnow(),
+                    interaction_id,
+                ),
+            )
+            conn.commit()
+        return self.get_human_interaction(interaction_id)
+
+    def get_human_interaction(self, interaction_id: str) -> Optional[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM human_interactions WHERE interaction_id = ?",
+                (interaction_id,),
+            ).fetchone()
+        return self._row_to_human_interaction(dict(row)) if row else None
+
+    def get_latest_human_interaction_for_version(
+        self,
+        project_id: str,
+        version_id: str,
+        *,
+        statuses: Optional[List[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        rows = self.list_human_interactions(project_id, version_id, statuses=statuses, limit=1)
+        return rows[0] if rows else None
+
+    def list_human_interactions(
+        self,
+        project_id: str,
+        version_id: str,
+        *,
+        statuses: Optional[List[str]] = None,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        query = """
+            SELECT * FROM human_interactions
+            WHERE project_id = ? AND version_id = ?
+        """
+        params: List[Any] = [project_id, version_id]
+        if statuses:
+            placeholders = ", ".join("?" for _ in statuses)
+            query += f" AND status IN ({placeholders})"
+            params.extend(statuses)
+        query += " ORDER BY updated_at DESC, created_at DESC"
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
+        with self._get_connection() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [self._row_to_human_interaction(dict(row)) for row in rows]
+
+    def append_human_interaction_event(
+        self,
+        *,
+        event_id: str,
+        interaction_id: str,
+        event_type: str,
+        payload: Optional[Dict[str, Any]] = None,
+        created_at: Optional[str] = None,
+    ) -> None:
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO human_interaction_events (
+                    event_id, interaction_id, event_type, payload_json, created_at
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    event_id,
+                    interaction_id,
+                    event_type,
+                    self._dumps_json(payload or {}),
+                    created_at or self._utcnow(),
+                ),
+            )
+            conn.commit()
+
+    def list_human_interaction_events(self, interaction_id: str) -> List[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM human_interaction_events
+                WHERE interaction_id = ?
+                ORDER BY created_at ASC
+                """,
+                (interaction_id,),
+            ).fetchall()
+        return [
+            {
+                "event_id": row["event_id"],
+                "interaction_id": row["interaction_id"],
+                "event_type": row["event_type"],
+                "payload": self._loads_json(row["payload_json"], {}),
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
+
     def _row_to_workflow_task(self, row: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "project_id": row["project_id"],
@@ -1080,6 +1338,30 @@ class MetadataDB:
             "finished_at": row.get("finished_at"),
             "created_at": row.get("created_at"),
             "updated_at": row.get("updated_at"),
+        }
+
+    def _row_to_human_interaction(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "interaction_id": row["interaction_id"],
+            "project_id": row["project_id"],
+            "version_id": row["version_id"],
+            "run_id": row.get("run_id"),
+            "scope": row["scope"],
+            "owner_node": row["owner_node"],
+            "owner_expert_id": row.get("owner_expert_id"),
+            "status": row["status"],
+            "turn_index": int(row.get("turn_index") or 0),
+            "parent_interaction_id": row.get("parent_interaction_id"),
+            "question_text": row.get("question_text") or "",
+            "question_schema": self._loads_json(row.get("question_schema_json"), {}),
+            "context": self._loads_json(row.get("context_json"), {}),
+            "answer": self._loads_json(row.get("answer_json"), {}),
+            "summary": row.get("summary") or "",
+            "knowledge_refs": self._loads_json(row.get("knowledge_refs_json"), []),
+            "affected_artifacts": self._loads_json(row.get("affected_artifacts_json"), []),
+            "created_at": row.get("created_at"),
+            "updated_at": row.get("updated_at"),
+            "completed_at": row.get("completed_at"),
         }
 
     def list_versions(self, project_id: str, page: int = 1, page_size: int = 10) -> Dict[str, Any]:

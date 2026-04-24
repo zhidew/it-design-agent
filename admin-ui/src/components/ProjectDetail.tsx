@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { useParams, Link, useLocation } from 'react-router-dom';
-import { api } from '../api';
+import { api, type ClarifiedRequirementsPayload, type InteractionRecord } from '../api';
 import { ArrowLeft, Play, RefreshCw, Activity, Check, X, Upload, FileText, Database, Layers, Book, List, Trash2, ChevronLeft, ChevronRight, Settings2, FolderGit2, BookOpen, Bot, Cpu, Square, Clock3 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { LanguageSwitcher } from './LanguageSwitcher';
@@ -9,6 +9,7 @@ import type { NodeStatus } from './TaskKanban';
 import { ArtifactViewer } from './ArtifactViewer';
 import { ToolEventCard } from './ToolEventCard';
 import { Mermaid } from './Mermaid';
+import { HumanInteractionPanel } from './HumanInteractionPanel';
 
 const AGENT_MAPPING: Record<string, string[]> = {
   planner: ['requirements.json', 'input-requirements.md', 'original-requirements.md'],
@@ -67,8 +68,10 @@ interface WorkflowState {
     node_id: string;
     node_type: string;
     interrupt_id?: string | null;
+    interaction_id?: string | null;
     question: string;
     context?: Record<string, unknown>;
+    question_schema?: Record<string, unknown> | null;
     resume_target: string;
     interrupt_kind?: 'ask_human' | 'review' | string;
   } | null;
@@ -186,6 +189,7 @@ interface WaitingHumanEvent extends EventBase {
   node_id: string;
   node_type: string;
   interrupt_id?: string | null;
+  interaction_id?: string | null;
   interrupt_kind?: 'ask_human' | 'review' | 'expert_selection' | string;
   question: string;
   context?: Record<string, unknown>;
@@ -207,6 +211,13 @@ interface PlannerExpertOption {
   phase?: string;
   recommended?: boolean;
   auto_selected?: boolean;
+}
+
+interface PlannerExpertDisplayCard {
+  id: string;
+  name: string;
+  phaseLabel: string;
+  phaseTitle?: string;
 }
 
 interface RunCompletedEvent extends EventBase {
@@ -312,6 +323,9 @@ export function ProjectDetail() {
   const [artifacts, setArtifacts] = useState<Record<string, string>>({});
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [workflowState, setWorkflowState] = useState<WorkflowState | null>(null);
+  const [currentInteraction, setCurrentInteraction] = useState<InteractionRecord | null>(null);
+  const [interactionHistory, setInteractionHistory] = useState<InteractionRecord[]>([]);
+  const [clarifiedRequirements, setClarifiedRequirements] = useState<ClarifiedRequirementsPayload | null>(null);
   const [versionLogs, setVersionLogs] = useState<string[]>([]);
   const [runEvents, setRunEvents] = useState<OrchestratorEvent[]>([]);
   const [versionStateMap, setVersionStateMap] = useState<Record<string, VersionStateSummary>>({});
@@ -328,6 +342,7 @@ export function ProjectDetail() {
   const [isReasoningOpen, setIsReasoningOpen] = useState(false);
   const [reviewFeedback, setReviewFeedback] = useState('');
   const [selectedInterruptOption, setSelectedInterruptOption] = useState<string>('');
+  const [interactionResponseDraft, setInteractionResponseDraft] = useState<Record<string, unknown>>({});
   const [selectedPlannerExperts, setSelectedPlannerExperts] = useState<string[]>([]);
   const [resumeActionLoading, setResumeActionLoading] = useState<'approve' | 'revise' | 'answer' | null>(null);
   const [deletingVersion, setDeletingVersion] = useState<string | null>(null);
@@ -473,21 +488,6 @@ export function ProjectDetail() {
       .sort((left, right) => left.phaseMeta.rank - right.phaseMeta.rank || left.index - right.index)
   );
 
-  const getPlannerExpertSelectionDescription = () => {
-    const fallback = t('projectDetail.waitingHuman.expertSelectionDescription');
-    const waitingReason = workflowState?.waiting_reason?.trim();
-    if (!waitingReason) {
-      return fallback;
-    }
-
-    const isZh = i18n.language.toLowerCase().startsWith('zh');
-    if (isZh && /[A-Za-z]/.test(waitingReason) && !/[\u3400-\u9FFF]/.test(waitingReason)) {
-      return fallback;
-    }
-
-    return waitingReason;
-  };
-
   const getWorkflowNodeDisplayName = (nodeId: string) => {
     if (nodeId === 'planner') {
       return t('projectDetail.planner') || 'Planner';
@@ -543,10 +543,28 @@ export function ProjectDetail() {
     }
   };
 
+  const fetchInteractionContext = async (versionOverride?: string) => {
+    const versionToFetch = versionOverride ?? selectedVersionRef.current;
+    if (!id || !versionToFetch) return;
+    try {
+      const [current, listed, clarified] = await Promise.all([
+        api.getCurrentInteraction(id, versionToFetch),
+        api.listInteractions(id, versionToFetch),
+        api.getClarifiedRequirements(id, versionToFetch),
+      ]);
+      setCurrentInteraction(current);
+      setInteractionHistory(Array.isArray(listed?.items) ? listed.items : []);
+      setClarifiedRequirements(clarified);
+    } catch (err) {
+      console.error('Failed to fetch interaction context:', err);
+    }
+  };
+
   useEffect(() => {
     if (id && selectedVersion) {
       void fetchState();
       void fetchLogs();
+      void fetchInteractionContext();
     }
   }, [id, selectedVersion]);
 
@@ -688,6 +706,7 @@ export function ProjectDetail() {
               node_id: event.node_id,
               node_type: event.node_type,
               interrupt_id: event.interrupt_id,
+              interaction_id: event.interaction_id,
               interrupt_kind: event.interrupt_kind,
               question: event.question,
               context: event.context,
@@ -856,10 +875,14 @@ export function ProjectDetail() {
         void loadArtifacts(versionToFetch);
       }
       void fetchLogs();
+      void fetchInteractionContext(versionToFetch);
 
     } catch (err: any) {
       if (err.response?.status === 404) {
         setWorkflowState(null);
+        setCurrentInteraction(null);
+        setInteractionHistory([]);
+        setClarifiedRequirements(null);
       }
       setStreamStatus('error');
     }
@@ -942,11 +965,15 @@ export function ProjectDetail() {
     setArtifacts({});
     setSelectedFile(null);
     setWorkflowState(null);
+    setCurrentInteraction(null);
+    setInteractionHistory([]);
+    setClarifiedRequirements(null);
     setRunEvents([]);
     latestFetchedStateAtRef.current = 0;
     plannerExpertSelectionInitializedRef.current = null;
     setReviewFeedback('');
     setSelectedInterruptOption('');
+    setInteractionResponseDraft({});
     setSelectedPlannerExperts([]);
     seenEventIdsRef.current.clear();
     setSelectedNode('planner');
@@ -1019,6 +1046,9 @@ export function ProjectDetail() {
   const handleResumeExecution = async (action: 'approve' | 'revise' | 'answer') => {
     if (!id || !selectedVersion) return;
     const pendingInterrupt = workflowState?.pending_interrupt;
+    const interactionId = currentInteraction?.interaction_id || pendingInterrupt?.interaction_id;
+    const questionSchema = (currentInteraction?.question_schema ?? pendingInterrupt?.question_schema ?? {}) as Record<string, unknown>;
+    const questionSchemaType = String(questionSchema.type ?? '').trim().toLowerCase();
     const effectiveAction = action === 'approve' && pendingInterrupt?.interrupt_kind === 'ask_human' ? 'answer' : action;
     const selectedExpertsPayload = effectiveAction === 'answer' && plannerExpertSelectionInterrupt
       ? plannerExpertSelectionInterrupt.availableExperts
@@ -1028,23 +1058,51 @@ export function ProjectDetail() {
     setResumeActionLoading(action);
     try {
       setStreamStatus('connecting');
-      await api.resumeWorkflow(id, selectedVersion, {
-        action: effectiveAction,
-        node_id: pendingInterrupt?.node_id,
-        interrupt_id: pendingInterrupt?.interrupt_id ?? undefined,
-        selected_option: effectiveAction === 'answer' && selectedInterruptOption ? selectedInterruptOption : undefined,
-        selected_experts: selectedExpertsPayload,
-        answer: effectiveAction === 'answer' ? reviewFeedback.trim() : undefined,
-        feedback: effectiveAction === 'revise' ? reviewFeedback.trim() : undefined,
-      });
+      if (interactionId) {
+        const schemaValues = Array.isArray(interactionResponseDraft.selected_values)
+          ? interactionResponseDraft.selected_values.map((item) => String(item))
+          : undefined;
+        const schemaValue = questionSchemaType === 'number'
+          ? interactionResponseDraft.number_value
+          : selectedInterruptOption || interactionResponseDraft.value;
+        await api.submitInteractionResponse(id, selectedVersion, interactionId, {
+          action: effectiveAction,
+          response: {
+            type: plannerExpertSelectionInterrupt
+              ? 'expert_multi_select'
+              : (questionSchemaType || (selectedInterruptOption ? 'single_select' : 'long_text')),
+            value: effectiveAction === 'answer' ? schemaValue : undefined,
+            values: plannerExpertSelectionInterrupt ? selectedExpertsPayload : schemaValues,
+            selected_experts: selectedExpertsPayload,
+            text: effectiveAction === 'answer' ? reviewFeedback.trim() : undefined,
+            feedback: effectiveAction === 'revise' ? reviewFeedback.trim() : undefined,
+            answer_merge_targets: Array.isArray(questionSchema.answer_merge_targets)
+              ? questionSchema.answer_merge_targets
+              : ((currentInteraction?.context?.answer_merge_targets as unknown[]) ?? undefined),
+          },
+        });
+      } else {
+        await api.resumeWorkflow(id, selectedVersion, {
+          action: effectiveAction,
+          interaction_id: interactionId ?? undefined,
+          node_id: pendingInterrupt?.node_id,
+          interrupt_id: pendingInterrupt?.interrupt_id ?? undefined,
+          selected_option: effectiveAction === 'answer' && selectedInterruptOption ? selectedInterruptOption : undefined,
+          selected_experts: selectedExpertsPayload,
+          answer: effectiveAction === 'answer' ? reviewFeedback.trim() : undefined,
+          feedback: effectiveAction === 'revise' ? reviewFeedback.trim() : undefined,
+        });
+      }
       if (effectiveAction === 'approve' || effectiveAction === 'answer') {
         clearPlannerExpertSelectionDraft(plannerExpertSelectionDraftKey);
         plannerExpertSelectionInitializedRef.current = null;
         setReviewFeedback('');
         setSelectedInterruptOption('');
+        setInteractionResponseDraft({});
         setSelectedPlannerExperts([]);
       }
       void fetchState();
+      void fetchInteractionContext(selectedVersion);
     } catch {
       setUiError(
         effectiveAction === 'approve'
@@ -1076,11 +1134,15 @@ export function ProjectDetail() {
     setRunEvents([]);
     setNodeStatuses({});
     setWorkflowState(null);
+    setCurrentInteraction(null);
+    setInteractionHistory([]);
+    setClarifiedRequirements(null);
     latestFetchedStateAtRef.current = 0;
     setStreamStatus('idle');
     plannerExpertSelectionInitializedRef.current = null;
     setReviewFeedback('');
     setSelectedInterruptOption('');
+    setInteractionResponseDraft({});
     setSelectedPlannerExperts([]);
     seenEventIdsRef.current.clear();
     setSelectedFile(null);
@@ -1587,6 +1649,24 @@ export function ProjectDetail() {
   const availableSortedPlannerExperts = useMemo(
     () => sortPlannerExpertsByPhase(availablePlannerExpertOptions),
     [availablePlannerExpertOptions, plannerPhaseAssignments, plannerPhaseOptions, i18n.language],
+  );
+  const selectedPlannerExpertCards = useMemo<PlannerExpertDisplayCard[]>(
+    () => selectedSortedPlannerExperts.map(({ expert, phaseMeta }) => ({
+      id: expert.id,
+      name: getPlannerExpertDisplayName(expert),
+      phaseLabel: phaseMeta.label,
+      phaseTitle: phaseMeta.title,
+    })),
+    [selectedSortedPlannerExperts, i18n.language],
+  );
+  const availablePlannerExpertCards = useMemo<PlannerExpertDisplayCard[]>(
+    () => availableSortedPlannerExperts.map(({ expert, phaseMeta }) => ({
+      id: expert.id,
+      name: getPlannerExpertDisplayName(expert),
+      phaseLabel: phaseMeta.label,
+      phaseTitle: phaseMeta.title,
+    })),
+    [availableSortedPlannerExperts, i18n.language],
   );
   const interruptOptions = useMemo(() => {
     const rawOptions = pendingInterrupt?.context?.options;
@@ -2395,38 +2475,27 @@ export function ProjectDetail() {
           )}
 
           {workflowState?.run_status === 'waiting_human' && (
-            <section className={`rounded-3xl border shadow-sm p-8 space-y-5 ${isCancelledState ? 'bg-rose-50 border-rose-200' : 'bg-amber-50 border-amber-200'}`}>
-              <div className="flex items-start justify-between gap-4">
-                <div className="space-y-2">
-                  <div className={`inline-flex items-center rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.2em] ${isCancelledState ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-700'}`}>
-                    {isCancelledState ? t('projectDetail.retry.cancelled') : t('projectDetail.retry.waitingHuman')}
+            isCancelledState ? (
+              <section className="rounded-3xl border border-rose-200 bg-rose-50 shadow-sm p-8 space-y-5">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="space-y-2">
+                    <div className="inline-flex items-center rounded-full bg-rose-100 px-3 py-1 text-[10px] font-black uppercase tracking-[0.2em] text-rose-700">
+                      {t('projectDetail.retry.cancelled')}
+                    </div>
+                    <h2 className="text-xl font-black tracking-tight text-rose-950">
+                      {t('projectDetail.retry.stoppedTitle')}
+                    </h2>
+                    <p className="text-sm font-medium text-rose-900/80">
+                      {workflowState.waiting_reason || t('projectDetail.retry.stoppedDescription')}
+                    </p>
                   </div>
-                  <h2 className="text-xl font-black tracking-tight text-amber-950">
-                    {isCancelledState
-                      ? t('projectDetail.retry.stoppedTitle')
-                      : isPlannerExpertSelectionInterrupt
-                        ? t('projectDetail.waitingHuman.expertSelectionTitle')
-                        : (isClarificationInterrupt ? t('projectDetail.retry.clarificationTitle') : t('projectDetail.retry.reviewTitle'))}
-                  </h2>
-                  <p className="text-sm font-medium text-amber-900/80">
-                    {isPlannerExpertSelectionInterrupt
-                      ? getPlannerExpertSelectionDescription()
-                      : workflowState.waiting_reason || (
-                          isCancelledState
-                            ? t('projectDetail.retry.stoppedDescription')
-                            : t('projectDetail.retry.reviewDescription')
-                        )}
-                  </p>
+                  {workflowState.current_node && (
+                    <span className="rounded-full border border-rose-200 bg-white px-3 py-1 text-[10px] font-black uppercase tracking-wider text-rose-700">
+                      {workflowState.current_node}
+                    </span>
+                  )}
                 </div>
-                {workflowState.current_node && (
-                  <span className={`rounded-full bg-white px-3 py-1 text-[10px] font-black uppercase tracking-wider border ${isCancelledState ? 'text-rose-700 border-rose-200' : 'text-amber-700 border-amber-200'}`}>
-                    {workflowState.current_node}
-                  </span>
-                )}
-              </div>
 
-              {/* Show model/effort level selection for retry when cancelled */}
-              {isCancelledState && (
                 <div className="rounded-2xl border border-rose-200 bg-white/60 px-4 py-4 space-y-4">
                   <div className="text-[10px] font-black uppercase tracking-widest text-rose-700">
                     {t('projectDetail.retry.configTitle')}
@@ -2449,123 +2518,42 @@ export function ProjectDetail() {
                     </div>
                   </div>
                 </div>
-              )}
 
-              {/* Hidden: Technical interrupt details (node_id, interrupt_id, raw context) not shown to end users */}
-
-              {/* Show why this clarification is needed */}
-              {!isCancelledState && pendingInterrupt?.context?.why_needed !== undefined && pendingInterrupt?.context?.why_needed !== null && (
-                <div className="rounded-2xl border border-amber-200 bg-white/60 px-4 py-3">
-                  <p className="text-xs text-amber-800">
-                    <span className="font-bold">{t('projectDetail.waitingHuman.whyMatters')}: </span>
-                    {String(pendingInterrupt.context.why_needed)}
-                  </p>
-                </div>
-              )}
-
-              {!isCancelledState && isClarificationInterrupt && interruptOptions.length > 0 && (
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-amber-700">
-                    {t('projectDetail.waitingHuman.suggestedOptions')}
-                  </label>
-                  <div className="grid gap-3">
-                    {interruptOptions.map((option) => {
-                      const isSelected = selectedInterruptOption === option.value;
-                      return (
-                        <label
-                          key={option.value}
-                          className={`flex cursor-pointer gap-3 rounded-2xl border px-4 py-3 transition-all ${isSelected
-                              ? 'border-amber-400 bg-white shadow-sm'
-                              : 'border-amber-200 bg-white/70 hover:border-amber-300'
-                            }`}
-                        >
-                          <input
-                            type="radio"
-                            name="interrupt-option"
-                            value={option.value}
-                            checked={isSelected}
-                            onChange={(e) => setSelectedInterruptOption(e.target.value)}
-                            className="mt-1 h-4 w-4 border-amber-300 text-amber-600 focus:ring-amber-400"
-                          />
-                          <div className="space-y-1">
-                            <div className="text-sm font-black text-amber-950">{option.label}</div>
-                            {option.description && (
-                              <div className="text-xs font-medium text-amber-900/80">{option.description}</div>
-                            )}
-                            <div className="text-[11px] font-mono text-amber-700">{option.value}</div>
-                          </div>
-                        </label>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {!isCancelledState && (
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-amber-700">
-                    {(isClarificationInterrupt || isPlannerExpertSelectionInterrupt)
-                      ? t('projectDetail.waitingHuman.additionalDetails')
-                      : t('projectDetail.waitingHuman.revisionFeedback')}
-                  </label>
-                  <textarea
-                    value={reviewFeedback}
-                    onChange={(e) => setReviewFeedback(e.target.value)}
-                    placeholder={
-                      (isClarificationInterrupt || isPlannerExpertSelectionInterrupt)
-                        ? t('projectDetail.waitingHuman.clarificationPlaceholder')
-                        : t('projectDetail.waitingHuman.revisionPlaceholder')
-                    }
-                    className="w-full min-h-28 rounded-2xl border border-amber-200 bg-white px-4 py-3 text-sm font-medium text-gray-800 focus:outline-none focus:ring-2 focus:ring-amber-400 resize-none"
-                  />
-                </div>
-              )}
-
-              <div className="flex flex-col sm:flex-row gap-3">
-                {isCancelledState ? (
-                  <>
-                    <button
-                      onClick={handleContinueWorkflow}
-                      disabled={continuingWorkflow}
-                      className="flex-1 rounded-2xl bg-rose-600 px-5 py-4 text-sm font-black uppercase tracking-widest text-white transition-all hover:bg-rose-700 disabled:cursor-not-allowed disabled:bg-rose-300 flex items-center justify-center gap-2"
-                    >
-                      {continuingWorkflow ? <RefreshCw size={16} className="animate-spin" /> : <Play size={16} fill="currentColor" />}
-                      {continuingWorkflow ? t('projectDetail.retry.retrying') : t('projectDetail.retry.retryWithSettings')}
-                    </button>
-                  </>
-                ) : (isClarificationInterrupt || isPlannerExpertSelectionInterrupt) ? (
-                  <button
-                    onClick={() => handleResumeExecution('answer')}
-                    disabled={
-                      resumeActionLoading !== null
-                      || (!isPlannerExpertSelectionInterrupt && !selectedInterruptOption && reviewFeedback.trim().length === 0)
-                    }
-                    className="flex-1 rounded-2xl bg-emerald-600 px-5 py-4 text-sm font-black uppercase tracking-widest text-white transition-all hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-300"
-                  >
-                    {resumeActionLoading === 'answer'
-                      ? t('projectDetail.waitingHuman.submitting')
-                      : (isPlannerExpertSelectionInterrupt ? t('projectDetail.waitingHuman.confirmExperts') : t('projectDetail.waitingHuman.submitAnswer'))}
-                  </button>
-                ) : (
-                  <>
-                    <button
-                      onClick={() => handleResumeExecution('approve')}
-                      disabled={resumeActionLoading !== null}
-                      className="flex-1 rounded-2xl bg-emerald-600 px-5 py-4 text-sm font-black uppercase tracking-widest text-white transition-all hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-300"
-                    >
-                      {resumeActionLoading === 'approve' ? t('projectDetail.waitingHuman.approving') : t('projectDetail.waitingHuman.approveContinue')}
-                    </button>
-                    <button
-                      onClick={() => handleResumeExecution('revise')}
-                      disabled={resumeActionLoading !== null || reviewFeedback.trim().length === 0}
-                      className="flex-1 rounded-2xl bg-amber-600 px-5 py-4 text-sm font-black uppercase tracking-widest text-white transition-all hover:bg-amber-700 disabled:cursor-not-allowed disabled:bg-amber-300"
-                    >
-                      {resumeActionLoading === 'revise' ? t('projectDetail.waitingHuman.submitting') : t('projectDetail.waitingHuman.reviseRetry')}
-                    </button>
-                  </>
-                )}
-              </div>
-            </section>
+                <button
+                  onClick={handleContinueWorkflow}
+                  disabled={continuingWorkflow}
+                  className="w-full rounded-2xl bg-rose-600 px-5 py-4 text-sm font-black uppercase tracking-widest text-white transition-all hover:bg-rose-700 disabled:cursor-not-allowed disabled:bg-rose-300 flex items-center justify-center gap-2"
+                >
+                  {continuingWorkflow ? <RefreshCw size={16} className="animate-spin" /> : <Play size={16} fill="currentColor" />}
+                  {continuingWorkflow ? t('projectDetail.retry.retrying') : t('projectDetail.retry.retryWithSettings')}
+                </button>
+              </section>
+            ) : (
+              <HumanInteractionPanel
+                currentInteraction={currentInteraction}
+                interactions={interactionHistory}
+                clarifiedRequirements={clarifiedRequirements}
+                currentNode={workflowState.current_node}
+                waitingReason={workflowState.waiting_reason}
+                interruptOptions={interruptOptions}
+                selectedInterruptOption={selectedInterruptOption}
+                onSelectedInterruptOptionChange={setSelectedInterruptOption}
+                reviewFeedback={reviewFeedback}
+                onReviewFeedbackChange={setReviewFeedback}
+                responseDraft={interactionResponseDraft}
+                onResponseDraftChange={setInteractionResponseDraft}
+                isClarificationInterrupt={isClarificationInterrupt}
+                isPlannerExpertSelectionInterrupt={isPlannerExpertSelectionInterrupt}
+                selectedPlannerExpertCards={selectedPlannerExpertCards}
+                availablePlannerExpertCards={availablePlannerExpertCards}
+                selectedPlannerExperts={selectedPlannerExperts}
+                onTogglePlannerExpertSelection={togglePlannerExpertSelection}
+                resumeActionLoading={resumeActionLoading}
+                onSubmitAnswer={() => handleResumeExecution('answer')}
+                onApprove={() => handleResumeExecution('approve')}
+                onRevise={() => handleResumeExecution('revise')}
+              />
+            )
           )}
 
           <section className="space-y-6">
@@ -2748,159 +2736,6 @@ export function ProjectDetail() {
                 className="flex-1 rounded-2xl bg-indigo-600 px-4 py-3 text-sm font-black uppercase tracking-wider text-white transition-all hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-indigo-300"
               >
                 {scheduleLoading ? t('projectDetail.schedule.scheduling') : t('projectDetail.schedule.confirm')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {plannerExpertSelectionInterrupt && workflowState?.run_status === 'waiting_human' && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/35 px-4 py-6 backdrop-blur-sm">
-          <div className="w-full max-w-7xl overflow-hidden rounded-[28px] border border-amber-200/80 bg-white shadow-2xl shadow-slate-900/20">
-            <div className="border-b border-amber-100 bg-[linear-gradient(135deg,rgba(255,251,235,1)_0%,rgba(255,247,237,0.94)_100%)] px-5 py-4 sm:px-6">
-              <div className="inline-flex items-center rounded-full bg-amber-100 px-3 py-1 text-[10px] font-black uppercase tracking-[0.2em] text-amber-700">
-                {t('projectDetail.retry.waitingHuman')}
-              </div>
-              <h2 className="mt-3 text-[26px] font-black tracking-tight text-amber-950">
-                {t('projectDetail.waitingHuman.expertSelectionTitle')}
-              </h2>
-              <p className="mt-2 max-w-4xl text-sm font-medium leading-6 text-amber-950/70">
-                {getPlannerExpertSelectionDescription()}
-              </p>
-              <div className="mt-4 flex flex-wrap gap-2 text-[11px] font-semibold text-amber-900/80">
-                <span className="rounded-full border border-amber-200 bg-white/90 px-3 py-1">
-                  {t('projectDetail.waitingHuman.selectedExpertsCount', { count: selectedPlannerExperts.length })}
-                </span>
-                <span className="rounded-full border border-amber-200 bg-white/90 px-3 py-1">
-                  {t('projectDetail.waitingHuman.availableExpertsCount', { count: availablePlannerExpertOptions.length })}
-                </span>
-              </div>
-            </div>
-
-            <div className="max-h-[72vh] overflow-y-auto px-5 py-5 sm:px-6">
-              <div className="grid gap-4 xl:grid-cols-2">
-                <section className="rounded-2xl border border-amber-200 bg-amber-50/45 p-4">
-                  <div className="mb-3 flex items-center justify-between gap-3">
-                    <div className="text-[10px] font-black uppercase tracking-widest text-amber-950/70">
-                      {t('projectDetail.waitingHuman.selectedExperts')}
-                    </div>
-                    <span className="rounded-full border border-amber-200 bg-white px-2.5 py-1 text-[10px] font-black text-amber-700">
-                      {selectedPlannerExpertOptions.length}
-                    </span>
-                  </div>
-                  {selectedPlannerExpertOptions.length > 0 ? (
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      {selectedSortedPlannerExperts.map(({ expert, phaseMeta }) => (
-                        <label
-                          key={`selected-${expert.id}`}
-                          className="group relative min-w-0 cursor-pointer rounded-xl border border-amber-200 bg-white/90 px-3 py-2.5 pl-10 shadow-sm shadow-amber-100/40 transition-all hover:-translate-y-0.5 hover:border-amber-300 hover:shadow-md"
-                        >
-                          <input
-                            type="checkbox"
-                            checked
-                            onChange={() => togglePlannerExpertSelection(expert.id)}
-                            className="absolute left-3 top-3.5 h-4 w-4 rounded border-amber-300 text-amber-600 focus:ring-amber-400"
-                          />
-                          <span
-                            className="absolute right-3 top-3 inline-flex max-w-[112px] truncate rounded-full border border-amber-200 bg-amber-100/80 px-2 py-0.5 text-[9px] font-black tracking-[0.14em] text-amber-800"
-                            title={phaseMeta.title}
-                          >
-                            {phaseMeta.label}
-                          </span>
-                          <div className="min-w-0 pr-20">
-                            <div className="truncate text-[13px] font-black leading-5 text-slate-900" title={getPlannerExpertDisplayName(expert)}>
-                              {getPlannerExpertDisplayName(expert)}
-                            </div>
-                            <div className="mt-0.5 truncate text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500" title={expert.id}>
-                              {expert.id}
-                            </div>
-                          </div>
-                        </label>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="rounded-2xl border border-amber-200/70 bg-white/80 px-4 py-3 text-sm font-medium text-slate-500">
-                      {t('projectDetail.waitingHuman.selectedExpertsEmpty')}
-                    </div>
-                  )}
-                </section>
-
-                <section className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
-                  <div className="mb-3 flex items-center justify-between gap-3">
-                    <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">
-                      {t('projectDetail.waitingHuman.availableExperts')}
-                    </div>
-                    <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-black text-slate-600">
-                      {availablePlannerExpertOptions.length}
-                    </span>
-                  </div>
-                  {availablePlannerExpertOptions.length > 0 ? (
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      {availableSortedPlannerExperts.map(({ expert, phaseMeta }) => (
-                        <label
-                          key={`available-${expert.id}`}
-                          className="group relative min-w-0 cursor-pointer rounded-xl border border-slate-200 bg-white px-3 py-2.5 pl-10 shadow-sm shadow-slate-200/40 transition-all hover:-translate-y-0.5 hover:border-amber-200 hover:shadow-md"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={false}
-                            onChange={() => togglePlannerExpertSelection(expert.id)}
-                            className="absolute left-3 top-3.5 h-4 w-4 rounded border-amber-300 text-amber-600 focus:ring-amber-400"
-                          />
-                          <span
-                            className="absolute right-3 top-3 inline-flex max-w-[112px] truncate rounded-full border border-slate-200 bg-slate-100 px-2 py-0.5 text-[9px] font-black tracking-[0.14em] text-slate-600"
-                            title={phaseMeta.title}
-                          >
-                            {phaseMeta.label}
-                          </span>
-                          <div className="min-w-0 pr-20">
-                            <div className="truncate text-[13px] font-black leading-5 text-slate-900" title={getPlannerExpertDisplayName(expert)}>
-                              {getPlannerExpertDisplayName(expert)}
-                            </div>
-                            <div className="mt-0.5 truncate text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500" title={expert.id}>
-                              {expert.id}
-                            </div>
-                          </div>
-                        </label>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-sm font-medium text-slate-500">
-                      {t('projectDetail.waitingHuman.availableExpertsEmpty')}
-                    </div>
-                  )}
-                </section>
-              </div>
-
-              <div className="mt-4 space-y-2">
-                <label className="text-[10px] font-black uppercase tracking-widest text-slate-500">
-                  {t('projectDetail.waitingHuman.additionalDetails')}
-                </label>
-                <textarea
-                  value={reviewFeedback}
-                  onChange={(e) => setReviewFeedback(e.target.value)}
-                  placeholder={t('projectDetail.waitingHuman.expertSelectionNotePlaceholder')}
-                  className="w-full min-h-28 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-amber-300 resize-none"
-                />
-              </div>
-
-              {selectedPlannerExperts.length === 0 && (
-                <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">
-                  {t('projectDetail.waitingHuman.noExpertsSelectedWarning')}
-                </div>
-              )}
-            </div>
-
-            <div className="flex flex-col gap-3 border-t border-slate-100 bg-white px-6 py-5 sm:flex-row">
-              <button
-                type="button"
-                onClick={() => handleResumeExecution('answer')}
-                disabled={resumeActionLoading !== null}
-                className="flex-1 rounded-2xl bg-amber-600 px-5 py-4 text-sm font-black uppercase tracking-widest text-white transition-all hover:bg-amber-700 disabled:cursor-not-allowed disabled:bg-amber-300"
-              >
-                {resumeActionLoading === 'answer'
-                  ? t('projectDetail.waitingHuman.submitting')
-                  : t('projectDetail.waitingHuman.confirmExperts')}
               </button>
             </div>
           </div>

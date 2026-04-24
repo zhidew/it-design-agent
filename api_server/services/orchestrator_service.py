@@ -7,7 +7,7 @@ import shutil
 import sqlite3
 import uuid
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 import yaml
 
@@ -146,6 +146,347 @@ async def _graph_for_run():
 
 def _now_iso() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+def _normalize_string_list(values: Any) -> List[str]:
+    if not isinstance(values, list):
+        return []
+    normalized: List[str] = []
+    for value in values:
+        item = str(value or "").strip()
+        if item:
+            normalized.append(item)
+    return normalized
+
+
+def _infer_interaction_scope(pending_interrupt: Dict[str, Any]) -> str:
+    node_type = str(pending_interrupt.get("node_type") or "").strip()
+    interrupt_kind = str(pending_interrupt.get("interrupt_kind") or "").strip()
+    context = pending_interrupt.get("context") or {}
+    interaction_type = str(context.get("interaction_type") or "").strip()
+    if node_type == "requirement_clarifier":
+        return "requirement_clarification"
+    if node_type == "planner" and interaction_type == PLANNER_EXPERT_SELECTION_INTERACTION:
+        return "planner_review"
+    if node_type == "planner":
+        return "requirement_clarification" if interrupt_kind == "ask_human" else "planner_review"
+    return "expert_clarification" if interrupt_kind == "ask_human" else "expert_review"
+
+
+def _build_question_schema(question: str, context: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    context = context or {}
+    raw_schema = context.get("question_schema")
+    if isinstance(raw_schema, dict) and raw_schema:
+        schema = dict(raw_schema)
+    elif isinstance(context.get("options"), list) and context.get("options"):
+        schema = {
+            "type": "single_select",
+            "options": list(context.get("options") or []),
+        }
+    elif str(context.get("interaction_type") or "").strip() == PLANNER_EXPERT_SELECTION_INTERACTION:
+        schema = {
+            "type": "expert_multi_select",
+            "selection_mode": context.get("selection_mode") or "multi_select",
+            "available_experts": list(context.get("available_experts") or []),
+            "recommended_experts": list(context.get("recommended_experts") or []),
+            "selected_experts": list(context.get("selected_experts") or []),
+        }
+    else:
+        schema = {"type": "long_text"}
+
+    schema.setdefault("title", question)
+    schema.setdefault("required", True)
+    schema.setdefault("allow_free_text", bool(context.get("allow_free_text", True)))
+    return schema
+
+
+def _build_interaction_summary_from_payload(human_input: Dict[str, Any], pending_interrupt: Dict[str, Any]) -> str:
+    action = str((human_input or {}).get("action") or "").strip()
+    response = (human_input or {}).get("response") or {}
+    answer = str((human_input or {}).get("answer") or response.get("text") or "").strip()
+    feedback = str((human_input or {}).get("feedback") or response.get("feedback") or "").strip()
+    selected_option = str((human_input or {}).get("selected_option") or response.get("value") or "").strip()
+    selected_experts = _normalize_string_list(
+        (human_input or {}).get("selected_experts") if isinstance((human_input or {}).get("selected_experts"), list)
+        else response.get("values") or response.get("selected_experts")
+    )
+    if action == "approve":
+        return "Approved to continue."
+    if action == "revise":
+        return feedback or "Requested revision before retry."
+    if selected_experts:
+        summary = f"Selected experts: {', '.join(selected_experts)}"
+        return f"{summary}. {answer}".strip(". ") if answer else summary
+    if selected_option:
+        summary = f"Selected option: {selected_option}"
+        return f"{summary}. {answer}".strip(". ") if answer else summary
+    return answer or feedback or "Submitted human response."
+
+
+def _ensure_human_interaction_record(
+    project_id: str,
+    version: str,
+    run_id: str | None,
+    pending_interrupt: Dict[str, Any] | None,
+) -> Dict[str, Any]:
+    pending_interrupt = dict(pending_interrupt or {})
+    if not pending_interrupt:
+        return pending_interrupt
+
+    interaction_id = str(pending_interrupt.get("interaction_id") or "").strip()
+    question = str(pending_interrupt.get("question") or "").strip() or "Human input required to continue."
+    context = pending_interrupt.get("context") if isinstance(pending_interrupt.get("context"), dict) else {}
+    question_schema = _build_question_schema(question, context)
+    pending_interrupt["question_schema"] = question_schema
+    pending_interrupt.setdefault("owner_node", pending_interrupt.get("node_type") or pending_interrupt.get("resume_target"))
+    pending_interrupt.setdefault("scope", _infer_interaction_scope(pending_interrupt))
+
+    existing = metadata_db.get_human_interaction(interaction_id) if interaction_id else None
+    owner_node = str(pending_interrupt.get("owner_node") or pending_interrupt.get("node_type") or "").strip() or "planner"
+    owner_expert_id = owner_node if owner_node not in {"planner", "supervisor", "bootstrap"} else None
+    knowledge_refs = _normalize_string_list(context.get("knowledge_refs"))
+    affected_artifacts = _normalize_string_list(context.get("related_artifacts"))
+    if existing:
+        metadata_db.update_human_interaction(
+            interaction_id,
+            run_id=run_id,
+            status="waiting_user",
+            question_text=question,
+            question_schema=question_schema,
+            context=context,
+            knowledge_refs=knowledge_refs,
+            affected_artifacts=affected_artifacts,
+        )
+    else:
+        interaction_id = interaction_id or str(uuid.uuid4())
+        pending_interrupt["interaction_id"] = interaction_id
+        metadata_db.create_human_interaction(
+            interaction_id=interaction_id,
+            project_id=project_id,
+            version_id=version,
+            run_id=run_id,
+            scope=str(pending_interrupt.get("scope") or "expert_clarification"),
+            owner_node=owner_node,
+            owner_expert_id=owner_expert_id,
+            status="waiting_user",
+            question_text=question,
+            question_schema=question_schema,
+            context=context,
+            knowledge_refs=knowledge_refs,
+            affected_artifacts=affected_artifacts,
+        )
+        metadata_db.append_human_interaction_event(
+            event_id=str(uuid.uuid4()),
+            interaction_id=interaction_id,
+            event_type="waiting_user",
+            payload={
+                "interrupt_id": pending_interrupt.get("interrupt_id"),
+                "node_id": pending_interrupt.get("node_id"),
+                "node_type": pending_interrupt.get("node_type"),
+                "resume_target": pending_interrupt.get("resume_target"),
+            },
+        )
+    return pending_interrupt
+
+
+def _hydrate_human_interaction(record: Dict[str, Any] | None) -> Dict[str, Any] | None:
+    if not record:
+        return None
+    return {
+        **record,
+        "events": metadata_db.list_human_interaction_events(record["interaction_id"]),
+    }
+
+
+def _build_clarification_log(project_id: str, version: str) -> List[Dict[str, Any]]:
+    interactions = metadata_db.list_human_interactions(project_id, version)
+    log_entries: List[Dict[str, Any]] = []
+    for interaction in reversed(interactions):
+        if not interaction.get("answer"):
+            continue
+        merge_targets = _normalize_string_list(
+            ((interaction.get("context") or {}).get("answer_merge_targets"))
+            or ((interaction.get("answer") or {}).get("answer_merge_targets"))
+        )
+        log_entries.append(
+            {
+                "interaction_id": interaction["interaction_id"],
+                "scope": interaction.get("scope"),
+                "owner_node": interaction.get("owner_node"),
+                "question": interaction.get("question_text"),
+                "answer": interaction.get("answer") or {},
+                "summary": interaction.get("summary") or "",
+                "status": interaction.get("status"),
+                "merge_targets": merge_targets,
+                "created_at": interaction.get("created_at"),
+                "updated_at": interaction.get("updated_at"),
+                "completed_at": interaction.get("completed_at"),
+            }
+        )
+    return log_entries
+
+
+def _build_clarified_requirements_payload(project_id: str, version: str, state: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    state = state or get_workflow_state(project_id, version) or {}
+    version_record = metadata_db.get_version(project_id, version) or {}
+    clarification_log = _build_clarification_log(project_id, version)
+    summary_lines = [
+        entry["summary"]
+        for entry in clarification_log
+        if entry.get("summary") and ("clarified_requirements" in (entry.get("merge_targets") or []))
+    ]
+    decision_log = [
+        {
+            "interaction_id": entry.get("interaction_id"),
+            "owner_node": entry.get("owner_node"),
+            "summary": entry.get("summary") or "",
+            "question": entry.get("question") or "",
+            "created_at": entry.get("created_at"),
+        }
+        for entry in clarification_log
+        if "decision_log" in (entry.get("merge_targets") or [])
+    ]
+    summary = "\n".join(f"- {line}" for line in summary_lines[-10:])
+    return {
+        "project_id": project_id,
+        "version": version,
+        "original_requirement": version_record.get("requirement") or "",
+        "summary": summary,
+        "human_answers": state.get("human_answers") or {},
+        "clarification_log": clarification_log,
+        "decision_log": decision_log,
+        "pending_interrupt": state.get("pending_interrupt") or None,
+        "updated_at": _now_iso(),
+    }
+
+
+def _render_clarified_requirements_markdown(payload: Dict[str, Any]) -> str:
+    lines = [
+        "# Clarified Requirements",
+        "",
+        f"- Project: `{payload.get('project_id', '')}`",
+        f"- Version: `{payload.get('version', '')}`",
+        f"- Updated At: `{payload.get('updated_at', '')}`",
+        "",
+        "## Summary",
+        "",
+    ]
+    summary = str(payload.get("summary") or "").strip()
+    lines.append(summary or "No clarified decisions have been recorded yet.")
+    lines.extend(["", "## Original Requirement", ""])
+    original_requirement = str(payload.get("original_requirement") or "").strip()
+    lines.append(original_requirement or "No original requirement text recorded.")
+    lines.extend(["", "## Clarification Log", ""])
+    log_entries = payload.get("clarification_log") or []
+    if not log_entries:
+        lines.append("No clarification rounds have been completed yet.")
+    else:
+        for index, entry in enumerate(log_entries, start=1):
+            lines.extend(
+                [
+                    f"### Round {index}",
+                    "",
+                    f"- Scope: `{entry.get('scope') or 'unknown'}`",
+                    f"- Owner: `{entry.get('owner_node') or 'unknown'}`",
+                    f"- Status: `{entry.get('status') or 'unknown'}`",
+                    "",
+                    f"**Question**: {entry.get('question') or ''}",
+                    "",
+                    f"**Summary**: {entry.get('summary') or 'No summary.'}",
+                    "",
+                    "```json",
+                    json.dumps(entry.get("answer") or {}, ensure_ascii=False, indent=2),
+                    "```",
+                    "",
+                ]
+            )
+    lines.extend(["", "## Decision Log", ""])
+    decision_entries = payload.get("decision_log") or []
+    if not decision_entries:
+        lines.append("No decision log entries have been recorded yet.")
+    else:
+        for index, entry in enumerate(decision_entries, start=1):
+            lines.extend(
+                [
+                    f"- Decision {index}: {entry.get('summary') or 'No summary.'}",
+                ]
+            )
+    return "\n".join(lines).strip() + "\n"
+
+
+def _merge_clarified_requirements_payload(
+    payload: Dict[str, Any],
+    existing_requirements_payload: Dict[str, Any],
+) -> Dict[str, Any]:
+    return {
+        **existing_requirements_payload,
+        "original_requirement": payload.get("original_requirement") or existing_requirements_payload.get("original_requirement") or "",
+        "human_answers": payload.get("human_answers") or existing_requirements_payload.get("human_answers") or {},
+        "clarification_log": payload.get("clarification_log") or [],
+        "decision_log": payload.get("decision_log") or [],
+        "clarified_requirements_summary": payload.get("summary") or "",
+        "clarified_requirements_markdown_path": "baseline/clarified-requirements.md",
+        "updated_at": payload.get("updated_at"),
+    }
+
+
+def _get_clarified_requirements_snapshot(project_id: str, version: str, state: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    payload = _build_clarified_requirements_payload(project_id, version, state=state)
+    project_path = PROJECTS_DIR / project_id / version
+    baseline_dir = project_path / "baseline"
+    requirements_json_path = baseline_dir / "requirements.json"
+    existing_requirements_payload: Dict[str, Any] = {}
+    if requirements_json_path.exists():
+        try:
+            loaded = json.loads(requirements_json_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                existing_requirements_payload = loaded
+        except Exception:
+            existing_requirements_payload = {}
+    clarified_markdown = _render_clarified_requirements_markdown(payload)
+    merged_requirements_payload = _merge_clarified_requirements_payload(payload, existing_requirements_payload)
+    return {
+        "summary": payload.get("summary") or "",
+        "clarified_requirements_markdown": clarified_markdown,
+        "requirements": merged_requirements_payload,
+        "clarification_log": payload.get("clarification_log") or [],
+    }
+
+
+def _persist_clarification_artifacts(project_id: str, version: str, state: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    payload = _build_clarified_requirements_payload(project_id, version, state=state)
+    project_path = PROJECTS_DIR / project_id / version
+    baseline_dir = project_path / "baseline"
+    baseline_dir.mkdir(parents=True, exist_ok=True)
+    clarification_log_path = baseline_dir / "clarification-log.json"
+    clarified_requirements_path = baseline_dir / "clarified-requirements.md"
+    requirements_json_path = baseline_dir / "requirements.json"
+
+    clarification_log_path.write_text(
+        json.dumps(payload.get("clarification_log") or [], ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    clarified_markdown = _render_clarified_requirements_markdown(payload)
+    clarified_requirements_path.write_text(clarified_markdown, encoding="utf-8")
+    existing_requirements_payload: Dict[str, Any] = {}
+    if requirements_json_path.exists():
+        try:
+            loaded = json.loads(requirements_json_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                existing_requirements_payload = loaded
+        except Exception:
+            existing_requirements_payload = {}
+    merged_requirements_payload = _merge_clarified_requirements_payload(payload, existing_requirements_payload)
+    requirements_json_path.write_text(
+        json.dumps(merged_requirements_payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return {
+        "summary": payload.get("summary") or "",
+        "clarified_requirements_markdown": clarified_markdown,
+        "requirements": merged_requirements_payload,
+        "clarification_log": payload.get("clarification_log") or [],
+    }
 
 
 def _thread_id(project_id: str, version: str) -> str:
@@ -1053,6 +1394,7 @@ def _emit_waiting_human(
     resume_target: str,
     *,
     interrupt_id: str | None = None,
+    interaction_id: str | None = None,
     context: dict | None = None,
 ):
     _publish_event(
@@ -1064,6 +1406,7 @@ def _emit_waiting_human(
             "node_id": node_id,
             "node_type": node_type,
             "interrupt_id": interrupt_id,
+            "interaction_id": interaction_id,
             "question": question,
             "context": context or {},
             "resume_target": resume_target,
@@ -1121,6 +1464,13 @@ def _record_graph_event(
     job_id: str | None = None,
 ):
     payload = _coerce_event_output(output)
+    if payload.get("human_intervention_required"):
+        payload["pending_interrupt"] = _ensure_human_interaction_record(
+            project_id,
+            version,
+            job_id,
+            payload.get("pending_interrupt") or {},
+        )
     node_run_status = RUN_STATUS_WAITING_HUMAN if payload.get("human_intervention_required") else RUN_STATUS_RUNNING
     current_node = payload.get("current_node") or node_name
     _set_runtime_state(
@@ -1140,6 +1490,34 @@ def _record_graph_event(
         authoritative_tasks=node_name in {"planner", "bootstrap"},
     )
     return payload
+
+
+def _finalize_waiting_interactions_for_version(
+    project_id: str,
+    version: str,
+    *,
+    new_status: str,
+    event_type: str,
+    payload: Dict[str, Any] | None = None,
+) -> None:
+    active_records = metadata_db.list_human_interactions(
+        project_id,
+        version,
+        statuses=["waiting_user", "answered", "resumed"],
+    )
+    completed_at = _now_iso() if new_status in {"completed", "cancelled", "superseded"} else None
+    for record in active_records:
+        metadata_db.update_human_interaction(
+            record["interaction_id"],
+            status=new_status,
+            completed_at=completed_at,
+        )
+        metadata_db.append_human_interaction_event(
+            event_id=str(uuid.uuid4()),
+            interaction_id=record["interaction_id"],
+            event_type=event_type,
+            payload=payload or {},
+        )
 
 
 def _handle_structured_graph_event(
@@ -1182,6 +1560,7 @@ def _handle_structured_graph_event(
             question,
             resume_target=pending_interrupt.get("resume_target", node_type),
             interrupt_id=pending_interrupt.get("interrupt_id"),
+            interaction_id=pending_interrupt.get("interaction_id"),
             context=pending_interrupt.get("context") or {},
         )
 
@@ -1472,6 +1851,13 @@ async def run_orchestrator_task(
                         can_resume=True,
                         job_id=job_id,
                     )
+                    _finalize_waiting_interactions_for_version(
+                        project_id,
+                        version,
+                        new_status="superseded",
+                        event_type="workflow_failed",
+                        payload={"run_id": job_id, "reason": waiting_reason},
+                    )
                     _ensure_job(job_id)["status"] = RUN_STATUS_FAILED
                     _emit_run_failed(job_id, job_id, waiting_reason)
                     return
@@ -1493,6 +1879,13 @@ async def run_orchestrator_task(
         latest_status = latest_state.get("run_status") if latest_state else RUN_STATUS_SUCCESS
         if latest_status == RUN_STATUS_SUCCESS:
             _ensure_job(job_id)["status"] = RUN_STATUS_SUCCESS
+            _finalize_waiting_interactions_for_version(
+                project_id,
+                version,
+                new_status="completed",
+                event_type="workflow_completed",
+                payload={"run_id": job_id},
+            )
             _set_runtime_state(
                 project_id,
                 version,
@@ -1530,6 +1923,13 @@ async def run_orchestrator_task(
             waiting_reason=str(exc),
             can_resume=True,
             job_id=job_id,
+        )
+        _finalize_waiting_interactions_for_version(
+            project_id,
+            version,
+            new_status="superseded",
+            event_type="workflow_failed",
+            payload={"run_id": job_id, "reason": str(exc)},
         )
         _emit_run_failed(job_id, job_id, str(exc))
     finally:
@@ -1580,6 +1980,84 @@ def get_workflow_state(project_id: str, version: str, include_runtime: bool = Tr
         return _normalize_state(project_id, version, None, runtime=runtime)
 
 
+def list_interactions(project_id: str, version: str) -> List[Dict[str, Any]]:
+    return [
+        _hydrate_human_interaction(record) or {}
+        for record in metadata_db.list_human_interactions(project_id, version)
+    ]
+
+
+def get_current_interaction(project_id: str, version: str) -> Dict[str, Any] | None:
+    current_state = get_workflow_state(project_id, version)
+    pending_interrupt = (current_state or {}).get("pending_interrupt") or {}
+    interaction_id = str(pending_interrupt.get("interaction_id") or "").strip()
+    if interaction_id:
+        return _hydrate_human_interaction(metadata_db.get_human_interaction(interaction_id))
+    latest = metadata_db.get_latest_human_interaction_for_version(
+        project_id,
+        version,
+        statuses=["waiting_user", "answered"],
+    )
+    return _hydrate_human_interaction(latest)
+
+
+def get_interaction_detail(project_id: str, version: str, interaction_id: str) -> Dict[str, Any] | None:
+    record = metadata_db.get_human_interaction(interaction_id)
+    if not record or record.get("project_id") != project_id or record.get("version_id") != version:
+        return None
+    return _hydrate_human_interaction(record)
+
+
+def get_clarified_requirements(project_id: str, version: str) -> Dict[str, Any]:
+    return _get_clarified_requirements_snapshot(project_id, version)
+
+
+def _translate_interaction_response_payload(
+    interaction_id: str,
+    payload: Dict[str, Any] | None,
+) -> Dict[str, Any]:
+    payload = dict(payload or {})
+    response = payload.get("response") if isinstance(payload.get("response"), dict) else {}
+    action = str(payload.get("action") or response.get("action") or "").strip().lower()
+    response_type = str(response.get("type") or "").strip().lower()
+    response_text = str(
+        response.get("text")
+        or response.get("feedback")
+        or response.get("answer")
+        or ""
+    ).strip()
+    values = response.get("values")
+    if not isinstance(values, list):
+        values = response.get("selected_experts")
+    translated = {
+        "interaction_id": interaction_id,
+        "response": response,
+    }
+    if action not in {"approve", "revise", "answer"}:
+        if response_type in {"approval", "review"}:
+            value = response.get("value")
+            action = "approve" if value in {True, "approve", "approved"} else "revise"
+        else:
+            action = "answer"
+    translated["action"] = action
+    if response_type == "expert_multi_select" or isinstance(values, list):
+        translated["selected_experts"] = _normalize_string_list(values)
+        translated["answer"] = response_text
+    elif "value" in response and response.get("value") not in (None, ""):
+        translated["selected_option"] = str(response.get("value")).strip()
+        translated["answer"] = response_text
+    elif action == "revise":
+        translated["feedback"] = response_text
+    else:
+        translated["answer"] = response_text
+    return translated
+
+
+async def submit_interaction_response(project_id: str, version: str, interaction_id: str, payload: Dict[str, Any]) -> bool:
+    translated = _translate_interaction_response_payload(interaction_id, payload)
+    return await resume_workflow(project_id, version, translated)
+
+
 async def resume_workflow(project_id: str, version: str, human_input: dict):
     action = (human_input or {}).get("action")
     feedback = (human_input or {}).get("feedback", "")
@@ -1599,16 +2077,33 @@ async def resume_workflow(project_id: str, version: str, human_input: dict):
     pending_interrupt = current_state.get("pending_interrupt") or {}
     requested_node_id = (human_input or {}).get("node_id") or pending_interrupt.get("node_id") or current_state.get("current_node")
     requested_interrupt_id = (human_input or {}).get("interrupt_id") or pending_interrupt.get("interrupt_id")
+    interaction_id = (
+        (human_input or {}).get("interaction_id")
+        or pending_interrupt.get("interaction_id")
+    )
 
     if pending_interrupt:
         if requested_node_id != pending_interrupt.get("node_id"):
             return False
         if pending_interrupt.get("interrupt_id") and requested_interrupt_id != pending_interrupt.get("interrupt_id"):
             return False
+        if pending_interrupt.get("interaction_id") and interaction_id != pending_interrupt.get("interaction_id"):
+            return False
 
     normalized_feedback = feedback
     resume_target_node = "supervisor" if action == "approve" else "planner"
     human_answers = dict(current_state.get("human_answers") or {})
+    interaction_answer_payload: Dict[str, Any] = {
+        "action": action,
+        "response": (human_input or {}).get("response") or {},
+        "answer": str(answer or "").strip(),
+        "feedback": str(feedback or "").strip(),
+        "selected_option": selected_option or None,
+        "answer_merge_targets": _normalize_string_list(
+            (((human_input or {}).get("response") or {}).get("answer_merge_targets"))
+            or ((pending_interrupt.get("context") or {}).get("answer_merge_targets"))
+        ),
+    }
 
     if action == "answer":
         normalized_answer = answer.strip()
@@ -1648,6 +2143,12 @@ async def resume_workflow(project_id: str, version: str, human_input: dict):
             }
         )
         human_answers[target_key] = answer_entries
+        interaction_answer_payload["selected_experts"] = selected_experts if has_selected_experts_payload else None
+        interaction_answer_payload["summary"] = summary
+    elif action == "approve":
+        interaction_answer_payload["summary"] = "Approved to continue."
+    elif action == "revise":
+        interaction_answer_payload["summary"] = feedback.strip() or "Requested revision before retry."
 
     resumed_state = {
         **current_state,
@@ -1659,6 +2160,21 @@ async def resume_workflow(project_id: str, version: str, human_input: dict):
         "run_status": RUN_STATUS_RUNNING,
         "current_node": "bootstrap",
     }
+    if interaction_id:
+        metadata_db.update_human_interaction(
+            interaction_id,
+            run_id=run_id,
+            status="answered",
+            answer=interaction_answer_payload,
+            summary=_build_interaction_summary_from_payload(human_input or {}, pending_interrupt),
+        )
+        metadata_db.append_human_interaction_event(
+            event_id=str(uuid.uuid4()),
+            interaction_id=interaction_id,
+            event_type="response_submitted",
+            payload=interaction_answer_payload,
+        )
+    _persist_clarification_artifacts(project_id, version, state=resumed_state)
 
     _delete_checkpoint_state(project_id, version)
     _ensure_job(run_id)
@@ -1671,6 +2187,18 @@ async def resume_workflow(project_id: str, version: str, human_input: dict):
         can_resume=False,
         job_id=run_id,
     )
+    if interaction_id:
+        metadata_db.update_human_interaction(interaction_id, status="resumed")
+        metadata_db.append_human_interaction_event(
+            event_id=str(uuid.uuid4()),
+            interaction_id=interaction_id,
+            event_type="workflow_resumed",
+            payload={
+                "run_id": run_id,
+                "resume_target_node": resume_target_node,
+                "action": action,
+            },
+        )
     _launch_runtime_task(
         _thread_id(project_id, version),
         run_orchestrator_task(
@@ -1740,6 +2268,13 @@ async def retry_workflow_node(
         waiting_reason=None,
         can_resume=False,
         job_id=run_id,
+    )
+    _finalize_waiting_interactions_for_version(
+        project_id,
+        version,
+        new_status="superseded",
+        event_type="node_retry_requested",
+        payload={"run_id": run_id, "node_type": node_type},
     )
     # Launch new task cleanly
     _launch_runtime_task(
@@ -1835,6 +2370,13 @@ async def continue_workflow(
         can_resume=False,
         job_id=run_id,
     )
+    _finalize_waiting_interactions_for_version(
+        project_id,
+        version,
+        new_status="resumed",
+        event_type="workflow_continued",
+        payload={"run_id": run_id},
+    )
 
     # Cancel existing task before starting new one
     thread_id = _thread_id(project_id, version)
@@ -1917,6 +2459,13 @@ async def cancel_workflow(
         waiting_reason=f"[CANCELLED] {cancel_reason}. You can now retry with a different LLM.",
         can_resume=True,
         job_id=None,
+    )
+    _finalize_waiting_interactions_for_version(
+        project_id,
+        version,
+        new_status="cancelled",
+        event_type="workflow_cancelled",
+        payload={"run_id": run_id, "reason": cancel_reason},
     )
 
     # Update the persisted state

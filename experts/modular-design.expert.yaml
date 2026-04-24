@@ -37,6 +37,19 @@ outputs:
     - module-map.json
   evidence:
     - modular-design.json
+interaction:
+  clarification:
+    supported_question_types:
+      - single_select
+      - multi_select
+      - long_text
+    default_topics:
+      - scope
+      - system_boundary
+      - dependency_constraint
+    answer_merge_targets:
+      - clarified_requirements
+      - decision_log
 metadata:
   boundary_contract:
     owns:

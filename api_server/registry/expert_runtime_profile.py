@@ -37,6 +37,7 @@ KNOWN_METADATA_KEYS = {
     "routing",
     "prompt_hints",
     "delivery_contract",
+    "interaction",
     "execution",
     "expected_outputs",
     "upstream_artifacts",
@@ -59,6 +60,7 @@ class ExpertRuntimeProfile:
     expected_outputs: list[str] = field(default_factory=list)
     shared_context_topics: list[str] = field(default_factory=list)
     generic_shared_context_section_examples: str = ""
+    interaction: dict[str, Any] = field(default_factory=dict)
 
 
 def _dedupe_preserve_order(items: list[str]) -> list[str]:
@@ -259,6 +261,36 @@ def normalize_expert_metadata(
         ),
     }
 
+    interaction_raw = raw.get("interaction") or {}
+    if interaction_raw and not isinstance(interaction_raw, dict):
+        warnings.append(f"metadata.interaction: expected mapping, got {type(interaction_raw).__name__}; ignored.")
+        interaction_raw = {}
+    clarification_raw = interaction_raw.get("clarification") or {}
+    if clarification_raw and not isinstance(clarification_raw, dict):
+        warnings.append(
+            f"metadata.interaction.clarification: expected mapping, got {type(clarification_raw).__name__}; ignored."
+        )
+        clarification_raw = {}
+    interaction = {
+        "clarification": {
+            "supported_question_types": _ensure_string_list(
+                clarification_raw.get("supported_question_types"),
+                field_name="metadata.interaction.clarification.supported_question_types",
+                warnings=warnings,
+            ),
+            "default_topics": _ensure_string_list(
+                clarification_raw.get("default_topics"),
+                field_name="metadata.interaction.clarification.default_topics",
+                warnings=warnings,
+            ),
+            "answer_merge_targets": _ensure_string_list(
+                clarification_raw.get("answer_merge_targets"),
+                field_name="metadata.interaction.clarification.answer_merge_targets",
+                warnings=warnings,
+            ),
+        }
+    }
+
     expected_outputs = _ensure_string_list(raw.get("expected_outputs"), field_name="metadata.expected_outputs", warnings=warnings)
     if not expected_outputs:
         expected_outputs = _manifest_list(manifest, "expected_outputs")
@@ -273,6 +305,7 @@ def normalize_expert_metadata(
         "routing": routing,
         "prompt_hints": prompt_hints,
         "delivery_contract": delivery_contract,
+        "interaction": interaction,
         "expected_outputs": expected_outputs,
         "upstream_artifacts": upstream_artifacts,
         "_warnings": warnings,
@@ -316,6 +349,13 @@ def resolve_expert_runtime_profile(
     routing = normalized["routing"]
     prompt_hints = normalized["prompt_hints"]
     delivery_contract = normalized["delivery_contract"]
+    interaction = normalized["interaction"]
+    clarification_cfg = dict(interaction.get("clarification") or {})
+    if not clarification_cfg.get("supported_question_types"):
+        clarification_cfg["supported_question_types"] = ["single_select", "long_text"]
+    if not clarification_cfg.get("answer_merge_targets"):
+        clarification_cfg["answer_merge_targets"] = ["clarified_requirements", "decision_log"]
+    interaction = {"clarification": clarification_cfg}
 
     topics = topic_ownership.get("topics") or LEGACY_DEFAULT_CAPABILITY_TOPICS.get(capability) or [capability.replace("-", "_")]
     owns_shared_context = topic_ownership.get("owns_shared_context")
@@ -333,6 +373,7 @@ def resolve_expert_runtime_profile(
         "routing_keywords": _source(raw_keys, "routing", manifest_has_value=bool(manifest_keywords), legacy_has_value=capability in LEGACY_CAPABILITY_KEYWORDS),
         "prompt_hints": _source(raw_keys, "prompt_hints"),
         "delivery_contract": _source(raw_keys, "delivery_contract"),
+        "interaction": _source(raw_keys, "interaction"),
         "upstream_artifacts": _source(raw_keys, "upstream_artifacts", manifest_has_value=bool(_manifest_mapping(manifest, "upstream_artifacts"))),
         "expected_outputs": _source(raw_keys, "expected_outputs", manifest_has_value=bool(_manifest_list(manifest, "expected_outputs"))),
     }
@@ -352,6 +393,7 @@ def resolve_expert_runtime_profile(
         expected_outputs=list(normalized["expected_outputs"]),
         shared_context_topics=list(topic_ownership.get("shared_context_topics") or []),
         generic_shared_context_section_examples=str(topic_ownership.get("generic_shared_context_section_examples") or ""),
+        interaction=dict(interaction),
     )
 
 

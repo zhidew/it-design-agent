@@ -2,7 +2,7 @@ from pathlib import Path
 
 from langgraph.graph import END, StateGraph
 
-from .nodes import bootstrap_node, create_worker_node, planner_node, supervisor
+from .nodes import bootstrap_node, create_worker_node, planner_node, requirement_clarifier_node, supervisor
 from .state import DesignState
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -31,6 +31,7 @@ def create_design_graph(checkpointer=None):
     workflow = StateGraph(DesignState)
 
     workflow.add_node("bootstrap", bootstrap_node)
+    workflow.add_node("requirement_clarifier", requirement_clarifier_node)
     workflow.add_node("planner", planner_node)
     workflow.add_node("supervisor", supervisor)
 
@@ -47,6 +48,11 @@ def create_design_graph(checkpointer=None):
             return state["resume_target_node"]
         if state.get("resume_action") == "approve":
             return "supervisor"
+        return "requirement_clarifier"
+
+    def route_requirement_clarifier(state: DesignState):
+        if state.get("human_intervention_required"):
+            return END
         return "planner"
 
     def route_planner(state: DesignState):
@@ -58,6 +64,7 @@ def create_design_graph(checkpointer=None):
         return resolve_supervisor_route(state)
 
     workflow.add_conditional_edges("bootstrap", route_bootstrap)
+    workflow.add_conditional_edges("requirement_clarifier", route_requirement_clarifier)
     workflow.add_conditional_edges("planner", route_planner)
     workflow.add_conditional_edges("supervisor", route_supervisor)
 

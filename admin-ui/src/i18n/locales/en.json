@@ -177,6 +177,15 @@
       "resumeQueue": "Resume Queue"
     },
     "waitingHuman": {
+      "sessionTitle": "Clarification Session",
+      "sessionDescription": "The system is waiting for additional human input or planning confirmation. Review the current question, prior rounds, and the confirmed requirement summary.",
+      "currentQuestion": "Current question",
+      "confirmedRequirements": "Confirmed requirement summary",
+      "noConfirmedRequirements": "No confirmed requirement summary has been recorded yet.",
+      "sessionHistory": "Clarification session history",
+      "historyRound": "Round {{count}}",
+      "noInteractionHistory": "No clarification history has been recorded yet.",
+      "noResponseYet": "No response has been submitted for this round yet.",
       "suggestedOptions": "Suggested options",
       "whyMatters": "Why this matters",
       "additionalDetails": "Additional details (optional)",

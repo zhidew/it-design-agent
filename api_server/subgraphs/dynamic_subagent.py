@@ -2926,9 +2926,19 @@ def build_react_system_prompt(
     """
     selected_outputs = _normalize_output_candidate_list(selected_outputs or [])
     output_plan = output_plan or {}
+    profile = runtime_profile or resolve_expert_runtime_profile(capability, agent_config)
     topic_ownership = output_plan.get("topic_ownership") if isinstance(output_plan.get("topic_ownership"), dict) else None
     shared_context_block = _build_shared_context_prompt_block(capability, topic_ownership)
-    boundary_note = _scope_boundary_note(capability, agent_config=agent_config, runtime_profile=runtime_profile)
+    boundary_note = _scope_boundary_note(capability, agent_config=agent_config, runtime_profile=profile)
+    interaction_cfg = ((profile.interaction or {}).get("clarification") or {}) if profile else {}
+    supported_question_types = [str(item).strip() for item in (interaction_cfg.get("supported_question_types") or []) if str(item).strip()]
+    default_topics = [str(item).strip() for item in (interaction_cfg.get("default_topics") or []) if str(item).strip()]
+    answer_merge_targets = [str(item).strip() for item in (interaction_cfg.get("answer_merge_targets") or []) if str(item).strip()]
+    interaction_lines = [
+        f"- Allowed question types: {', '.join(supported_question_types) if supported_question_types else 'single_select, long_text'}",
+        f"- Default clarification topics: {', '.join(default_topics) if default_topics else capability.replace('-', '_')}",
+        f"- Answer merge targets: {', '.join(answer_merge_targets) if answer_merge_targets else 'clarified_requirements, decision_log'}",
+    ]
     tool_contract_section = _build_tool_contract_section(tools_allowed, candidate_files)
     available_tools_section = _build_available_tool_section(tools_allowed)
     tools_section = f"""
@@ -3048,6 +3058,9 @@ Return JSON in artifacts.decision:
 Human-in-the-loop:
 - If you encounter a critical information gap or ambiguity in the requirement that would materially affect design quality, set needs_human=true.
 - Provide a focused human_question (one question at a time) and optional human_context with suggested options.
+- The question must stay within these expert interaction constraints:
+{chr(10).join(interaction_lines)}
+- Put the chosen topic into `human_context.topic`, the preferred question type into `human_context.preferred_answer_type`, and the merge targets into `human_context.answer_merge_targets`.
 - Only use this when the gap cannot be resolved by reading available files or querying configured assets.
 - Do NOT set needs_human for minor uncertainties or nice-to-have details.
 - When needs_human is true, set done=true as well since execution must pause.
@@ -3982,9 +3995,54 @@ async def run_dynamic_subagent(
                 history_updates.append(
                     f"[{capability}] ReAct step {step}: requesting human clarification - {expert_question[:200]}"
                 )
+                interaction_profile = resolve_expert_runtime_profile(capability, agent_config)
+                clarification_cfg = ((interaction_profile.interaction or {}).get("clarification") or {})
+                supported_question_types = [
+                    str(item).strip()
+                    for item in (clarification_cfg.get("supported_question_types") or [])
+                    if str(item).strip()
+                ] or ["single_select", "long_text"]
+                default_topics = [
+                    str(item).strip()
+                    for item in (clarification_cfg.get("default_topics") or [])
+                    if str(item).strip()
+                ]
+                answer_merge_targets = [
+                    str(item).strip()
+                    for item in (clarification_cfg.get("answer_merge_targets") or [])
+                    if str(item).strip()
+                ] or ["clarified_requirements", "decision_log"]
                 # Normalize the human_context for the interrupt
                 from graphs.nodes import _normalize_interrupt_context
                 normalized_ctx = _normalize_interrupt_context(expert_context)
+                preferred_answer_type = str(normalized_ctx.get("preferred_answer_type") or "").strip()
+                if preferred_answer_type not in supported_question_types:
+                    if isinstance(normalized_ctx.get("options"), list) and normalized_ctx.get("options"):
+                        preferred_answer_type = "single_select" if "single_select" in supported_question_types else supported_question_types[0]
+                    else:
+                        preferred_answer_type = "long_text" if "long_text" in supported_question_types else supported_question_types[0]
+                normalized_ctx.setdefault("topic", "clarification")
+                if default_topics and normalized_ctx.get("topic") == "clarification":
+                    normalized_ctx["topic"] = default_topics[0]
+                normalized_ctx.setdefault(
+                    "why_needed",
+                    f"The {capability} expert is blocked by an unresolved requirement or boundary decision.",
+                )
+                normalized_ctx.setdefault(
+                    "impact_if_unanswered",
+                    "The expert may make incorrect assumptions or produce low-confidence design output.",
+                )
+                normalized_ctx.setdefault("related_artifacts", [])
+                normalized_ctx["supported_question_types"] = supported_question_types
+                normalized_ctx["preferred_answer_type"] = preferred_answer_type
+                normalized_ctx["answer_merge_targets"] = answer_merge_targets
+                normalized_ctx.setdefault(
+                    "question_schema",
+                    {
+                        "type": preferred_answer_type,
+                        "allow_free_text": True,
+                    },
+                )
                 from graphs.nodes import _build_pending_interrupt
                 pending_interrupt = _build_pending_interrupt(
                     node_id=state.get("current_task_id") or capability,

@@ -58,6 +58,7 @@ class WaitingHumanEvent(EventModel):
     node_id: str = Field(description="Stable node identifier that is waiting for human input.")
     node_type: str = Field(description="Node type or agent type requesting human input.")
     interrupt_id: str | None = Field(default=None, description="Stable interrupt identifier for precise resume.")
+    interaction_id: str | None = Field(default=None, description="Stable interaction identifier for loading structured history and answer forms.")
     interrupt_kind: str | None = Field(default=None, description="Semantic interrupt type, such as ask_human or expert_selection.")
     question: str = Field(description="Human-readable prompt explaining what decision is needed.")
     context: Dict[str, Any] = Field(default_factory=dict, description="Structured context needed to answer the question.")

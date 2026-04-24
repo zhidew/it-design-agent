@@ -1,7 +1,22 @@
 from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File
 import shutil
 from typing import List
-from models.project import ProjectCreateRequest, ProjectResponse, VersionRunRequest, ScheduleRunRequest, JobResponse, ScheduleRunResponse, ResumeRequest, NodeRetryRequest, ContinueRequest, CancelRequest
+from models.project import (
+    CancelRequest,
+    ClarifiedRequirementsResponse,
+    ContinueRequest,
+    InteractionDetailResponse,
+    InteractionListResponse,
+    InteractionResponseRequest,
+    JobResponse,
+    NodeRetryRequest,
+    ProjectCreateRequest,
+    ProjectResponse,
+    ResumeRequest,
+    ScheduleRunRequest,
+    ScheduleRunResponse,
+    VersionRunRequest,
+)
 from models.management import VersionListResponse
 import services.orchestrator_service as orch
 
@@ -123,6 +138,43 @@ async def resume_workflow(project_id: str, version: str, req: ResumeRequest):
     if not success:
         raise HTTPException(status_code=409, detail="Workflow is not waiting for human input.")
     return {"success": True, "status": "queued", "action": req.action}
+
+
+@router.get("/{project_id}/versions/{version}/interactions/current", response_model=InteractionDetailResponse | None)
+async def get_current_interaction(project_id: str, version: str):
+    return orch.get_current_interaction(project_id, version)
+
+
+@router.get("/{project_id}/versions/{version}/interactions", response_model=InteractionListResponse)
+async def list_interactions(project_id: str, version: str):
+    return {"items": orch.list_interactions(project_id, version)}
+
+
+@router.get("/{project_id}/versions/{version}/interactions/{interaction_id}", response_model=InteractionDetailResponse)
+async def get_interaction_detail(project_id: str, version: str, interaction_id: str):
+    record = orch.get_interaction_detail(project_id, version, interaction_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Interaction not found.")
+    return record
+
+
+@router.post("/{project_id}/versions/{version}/interactions/{interaction_id}/response")
+async def submit_interaction_response(
+    project_id: str,
+    version: str,
+    interaction_id: str,
+    req: InteractionResponseRequest,
+):
+    payload = req.model_dump() if hasattr(req, "model_dump") else req.dict()
+    success = await orch.submit_interaction_response(project_id, version, interaction_id, payload)
+    if not success:
+        raise HTTPException(status_code=409, detail="Interaction cannot be resumed in the current workflow state.")
+    return {"success": True, "status": "queued", "interaction_id": interaction_id}
+
+
+@router.get("/{project_id}/versions/{version}/clarified-requirements", response_model=ClarifiedRequirementsResponse)
+async def get_clarified_requirements(project_id: str, version: str):
+    return orch.get_clarified_requirements(project_id, version)
 
 @router.post("/{project_id}/versions/{version}/retry-node")
 async def retry_workflow_node(project_id: str, version: str, req: NodeRetryRequest):

@@ -1096,14 +1096,18 @@ def _build_pending_interrupt(
     resume_target: str,
     interrupt_kind: str,
 ) -> Dict[str, Any]:
+    normalized_context = context or {}
     return {
         "node_id": node_id,
         "node_type": node_type,
         "interrupt_id": str(uuid.uuid4()),
         "question": question,
-        "context": context or {},
+        "context": normalized_context,
         "resume_target": resume_target,
         "interrupt_kind": interrupt_kind,
+        "interaction_id": None,
+        "owner_node": node_type,
+        "question_schema": normalized_context.get("question_schema") if isinstance(normalized_context, dict) else None,
     }
 
 
@@ -1192,6 +1196,104 @@ def _planner_waiting_task() -> List[Task]:
     return [{"id": "0", "agent_type": "planner", "stage": 0, "phase": "ANALYSIS", "status": "waiting_human", "dependencies": [], "priority": 100}]
 
 
+def _requirement_clarifier_running_task() -> List[Task]:
+    return [{"id": "rq0", "agent_type": "requirement_clarifier", "stage": 0, "phase": "ANALYSIS", "status": "running", "dependencies": [], "priority": 110}]
+
+
+def _requirement_clarifier_waiting_task() -> List[Task]:
+    return [{"id": "rq0", "agent_type": "requirement_clarifier", "stage": 0, "phase": "ANALYSIS", "status": "waiting_human", "dependencies": [], "priority": 110}]
+
+
+def _requirement_clarifier_success_task() -> List[Task]:
+    return [{"id": "rq0", "agent_type": "requirement_clarifier", "stage": 0, "phase": "ANALYSIS", "status": "success", "dependencies": [], "priority": 110}]
+
+
+def _build_requirement_clarification_question(
+    requirement_text: str,
+    prior_answers: List[Dict[str, Any]],
+) -> Dict[str, Any] | None:
+    normalized_requirement = str(requirement_text or "").strip()
+    round_index = len([entry for entry in prior_answers if isinstance(entry, dict)])
+    prior_text = " ".join(
+        str(entry.get("answer") or entry.get("summary") or "").casefold()
+        for entry in prior_answers
+        if isinstance(entry, dict)
+    )
+
+    if round_index == 0 and len(normalized_requirement) < 120:
+        return {
+            "question": "为了开始设计，请先明确这次需求最重要的业务目标和交付范围边界。",
+            "context": {
+                "why_needed": "当前需求描述较短，系统还无法稳定判断哪些模块属于本次设计范围，哪些属于后续阶段。",
+                "options": [
+                    {
+                        "value": "goal_scope_first",
+                        "label": "先明确目标与范围",
+                        "description": "说明本次最重要的业务目标，以及必须覆盖和暂不覆盖的模块。",
+                    },
+                    {
+                        "value": "deliverables_first",
+                        "label": "先明确交付物",
+                        "description": "说明本次需要输出哪些设计内容，例如接口、数据、流程或部署方案。",
+                    },
+                ],
+                "allow_free_text": True,
+                "question_schema": {
+                    "type": "single_select",
+                    "allow_free_text": True,
+                },
+            },
+        }
+
+    if round_index == 1 and not any(keyword in prior_text for keyword in ["约束", "限制", "性能", "安全", "时效", "合规", "兼容"]):
+        return {
+            "question": "继续开始设计前，请补充这次需求最关键的约束条件或非功能要求。",
+            "context": {
+                "why_needed": "即使业务范围已经明确，如果缺少关键约束，规划器仍可能选择不准确的专家或给出偏离实际的设计方案。",
+                "options": [
+                    {
+                        "value": "performance_security",
+                        "label": "重点补充性能与安全约束",
+                        "description": "适用于对性能、容量、权限、安全或稳定性有明确要求的场景。",
+                    },
+                    {
+                        "value": "integration_timeline",
+                        "label": "重点补充集成与时间约束",
+                        "description": "适用于受上下游系统、上线时间、兼容策略或阶段范围限制的场景。",
+                    },
+                ],
+                "allow_free_text": True,
+                "question_schema": {
+                    "type": "single_select",
+                    "allow_free_text": True,
+                },
+            },
+        }
+
+    return None
+
+
+def _append_planner_assumption_note(reasoning: str, question: str, context: Dict[str, Any] | None = None) -> str:
+    normalized_reasoning = str(reasoning or "").strip()
+    why_needed = ""
+    if isinstance(context, dict):
+        why_needed = str(context.get("why_needed") or "").strip()
+
+    note_lines = [
+        "规划阶段收到额外澄清请求，但根据当前流程约定，需求澄清应优先在 requirement_clarifier 阶段完成。",
+        "本轮规划不会再次发起新的人工澄清，而是基于当前已确认信息继续生成专家推荐。",
+    ]
+    if question.strip():
+        note_lines.append(f"未追加提问：{question.strip()}")
+    if why_needed:
+        note_lines.append(f"模型原始担忧：{why_needed}")
+
+    appended_note = "\n".join(note_lines)
+    if normalized_reasoning:
+        return f"{normalized_reasoning}\n\n{appended_note}"
+    return appended_note
+
+
 async def bootstrap_node(state: DesignState) -> Dict[str, Any]:
     project_id = state["project_id"]
     version = state["version"]
@@ -1254,14 +1356,61 @@ async def bootstrap_node(state: DesignState) -> Dict[str, Any]:
     return {
         "workflow_phase": "ANALYSIS",
         "task_queue": [
-                {"id": "0", "agent_type": "planner", "stage": 0, "phase": "ANALYSIS", "status": "running", "dependencies": [], "priority": 100}
+                {"id": "rq0", "agent_type": "requirement_clarifier", "stage": 0, "phase": "ANALYSIS", "status": "running", "dependencies": [], "priority": 110}
         ],
         "history": [
             f"[SYSTEM] Bootstrap: initialized workflow context for {project_id}.",
-            "[SYSTEM] Planner started.",
+            "[SYSTEM] Requirement clarifier started.",
         ],
         "last_worker": "bootstrap",
-        "current_node": "planner",
+        "current_node": "requirement_clarifier",
+    }
+
+
+async def requirement_clarifier_node(state: DesignState) -> Dict[str, Any]:
+    project_id = state["project_id"]
+    version = state["version"]
+    requirement_text = state.get("requirement", "")
+    clarifier_answers = ((state.get("human_answers") or {}).get("requirement_clarifier") or [])
+    question_payload = _build_requirement_clarification_question(requirement_text, clarifier_answers)
+
+    if question_payload:
+        pending_interrupt = _build_pending_interrupt(
+            node_id="rq0",
+            node_type="requirement_clarifier",
+            question=question_payload["question"],
+            context=question_payload["context"],
+            resume_target="requirement_clarifier",
+            interrupt_kind="ask_human",
+        )
+        return {
+            "workflow_phase": "ANALYSIS",
+            "task_queue": _requirement_clarifier_waiting_task(),
+            "history": [
+                "[系统] 需求澄清阶段发现仍有关键边界未确认，正在请求人工补充信息。",
+            ],
+            "human_intervention_required": True,
+            "waiting_reason": pending_interrupt["question"],
+            "pending_interrupt": pending_interrupt,
+            "run_status": "waiting_human",
+            "last_worker": "requirement_clarifier",
+            "current_node": "requirement_clarifier",
+        }
+
+    clarification_summary = _summarize_human_inputs(clarifier_answers) if clarifier_answers else None
+    history_lines = ["[系统] 需求澄清阶段已完成，工作流将进入规划阶段。"]
+    if clarification_summary and clarification_summary.get("summary"):
+        history_lines.append(f"[系统] 已记录需求澄清摘要：{clarification_summary['summary']}")
+    return {
+        "workflow_phase": "ANALYSIS",
+        "task_queue": _requirement_clarifier_success_task(),
+        "history": history_lines,
+        "human_intervention_required": False,
+        "waiting_reason": None,
+        "pending_interrupt": None,
+        "run_status": "running",
+        "last_worker": "requirement_clarifier",
+        "current_node": "requirement_clarifier",
     }
 
 
@@ -1296,9 +1445,16 @@ async def planner_node(state: DesignState) -> Dict[str, Any]:
         "extract_structure": _sanitize_tool_context(extract_structure_result["output"], "baseline"),
     }
     planner_answers = ((state.get("human_answers") or {}).get("planner") or [])
+    clarifier_answers = ((state.get("human_answers") or {}).get("requirement_clarifier") or [])
     planner_selection_override = _extract_planner_expert_selection(planner_answers)
     human_feedback = state.get("human_feedback", "")
     human_inputs = _summarize_human_inputs(planner_answers, human_feedback)
+    clarification_inputs = _summarize_human_inputs(clarifier_answers)
+    combined_human_inputs: Dict[str, Any] = {}
+    if clarification_inputs:
+        combined_human_inputs["requirement_clarifier"] = clarification_inputs
+    if human_inputs:
+        combined_human_inputs["planner"] = human_inputs
     asset_context = _build_project_asset_context(project_id)
 
     # Actively query three repositories for content insights
@@ -1334,13 +1490,12 @@ If a required design domain is NOT available in the list, explain this gap in yo
 Select experts strictly based on the requirement and their documented capabilities.
 Evaluate the current input materials, uploaded file structure, and any prior human clarifications.
 Assume downstream expert controllers default to single-step ReAct and only permit short read-only action batches for evidence gathering.
-Treat this as a material sufficiency assessment:
-- If the existing materials are already sufficient to choose a grounded pipeline, do NOT ask the human anything.
-- Only set needs_human=true when a real information gap would block accurate expert selection or materially weaken downstream design quality.
+Treat this as a planning and expert-selection stage:
+- Requirement clarification has already been handled before this node. Do NOT ask the human any new clarification questions during normal planning.
+- You should still explain unresolved assumptions in reasoning, but continue planning with the best grounded expert recommendation available from the current materials.
+- Only use needs_human=true as an exceptional fallback when the workflow cannot continue at all because no meaningful expert recommendation can be formed.
 - Do not ask for optional nice-to-have details.
-- When you do ask, ask only one focused clarification question at a time.
-- Prefer multiple-choice style options grounded in the current materials, but still allow free-text fallback when none fit.
-- In reasoning, explicitly explain which parts of the provided materials were sufficient and which specific gap remains unresolved.
+- In reasoning, explicitly explain which parts of the provided materials were sufficient and which residual assumptions remain.
 - All natural-language output for `reasoning`, `question`, `why_needed`, option `label`, and option `description` MUST be written in Simplified Chinese.
 - Keep JSON keys, expert ids, tool names, file paths, and phase ids unchanged in English when they are machine-readable identifiers.
 
@@ -1421,6 +1576,8 @@ Output JSON format:
             insight_sections.append(f"  - {err_msg}")
     if insight_sections:
         user_prompt += "\n\n### Three-Repository Content Insights\n" + "\n".join(insight_sections)
+    if clarification_inputs:
+        user_prompt += f"\nRequirement Clarifications: {json.dumps(clarification_inputs, ensure_ascii=False)}"
     if human_feedback:
         user_prompt += f"\nHuman Revision Feedback: {human_feedback}"
     if human_inputs:
@@ -1483,6 +1640,18 @@ Output JSON format:
                 needs_human = bool(decision_data.get("needs_human"))
                 ask_human_question = (decision_data.get("question") or "").strip()
                 ask_human_context = _normalize_interrupt_context(decision_data.get("context"))
+                if needs_human:
+                    llm_decision = SubagentOutput(
+                        reasoning=_append_planner_assumption_note(
+                            llm_decision.reasoning,
+                            ask_human_question,
+                            ask_human_context,
+                        ),
+                        artifacts=llm_decision.artifacts,
+                    )
+                    needs_human = False
+                    ask_human_question = ""
+                    ask_human_context = {}
             elif isinstance(decision_data, list):
                 active_agents = set(decision_data)
             else:
@@ -1510,7 +1679,7 @@ Output JSON format:
             active_agents=active_agents,
             enabled_experts=enabled_experts,
             requirement_text=requirement_text,
-            human_inputs=human_inputs,
+            human_inputs=combined_human_inputs or human_inputs,
         )
         policy_auto_selected = sorted(active_agents - pre_policy_agents)
     
@@ -1567,8 +1736,8 @@ Output JSON format:
             payload_insights["query_status"] = asset_insights.get("query_status", {})
             payload_insights["query_errors"] = asset_insights.get("query_errors", [])
             baseline_payload["asset_insights"] = payload_insights
-        if human_inputs:
-            baseline_payload["human_inputs"] = human_inputs
+        if combined_human_inputs:
+            baseline_payload["human_inputs"] = combined_human_inputs
         (baseline_dir / "requirements.json").write_text(
             json.dumps(baseline_payload, ensure_ascii=False, indent=2),
             encoding="utf-8",
@@ -1645,8 +1814,8 @@ Output JSON format:
             payload_insights["query_status"] = asset_insights.get("query_status", {})
             payload_insights["query_errors"] = asset_insights.get("query_errors", [])
             baseline_payload["asset_insights"] = payload_insights
-        if human_inputs:
-            baseline_payload["human_inputs"] = human_inputs
+        if combined_human_inputs:
+            baseline_payload["human_inputs"] = combined_human_inputs
         (baseline_dir / "requirements.json").write_text(
             json.dumps(baseline_payload, ensure_ascii=False, indent=2),
             encoding="utf-8",
@@ -1740,8 +1909,8 @@ Output JSON format:
         payload_insights["query_status"] = asset_insights.get("query_status", {})
         payload_insights["query_errors"] = asset_insights.get("query_errors", [])
         baseline_payload["asset_insights"] = payload_insights
-    if human_inputs:
-        baseline_payload["human_inputs"] = human_inputs
+    if combined_human_inputs:
+        baseline_payload["human_inputs"] = combined_human_inputs
     (baseline_dir / "requirements.json").write_text(
         json.dumps(baseline_payload, ensure_ascii=False, indent=2),
         encoding="utf-8",

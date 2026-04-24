@@ -380,6 +380,7 @@ class ExpertRegistry:
             templates=self._load_templates(capability),
             metadata={
                 **expert_data.get("metadata", {}),
+                "interaction": expert_data.get("interaction", {}),
                 "execution": expert_data.get("execution", {}),
                 "expected_outputs": manifest.expected_outputs,
                 "upstream_artifacts": manifest.upstream_artifacts,

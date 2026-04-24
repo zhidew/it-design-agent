@@ -34,6 +34,46 @@ export interface DebugConfig {
   llm_full_payload_logging_enabled: boolean;
 }
 
+export interface InteractionEventRecord {
+  event_id: string;
+  interaction_id: string;
+  event_type: string;
+  payload: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface InteractionRecord {
+  interaction_id: string;
+  project_id: string;
+  version_id: string;
+  run_id?: string | null;
+  scope: string;
+  owner_node: string;
+  owner_expert_id?: string | null;
+  status: string;
+  turn_index: number;
+  parent_interaction_id?: string | null;
+  question_text: string;
+  question_schema: Record<string, unknown>;
+  context: Record<string, unknown>;
+  answer: Record<string, unknown>;
+  summary: string;
+  knowledge_refs: string[];
+  affected_artifacts: string[];
+  created_at: string;
+  updated_at: string;
+  completed_at?: string | null;
+  events: InteractionEventRecord[];
+}
+
+export interface ClarifiedRequirementsPayload {
+  summary: string;
+  clarified_requirements_markdown: string;
+  requirements: Record<string, unknown>;
+  clarification_log: Array<Record<string, unknown>>;
+  decision_log?: Array<Record<string, unknown>>;
+}
+
 export const api = {
   getProjects: () => apiClient.get('/projects').then(res => res.data),
   createProject: (name: string, description?: string) => 
@@ -66,6 +106,22 @@ export const api = {
     apiClient.get(`/projects/${projectId}/versions/${version}/artifacts`).then(res => res.data),
   getProjectState: (projectId: string, version: string) => 
     apiClient.get(`/projects/${projectId}/versions/${version}/state`).then(res => res.data),
+  getCurrentInteraction: (projectId: string, version: string) =>
+    apiClient.get(`/projects/${projectId}/versions/${version}/interactions/current`).then(res => res.data as InteractionRecord | null),
+  listInteractions: (projectId: string, version: string) =>
+    apiClient.get(`/projects/${projectId}/versions/${version}/interactions`).then(res => res.data as { items: InteractionRecord[] }),
+  getClarifiedRequirements: (projectId: string, version: string) =>
+    apiClient.get(`/projects/${projectId}/versions/${version}/clarified-requirements`).then(res => res.data as ClarifiedRequirementsPayload),
+  submitInteractionResponse: (
+    projectId: string,
+    version: string,
+    interactionId: string,
+    payload: {
+      action?: 'approve' | 'revise' | 'answer';
+      response: Record<string, unknown>;
+    },
+  ) =>
+    apiClient.post(`/projects/${projectId}/versions/${version}/interactions/${interactionId}/response`, payload).then(res => res.data),
   resumeWorkflow: (
     projectId: string,
     version: string,
@@ -73,10 +129,12 @@ export const api = {
       action: 'approve' | 'revise' | 'answer';
       node_id?: string;
       interrupt_id?: string;
+      interaction_id?: string;
       selected_option?: string;
       selected_experts?: string[];
       answer?: string;
       feedback?: string;
+      response?: Record<string, unknown>;
     },
   ) => 
     apiClient.post(`/projects/${projectId}/versions/${version}/resume`, humanInput).then(res => res.data),
