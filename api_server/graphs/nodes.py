@@ -23,6 +23,7 @@ from config import get_phase_config
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 PLANNER_EXPERT_SELECTION_INTERACTION = "expert_selection"
+PLANNER_REASONING_TITLE = "### 编排规划推理"
 
 # Agent aliases for normalization (kept for backward compatibility)
 AGENT_ALIASES = {
@@ -110,8 +111,8 @@ def _build_expert_selection_interrupt_context(
         "interaction_type": PLANNER_EXPERT_SELECTION_INTERACTION,
         "selection_mode": "multi_select",
         "why_needed": (
-            "Planner has finished the initial expert recommendation. "
-            "Please confirm the final experts before execution starts."
+            "规划器已完成初始专家推荐。"
+            "请在执行开始前确认最终参与的专家。"
         ),
         "recommended_experts": list(recommended_expert_ids),
         "selected_experts": list(recommended_expert_ids),
@@ -1340,19 +1341,21 @@ Treat this as a material sufficiency assessment:
 - When you do ask, ask only one focused clarification question at a time.
 - Prefer multiple-choice style options grounded in the current materials, but still allow free-text fallback when none fit.
 - In reasoning, explicitly explain which parts of the provided materials were sufficient and which specific gap remains unresolved.
+- All natural-language output for `reasoning`, `question`, `why_needed`, option `label`, and option `description` MUST be written in Simplified Chinese.
+- Keep JSON keys, expert ids, tool names, file paths, and phase ids unchanged in English when they are machine-readable identifiers.
 
 Output JSON format:
 {{
-  "reasoning": "Your step-by-step thinking about which experts to select based on text and files.",
+  "reasoning": "请用简体中文说明你基于文本和文件进行专家选择的分析过程。",
   "artifacts": {{
     "active_agents": ["expert-id-1", "expert-id-2"],
     "needs_human": false,
     "question": "",
     "context": {{
       "missing_information": ["field_name"],
-      "why_needed": "Explain why the clarification matters.",
+      "why_needed": "请用简体中文说明为什么这个澄清会影响设计质量。",
       "options": [
-        {{"value": "option_value", "label": "Option Label", "description": "When this applies."}}
+        {{"value": "option_value", "label": "选项名称（简体中文）", "description": "该选项适用场景的中文说明。"}}
       ],
       "allow_free_text": true
     }}
@@ -1445,16 +1448,16 @@ Output JSON format:
         added_experts = sorted(active_agents - set(recommended_by_planner))
         removed_experts = sorted(set(recommended_by_planner) - active_agents)
         override_reasoning_sections = [
-            "Planner expert recommendation was reviewed by a human before execution.",
-            f"Planner recommended experts: {_format_expert_list(recommended_by_planner)}.",
-            f"Human confirmed experts: {_format_expert_list(sorted(active_agents))}.",
+            "规划器推荐结果已在执行前由人工复核。",
+            f"规划器推荐专家：{_format_expert_list(recommended_by_planner)}。",
+            f"人工最终确认专家：{_format_expert_list(sorted(active_agents))}。",
         ]
         if added_experts:
-            override_reasoning_sections.append(f"Human added experts: {_format_expert_list(added_experts)}.")
+            override_reasoning_sections.append(f"人工新增专家：{_format_expert_list(added_experts)}。")
         if removed_experts:
-            override_reasoning_sections.append(f"Human removed experts: {_format_expert_list(removed_experts)}.")
+            override_reasoning_sections.append(f"人工移除专家：{_format_expert_list(removed_experts)}。")
         if human_feedback.strip():
-            override_reasoning_sections.append(f"Human note: {human_feedback.strip()}")
+            override_reasoning_sections.append(f"人工备注：{human_feedback.strip()}")
         llm_decision = SubagentOutput(
             reasoning="\n".join(override_reasoning_sections),
             artifacts={"active_agents": json.dumps(sorted(active_agents), ensure_ascii=False)},
@@ -1517,7 +1520,7 @@ Output JSON format:
         pending_interrupt = _build_pending_interrupt(
             node_id="planner",
             node_type="planner",
-            question=ask_human_question or "Please clarify the missing planning information before the workflow continues.",
+            question=ask_human_question or "请先补充当前规划缺失的关键信息，工作流才能继续执行。",
             context=ask_human_context,
             resume_target="planner",
             interrupt_kind="ask_human",
@@ -1525,11 +1528,11 @@ Output JSON format:
         
         # Write reasoning without pipeline info (since we don't have it yet)
         reasoning_sections = [
-            "### LLM Orchestration Reasoning",
+            PLANNER_REASONING_TITLE,
             "",
             llm_decision.reasoning,
             "",
-            "**Status:** Waiting for human clarification before pipeline selection.",
+            "**状态：** 规划器需要人工补充信息后才能继续选择执行专家。",
         ]
         reasoning_content = "\n".join(reasoning_sections)
         (project_path / "logs" / "planner-reasoning.md").write_text(reasoning_content, encoding="utf-8")
@@ -1575,7 +1578,7 @@ Output JSON format:
             "workflow_phase": "PLANNING",
             "task_queue": _planner_waiting_task(),
             "history": [
-                "[SYSTEM] Planner: insufficient information detected, requesting human clarification.",
+                "[系统] 规划器检测到关键信息不足，正在请求人工澄清。",
             ],
             "human_intervention_required": True,
             "waiting_reason": pending_interrupt["question"],
@@ -1591,7 +1594,7 @@ Output JSON format:
         pending_interrupt = _build_pending_interrupt(
             node_id="planner",
             node_type="planner",
-            question="Review the planner's expert selection. You can add experts or remove selected experts before execution starts.",
+            question="请确认本次参与执行的专家。开始执行前，你可以补充专家或取消勾选。",
             context=_build_expert_selection_interrupt_context(
                 enabled_expert_ids=design_expert_ids,
                 recommended_expert_ids=recommended_experts,
@@ -1602,13 +1605,13 @@ Output JSON format:
         )
 
         reasoning_sections = [
-            "### LLM Orchestration Reasoning",
+            PLANNER_REASONING_TITLE,
             "",
             llm_decision.reasoning,
             "",
-            f"**Planner Recommended Experts:** {_format_expert_list(recommended_experts)}",
+            f"**规划器推荐专家：** {_format_expert_list(recommended_experts)}",
             "",
-            "**Status:** Waiting for human confirmation of the expert selection before execution.",
+            "**状态：** 等待人工确认本次执行专家。",
         ]
         reasoning_content = "\n".join(reasoning_sections)
         (project_path / "logs" / "planner-reasoning.md").write_text(reasoning_content, encoding="utf-8")
@@ -1653,7 +1656,7 @@ Output JSON format:
             "workflow_phase": "PLANNING",
             "task_queue": _planner_waiting_task(),
             "history": [
-                "[SYSTEM] Planner: expert recommendation ready, waiting for human confirmation.",
+                "[系统] 规划器已给出专家推荐，等待人工确认。",
             ],
             "human_intervention_required": True,
             "waiting_reason": pending_interrupt["question"],
@@ -1667,11 +1670,11 @@ Output JSON format:
     if not active_agents:
         print("[DEBUG] Planner: No active_agents selected by LLM.")
         reasoning_sections = [
-            "### LLM Orchestration Reasoning",
+            PLANNER_REASONING_TITLE,
             "",
             llm_decision.reasoning,
             "",
-            "**Status:** Failed - No experts selected for the current requirement.",
+            "**状态：** 当前需求未选出任何可执行专家，流程无法继续。",
         ]
         reasoning_content = "\n".join(reasoning_sections)
         (project_path / "logs" / "planner-reasoning.md").write_text(reasoning_content, encoding="utf-8")
@@ -1680,10 +1683,10 @@ Output JSON format:
             "workflow_phase": "PLANNING",
             "task_queue": _planner_success_task(), # Use success task for planner itself
             "history": [
-                "[SYSTEM] Planner: No suitable experts identified for the provided requirement.",
+                "[系统] 规划器未识别到适合当前需求的设计专家。",
             ],
             "human_intervention_required": False,
-            "waiting_reason": "No design experts selected. Please refine your requirement and try again.",
+            "waiting_reason": "当前没有选中任何设计专家，请补充或调整需求后重试。",
             "run_status": "failed",
             "last_worker": "planner",
             "current_node": "planner",
@@ -1697,11 +1700,11 @@ Output JSON format:
 
     execution_topology = _format_execution_topology(tasks)
     reasoning_sections = [
-        "### LLM Orchestration Reasoning",
+        PLANNER_REASONING_TITLE,
         "",
         llm_decision.reasoning,
         "",
-        f"**Selected Experts:** {', '.join(sorted(list(active_agents)))}",
+        f"**最终选中专家：** {', '.join(sorted(list(active_agents)))}",
     ]
     if execution_topology:
         reasoning_sections.extend(["", execution_topology])

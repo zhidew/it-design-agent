@@ -52,6 +52,11 @@ REACT_PLATEAU_WINDOW = int(os.getenv("AGENT_REACT_PLATEAU_WINDOW", "4"))
 REACT_MIN_STEPS_BEFORE_PLATEAU = int(os.getenv("AGENT_REACT_MIN_STEPS_BEFORE_PLATEAU", "8"))
 PATH_NOT_FOUND_REPEAT_LIMIT = int(os.getenv("AGENT_PATH_NOT_FOUND_REPEAT_LIMIT", "2"))
 MARKDOWN_BUDGET_TRUNCATION_NOTE = "\n\n> [内容已按控制器字符预算截断；如需更多细节，请重试当前节点并补充范围。]\n"
+SIMPLIFIED_CHINESE_OUTPUT_REQUIREMENT = (
+    "语言要求：所有自然语言输出、推理说明、问题、说明文字、planning_notes、thought、evidence_note、"
+    "以及生成的文档正文默认必须使用简体中文。"
+    "JSON 键、工具名、文件路径、专家 ID、阶段 ID、标准缩写、代码标识符和协议字段名保持原样，不要翻译。"
+)
 
 OUTPUT_CHAR_BUDGET_BY_SUFFIX = {
     ".md": 18000,
@@ -2401,6 +2406,8 @@ You are the {capability} output planner.
 Treat the listed outputs as candidate deliverables, not mandatory files.
 Choose only the files that are actually needed for this requirement scope.
 
+{SIMPLIFIED_CHINESE_OUTPUT_REQUIREMENT}
+
 Candidate outputs:
 {candidate_block}
 
@@ -2769,6 +2776,8 @@ You are writing batch {batch_index} of {batch_total} for `{target_file}`.
 Return only the fragment needed for this batch, not the whole file.
 The controller will append or patch fragments into the final artifact.
 
+{SIMPLIFIED_CHINESE_OUTPUT_REQUIREMENT}
+
 Selected outputs for this run:
 {chr(10).join(f"- {item}" for item in (output_plan.get("selected_outputs") or [target_file]))}
 
@@ -2984,6 +2993,7 @@ You can read these files using read_file_chunk with file_path like "artifacts/sc
     system_prompt = f"""
 You are the {capability} ReAct controller.
 Choose one next action at a time to ground design artifacts.
+{SIMPLIFIED_CHINESE_OUTPUT_REQUIREMENT}
 {custom_section}
 {tools_section}
 {asset_tool_section}
@@ -3093,6 +3103,8 @@ Additional Guidelines:
 You are a senior designer for {capability}.
 Generate {', '.join(expected_files)} only from grounded evidence collected during the ReAct loop.
 
+{SIMPLIFIED_CHINESE_OUTPUT_REQUIREMENT}
+
 {shared_context_block}
 
 Requirements:
@@ -3152,6 +3164,8 @@ Custom Instructions from SKILL.md:
     return f"""
 You are the {capability} finalization controller.
 Your job is to turn grounded evidence already stored on disk into the final expected artifact files.
+
+{SIMPLIFIED_CHINESE_OUTPUT_REQUIREMENT}
 
 Expected artifacts:
 {expected_block}
@@ -3306,7 +3320,7 @@ def default_next_react_decision(
     
     bootstrap_decision = _build_bootstrap_decision(candidate_files, observations, step)
     if bootstrap_decision:
-        bootstrap_decision["reasoning"] = "Bootstrap grounding step to anchor the agent on the canonical baseline file before free-form ReAct exploration."
+        bootstrap_decision["reasoning"] = "执行启动锚定步骤，先锁定规范的 baseline 主文件，再进入自由式 ReAct 证据收集。"
         return bootstrap_decision
 
     configured_assets = payload.get("configured_assets") if isinstance(payload.get("configured_assets"), dict) else None
@@ -3439,14 +3453,14 @@ def _fallback_decision(candidate_files: List[str]) -> Dict[str, Any]:
     if candidate_files:
         return {
             "done": False,
-            "thought": "Starting evidence collection from available files",
+            "thought": "先从当前可用文件开始收集证据。",
             "tool_name": "read_file_chunk",
             "tool_input": {"path": candidate_files[0], "start_line": 1, "end_line": 100},
-            "evidence_note": "Reading initial requirements",
+            "evidence_note": "先读取初始需求内容，建立后续设计判断的事实基础。",
         }
     return {
         "done": True,
-        "thought": "No candidate files available, treating evidence as sufficient and moving to final generation",
+        "thought": "当前没有可读取的候选文件，视为可直接进入最终生成阶段。",
         "tool_name": "none",
         "tool_input": {},
         "evidence_note": "",
@@ -3477,25 +3491,25 @@ def _build_bootstrap_decision(
     if step == 1 and not candidate_read_succeeded:
         return {
             "done": False,
-            "thought": f"Read the canonical baseline candidate `{primary_candidate}` first so the agent is grounded on the correct requirement content immediately.",
+            "thought": f"先读取规范的 baseline 主文件 `{primary_candidate}`，确保专家立即基于正确需求内容开始工作。",
             "tool_name": "read_file_chunk",
             "tool_input": {
                 "path": primary_candidate,
                 "start_line": 1,
                 "end_line": 160,
             },
-            "evidence_note": "Confirm the actual requirement content from the baseline source file before any search or synthesis.",
+            "evidence_note": "在继续检索或综合之前，先确认 baseline 源文件中的真实需求内容。",
         }
 
     if step == 2 and candidate_read_succeeded and not candidate_structure_succeeded:
         return {
             "done": False,
-            "thought": f"Extract the structure of `{primary_candidate}` in step 2 so the agent has both the exact content and a stable outline before deeper analysis.",
+            "thought": f"第 2 步提取 `{primary_candidate}` 的结构，让专家在深入分析前同时掌握精确内容和稳定大纲。",
             "tool_name": "extract_structure",
             "tool_input": {
                 "files": [primary_candidate],
             },
-            "evidence_note": "Capture headings, sections, and document structure from the canonical baseline file.",
+            "evidence_note": "提取规范 baseline 文件中的标题、章节和整体文档结构。",
         }
 
     return None
@@ -3509,16 +3523,16 @@ def default_fallback_artifacts(
 ) -> SubagentOutput:
     """Generate minimal fallback artifacts when LLM generation fails."""
     artifacts = {}
-    reasoning = f"Fallback generation for {capability} due to empty LLM output."
+    reasoning = f"{capability} 在当前轮次未返回有效 LLM 结果，系统已回退为最小占位产物生成。"
     
     for file_name in expected_files:
         # Create empty placeholder
         if file_name.endswith(".sql"):
-            artifacts[file_name] = "-- Placeholder generated by fallback\n"
+            artifacts[file_name] = "-- 回退模式生成的占位内容\n"
         elif file_name.endswith(".md"):
-            artifacts[file_name] = f"# {file_name}\n\nPlaceholder content.\n"
+            artifacts[file_name] = f"# {file_name}\n\n回退模式生成的占位内容。\n"
         elif file_name.endswith(".yaml") or file_name.endswith(".yml"):
-            artifacts[file_name] = "# Placeholder configuration\n"
+            artifacts[file_name] = "# 回退模式占位配置\n"
         elif file_name.endswith(".json"):
             artifacts[file_name] = "{}\n"
         else:
