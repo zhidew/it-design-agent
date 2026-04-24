@@ -106,6 +106,24 @@ export function HumanInteractionPanel({
   const interactionScope = formatInteractionScope(currentInteraction?.scope || '', currentNode);
   const clarificationSummary = clarifiedRequirements?.summary?.trim() || '';
   const clarificationLog = clarifiedRequirements?.clarification_log || [];
+  const currentQuestionTitle = isPlannerExpertSelectionInterrupt
+    ? t('projectDetail.waitingHuman.expertSelectionCurrentQuestion')
+    : t('projectDetail.waitingHuman.currentQuestion');
+  const requirementSummaryTitle = isPlannerExpertSelectionInterrupt
+    ? t('projectDetail.waitingHuman.requirementContext')
+    : t('projectDetail.waitingHuman.confirmedRequirements');
+  const requirementSummaryEmpty = isPlannerExpertSelectionInterrupt
+    ? t('projectDetail.waitingHuman.noRequirementContext')
+    : t('projectDetail.waitingHuman.noConfirmedRequirements');
+  const historyTitle = isPlannerExpertSelectionInterrupt
+    ? t('projectDetail.waitingHuman.interactionHistory')
+    : t('projectDetail.waitingHuman.sessionHistory');
+  const historyEmpty = isPlannerExpertSelectionInterrupt
+    ? t('projectDetail.waitingHuman.noInteractionHistoryGeneric')
+    : t('projectDetail.waitingHuman.noInteractionHistory');
+  const freeTextPlaceholder = isPlannerExpertSelectionInterrupt
+    ? t('projectDetail.waitingHuman.expertSelectionNotePlaceholder')
+    : t('projectDetail.waitingHuman.clarificationPlaceholder');
 
   const handleSchemaMultiSelectToggle = (value: string) => {
     const nextValues = selectedSchemaValues.includes(value)
@@ -130,7 +148,11 @@ export function HumanInteractionPanel({
               : t('projectDetail.waitingHuman.sessionTitle')}
           </h2>
           <p className="text-sm font-medium text-amber-900/80">
-            {latestQuestion || t('projectDetail.waitingHuman.sessionDescription')}
+            {latestQuestion || (
+              isPlannerExpertSelectionInterrupt
+                ? t('projectDetail.waitingHuman.expertSelectionDescription')
+                : t('projectDetail.waitingHuman.sessionDescription')
+            )}
           </p>
         </div>
         <div className="flex flex-col items-end gap-2">
@@ -156,7 +178,7 @@ export function HumanInteractionPanel({
         <section className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4">
           <div className="flex items-center justify-between gap-3">
             <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-500">
-              {t('projectDetail.waitingHuman.currentQuestion')}
+              {currentQuestionTitle}
             </h3>
             {currentInteraction?.status && (
               <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-slate-500">
@@ -348,7 +370,7 @@ export function HumanInteractionPanel({
                 onChange={(e) => onReviewFeedbackChange(e.target.value)}
                 placeholder={
                   (isClarificationInterrupt || isPlannerExpertSelectionInterrupt)
-                    ? t('projectDetail.waitingHuman.clarificationPlaceholder')
+                    ? freeTextPlaceholder
                     : t('projectDetail.waitingHuman.revisionPlaceholder')
                 }
                 className="w-full rounded-2xl border border-amber-200 bg-white px-4 py-3 text-sm font-medium text-gray-800 focus:outline-none focus:ring-2 focus:ring-amber-400"
@@ -359,7 +381,7 @@ export function HumanInteractionPanel({
                 onChange={(e) => onReviewFeedbackChange(e.target.value)}
                 placeholder={
                   (isClarificationInterrupt || isPlannerExpertSelectionInterrupt)
-                    ? t('projectDetail.waitingHuman.clarificationPlaceholder')
+                    ? freeTextPlaceholder
                     : t('projectDetail.waitingHuman.revisionPlaceholder')
                 }
                 className="w-full min-h-28 rounded-2xl border border-amber-200 bg-white px-4 py-3 text-sm font-medium text-gray-800 focus:outline-none focus:ring-2 focus:ring-amber-400 resize-none"
@@ -418,21 +440,21 @@ export function HumanInteractionPanel({
           <section className="rounded-2xl border border-slate-200 bg-white p-5 space-y-3">
             <div className="flex items-center justify-between gap-3">
               <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-500">
-                {t('projectDetail.waitingHuman.confirmedRequirements')}
+                {requirementSummaryTitle}
               </h3>
               <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-slate-500">
                 {clarificationLog.length}
               </span>
             </div>
             <p className="whitespace-pre-wrap text-sm font-medium leading-6 text-slate-700">
-              {clarificationSummary || t('projectDetail.waitingHuman.noConfirmedRequirements')}
+              {clarificationSummary || requirementSummaryEmpty}
             </p>
           </section>
 
           <section className="rounded-2xl border border-slate-200 bg-white p-5 space-y-3">
             <div className="flex items-center justify-between gap-3">
               <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-500">
-                {t('projectDetail.waitingHuman.sessionHistory')}
+                {historyTitle}
               </h3>
               <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-slate-500">
                 {orderedInteractions.length}
@@ -461,7 +483,7 @@ export function HumanInteractionPanel({
               </div>
             ) : (
               <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-500">
-                {t('projectDetail.waitingHuman.noInteractionHistory')}
+                {historyEmpty}
               </div>
             )}
           </section>

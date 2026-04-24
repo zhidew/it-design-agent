@@ -213,12 +213,106 @@ interface PlannerExpertOption {
   auto_selected?: boolean;
 }
 
+interface PlannerExpertSelectionInterrupt {
+  recommendedExperts: string[];
+  selectedExperts: string[];
+  availableExperts: PlannerExpertOption[];
+}
+
 interface PlannerExpertDisplayCard {
   id: string;
   name: string;
   phaseLabel: string;
   phaseTitle?: string;
 }
+
+const normalizePlannerExpertIds = (value: unknown): string[] => (
+  Array.isArray(value)
+    ? value
+      .map((item) => String(item ?? '').trim())
+      .filter((item) => item.length > 0)
+    : []
+);
+
+const parsePlannerExpertOptions = (value: unknown): PlannerExpertOption[] => (
+  Array.isArray(value)
+    ? value
+      .map((item): PlannerExpertOption | null => {
+        if (!item || typeof item !== 'object') {
+          return null;
+        }
+        const row = item as Record<string, unknown>;
+        const id = String(row.id ?? '').trim();
+        if (!id) {
+          return null;
+        }
+        return {
+          id,
+          name: String(row.name ?? id).trim() || id,
+          name_zh: row.name_zh ? String(row.name_zh) : null,
+          name_en: row.name_en ? String(row.name_en) : null,
+          description: row.description ? String(row.description).trim() : '',
+          phase: row.phase ? String(row.phase).trim() : '',
+          recommended: Boolean(row.recommended),
+          auto_selected: Boolean(row.auto_selected),
+        };
+      })
+      .filter((item): item is PlannerExpertOption => item !== null)
+    : []
+);
+
+const readPlannerExpertSelection = (
+  pendingInterrupt: WorkflowState['pending_interrupt'],
+  currentInteraction: InteractionRecord | null,
+): PlannerExpertSelectionInterrupt | null => {
+  const candidates = [
+    {
+      nodeType: pendingInterrupt?.node_type,
+      context: pendingInterrupt?.context,
+      schema: pendingInterrupt?.question_schema,
+    },
+    {
+      nodeType: currentInteraction?.owner_node,
+      context: currentInteraction?.context,
+      schema: currentInteraction?.question_schema,
+    },
+  ];
+
+  for (const candidate of candidates) {
+    const context = (candidate.context ?? {}) as Record<string, unknown>;
+    const schema = (candidate.schema ?? {}) as Record<string, unknown>;
+    const interactionType = String(context.interaction_type ?? '').trim();
+    const schemaType = String(schema.type ?? '').trim();
+    const isExpertSelection = interactionType === 'expert_selection'
+      || schemaType === 'expert_multi_select'
+      || (candidate.nodeType === 'planner' && Array.isArray(context.available_experts));
+    if (!isExpertSelection) {
+      continue;
+    }
+
+    const recommendedExperts = normalizePlannerExpertIds(
+      context.recommended_experts ?? schema.recommended_experts,
+    );
+    const selectedExperts = normalizePlannerExpertIds(
+      context.selected_experts ?? schema.selected_experts,
+    );
+    const availableExperts = parsePlannerExpertOptions(
+      context.available_experts ?? schema.available_experts,
+    );
+
+    if (availableExperts.length === 0 && recommendedExperts.length === 0 && selectedExperts.length === 0) {
+      continue;
+    }
+
+    return {
+      recommendedExperts,
+      selectedExperts: selectedExperts.length > 0 ? selectedExperts : recommendedExperts,
+      availableExperts,
+    };
+  }
+
+  return null;
+};
 
 interface RunCompletedEvent extends EventBase {
   event_type: 'run_completed';
@@ -1571,63 +1665,16 @@ export function ProjectDetail() {
   const isClarificationInterrupt = pendingInterrupt?.interrupt_kind === 'ask_human';
   const isCancelledState = workflowState?.waiting_reason?.includes('[CANCELLED]') ?? false;
   const plannerExpertSelectionInterrupt = useMemo(() => {
-    if (!pendingInterrupt || pendingInterrupt.node_type !== 'planner') {
-      return null;
-    }
-    const context = (pendingInterrupt.context ?? {}) as Record<string, unknown>;
-    const interactionType = String(context.interaction_type ?? '').trim();
-    if (interactionType !== 'expert_selection') {
-      return null;
-    }
-
-    const recommendedExperts = Array.isArray(context.recommended_experts)
-      ? context.recommended_experts
-        .map((item) => String(item ?? '').trim())
-        .filter((item) => item.length > 0)
-      : [];
-    const selectedExperts = Array.isArray(context.selected_experts)
-      ? context.selected_experts
-        .map((item) => String(item ?? '').trim())
-        .filter((item) => item.length > 0)
-      : recommendedExperts;
-    const availableExperts = Array.isArray(context.available_experts)
-      ? context.available_experts
-        .map((item): PlannerExpertOption | null => {
-          if (!item || typeof item !== 'object') {
-            return null;
-          }
-          const row = item as Record<string, unknown>;
-          const id = String(row.id ?? '').trim();
-          if (!id) {
-            return null;
-          }
-          return {
-            id,
-            name: String(row.name ?? id).trim() || id,
-            name_zh: row.name_zh ? String(row.name_zh) : null,
-            name_en: row.name_en ? String(row.name_en) : null,
-            description: row.description ? String(row.description).trim() : '',
-            phase: row.phase ? String(row.phase).trim() : '',
-            recommended: Boolean(row.recommended),
-            auto_selected: Boolean(row.auto_selected),
-          };
-        })
-        .filter((item): item is PlannerExpertOption => item !== null)
-      : [];
-
-    return {
-      recommendedExperts,
-      selectedExperts,
-      availableExperts,
-    };
-  }, [pendingInterrupt]);
+    return readPlannerExpertSelection(pendingInterrupt, currentInteraction);
+  }, [pendingInterrupt, currentInteraction]);
   const isPlannerExpertSelectionInterrupt = Boolean(plannerExpertSelectionInterrupt);
   const plannerExpertSelectionDraftKey = useMemo(() => {
-    if (!id || !selectedVersion || !pendingInterrupt?.interrupt_id || !plannerExpertSelectionInterrupt) {
+    const selectionId = pendingInterrupt?.interrupt_id || currentInteraction?.interaction_id;
+    if (!id || !selectedVersion || !selectionId || !plannerExpertSelectionInterrupt) {
       return null;
     }
-    return buildPlannerExpertSelectionDraftKey(id, selectedVersion, pendingInterrupt.interrupt_id);
-  }, [id, pendingInterrupt?.interrupt_id, plannerExpertSelectionInterrupt, selectedVersion]);
+    return buildPlannerExpertSelectionDraftKey(id, selectedVersion, selectionId);
+  }, [currentInteraction?.interaction_id, id, pendingInterrupt?.interrupt_id, plannerExpertSelectionInterrupt, selectedVersion]);
   const selectedPlannerExpertOptions = useMemo(() => {
     if (!plannerExpertSelectionInterrupt) {
       return [];
@@ -1707,7 +1754,7 @@ export function ProjectDetail() {
   }, [interruptOptions, selectedInterruptOption]);
 
   useEffect(() => {
-    const interruptId = pendingInterrupt?.interrupt_id ?? null;
+    const interruptId = pendingInterrupt?.interrupt_id ?? currentInteraction?.interaction_id ?? null;
     if (!plannerExpertSelectionInterrupt || !interruptId) {
       plannerExpertSelectionInitializedRef.current = null;
       setSelectedPlannerExperts([]);
@@ -1730,7 +1777,7 @@ export function ProjectDetail() {
       : plannerExpertSelectionInterrupt.selectedExperts)
       .filter((expertId) => availableIds.has(expertId));
     setSelectedPlannerExperts(nextSelected);
-  }, [pendingInterrupt?.interrupt_id, plannerExpertSelectionDraftKey, plannerExpertSelectionInterrupt]);
+  }, [currentInteraction?.interaction_id, pendingInterrupt?.interrupt_id, plannerExpertSelectionDraftKey, plannerExpertSelectionInterrupt]);
 
   useEffect(() => {
     if (!plannerExpertSelectionDraftKey || !plannerExpertSelectionInterrupt) {
