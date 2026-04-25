@@ -17,6 +17,7 @@ interface PlannerExpertCard {
 
 interface HumanInteractionPanelProps {
   currentInteraction: InteractionRecord | null;
+  questionSchema: Record<string, unknown>;
   interactions: InteractionRecord[];
   clarifiedRequirements: ClarifiedRequirementsPayload | null;
   currentNode: string | null;
@@ -57,6 +58,7 @@ const formatInteractionScope = (scope: string, fallbackNode: string | null) => {
 
 export function HumanInteractionPanel({
   currentInteraction,
+  questionSchema,
   interactions,
   clarifiedRequirements,
   currentNode,
@@ -94,7 +96,6 @@ export function HumanInteractionPanel({
   const whyNeeded = typeof currentInteraction?.context?.why_needed === 'string'
     ? currentInteraction.context.why_needed
     : '';
-  const questionSchema = (currentInteraction?.question_schema ?? {}) as Record<string, unknown>;
   const schemaType = String(questionSchema.type ?? '').trim().toLowerCase();
   const isSchemaMultiSelect = schemaType === 'multi_select';
   const isSchemaBoolean = schemaType === 'boolean';
@@ -102,6 +103,9 @@ export function HumanInteractionPanel({
   const isSchemaArtifactConfirm = schemaType === 'artifact_confirm';
   const isReviewInterrupt = !isClarificationInterrupt && !isPlannerExpertSelectionInterrupt;
   const hasRevisionFeedback = reviewFeedback.trim().length > 0;
+  const hasClarificationOptions = isClarificationInterrupt
+    && !isPlannerExpertSelectionInterrupt
+    && interruptOptions.length > 0;
   const selectedSchemaValues = Array.isArray(responseDraft.selected_values)
     ? responseDraft.selected_values.map((item) => String(item))
     : [];
@@ -126,6 +130,17 @@ export function HumanInteractionPanel({
   const freeTextPlaceholder = isPlannerExpertSelectionInterrupt
     ? t('projectDetail.waitingHuman.expertSelectionNotePlaceholder')
     : t('projectDetail.waitingHuman.clarificationPlaceholder');
+  const primaryOptionsLabel = isSchemaMultiSelect
+    ? t('projectDetail.waitingHuman.primaryOptionsMulti')
+    : t('projectDetail.waitingHuman.primaryOptions');
+  const primaryOptionsHint = isSchemaMultiSelect
+    ? t('projectDetail.waitingHuman.primaryOptionsMultiHint')
+    : t('projectDetail.waitingHuman.primaryOptionsHint');
+  const detailsLabel = hasClarificationOptions
+    ? t('projectDetail.waitingHuman.optionalDetails')
+    : (isClarificationInterrupt || isPlannerExpertSelectionInterrupt)
+      ? t('projectDetail.waitingHuman.additionalDetails')
+      : t('projectDetail.waitingHuman.revisionFeedbackOnly');
 
   const handleSchemaMultiSelectToggle = (value: string) => {
     const nextValues = selectedSchemaValues.includes(value)
@@ -191,9 +206,16 @@ export function HumanInteractionPanel({
 
           {interruptOptions.length > 0 && !isPlannerExpertSelectionInterrupt && !isSchemaMultiSelect && (
             <div className="space-y-2">
-              <label className="text-[10px] font-black uppercase tracking-widest text-amber-700">
-                {t('projectDetail.waitingHuman.suggestedOptions')}
-              </label>
+              <div className="space-y-1">
+                <label className="text-[10px] font-black uppercase tracking-widest text-amber-700">
+                  {primaryOptionsLabel}
+                </label>
+                {isClarificationInterrupt && (
+                  <p className="text-xs font-medium text-slate-500">
+                    {primaryOptionsHint}
+                  </p>
+                )}
+              </div>
               <div className="grid gap-3">
                 {interruptOptions.map((option) => {
                   const isSelected = selectedInterruptOption === option.value;
@@ -228,9 +250,16 @@ export function HumanInteractionPanel({
 
           {interruptOptions.length > 0 && isSchemaMultiSelect && !isPlannerExpertSelectionInterrupt && (
             <div className="space-y-2">
-              <label className="text-[10px] font-black uppercase tracking-widest text-amber-700">
-                {t('projectDetail.waitingHuman.suggestedOptions')}
-              </label>
+              <div className="space-y-1">
+                <label className="text-[10px] font-black uppercase tracking-widest text-amber-700">
+                  {primaryOptionsLabel}
+                </label>
+                {isClarificationInterrupt && (
+                  <p className="text-xs font-medium text-slate-500">
+                    {primaryOptionsHint}
+                  </p>
+                )}
+              </div>
               <div className="grid gap-3">
                 {interruptOptions.map((option) => {
                   const isSelected = selectedSchemaValues.includes(option.value);
@@ -357,9 +386,7 @@ export function HumanInteractionPanel({
 
           <div className="space-y-2">
             <label className="text-[10px] font-black uppercase tracking-widest text-amber-700">
-              {(isClarificationInterrupt || isPlannerExpertSelectionInterrupt)
-                ? t('projectDetail.waitingHuman.additionalDetails')
-                : t('projectDetail.waitingHuman.revisionFeedbackOnly')}
+              {detailsLabel}
             </label>
             {isSchemaNumber ? (
               <input
@@ -413,12 +440,14 @@ export function HumanInteractionPanel({
                 onClick={onSubmitAnswer}
                 disabled={
                   resumeActionLoading !== null
+                  || (hasClarificationOptions && !isSchemaMultiSelect && !selectedInterruptOption)
                   || (!isPlannerExpertSelectionInterrupt
+                    && !hasClarificationOptions
                     && !isSchemaMultiSelect
                     && !isSchemaNumber
                     && !selectedInterruptOption
                     && reviewFeedback.trim().length === 0)
-                  || (isSchemaMultiSelect && selectedSchemaValues.length === 0 && reviewFeedback.trim().length === 0)
+                  || (isSchemaMultiSelect && selectedSchemaValues.length === 0)
                   || (isSchemaNumber && String(responseDraft.number_value ?? '').trim().length === 0 && reviewFeedback.trim().length === 0)
                 }
                 className="flex-1 rounded-2xl bg-emerald-600 px-5 py-4 text-sm font-black uppercase tracking-widest text-white transition-all hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-300"

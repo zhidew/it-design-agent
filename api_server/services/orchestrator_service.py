@@ -36,6 +36,10 @@ PLANNER_EXPERT_SELECTION_QUESTION = (
     "Review the planner's expert selection. "
     "You can add experts or remove selected experts before execution starts."
 )
+PLANNER_EXPERT_SELECTION_WAIT_LOG_MARKERS = (
+    "规划器已给出专家推荐，等待人工确认",
+    "Planner has finished the initial expert recommendation",
+)
 STALE_RUNNING_TIMEOUT_SECONDS = int(os.getenv("ORCHESTRATOR_STALE_TIMEOUT_SECONDS", "180"))
 
 jobs = {}
@@ -159,6 +163,38 @@ def _normalize_string_list(values: Any) -> List[str]:
     return normalized
 
 
+def _is_planner_expert_selection_wait_log(message: Any) -> bool:
+    text = str(message or "")
+    return any(marker in text for marker in PLANNER_EXPERT_SELECTION_WAIT_LOG_MARKERS)
+
+
+def _is_planner_expert_selection_pending(state: Dict[str, Any] | None) -> bool:
+    pending_interrupt = (state or {}).get("pending_interrupt") or {}
+    if not isinstance(pending_interrupt, dict):
+        return False
+    context = pending_interrupt.get("context") if isinstance(pending_interrupt.get("context"), dict) else {}
+    return (
+        str((state or {}).get("run_status") or "").strip() == RUN_STATUS_WAITING_HUMAN
+        and str(pending_interrupt.get("node_type") or "").strip() == "planner"
+        and (
+            str(pending_interrupt.get("interrupt_kind") or "").strip() == PLANNER_EXPERT_SELECTION_INTERACTION
+            or str(context.get("interaction_type") or "").strip() == PLANNER_EXPERT_SELECTION_INTERACTION
+            or isinstance(context.get("available_experts"), list)
+        )
+    )
+
+
+def _filter_stale_planner_expert_selection_wait_logs(logs: List[Any], state: Dict[str, Any] | None) -> List[str]:
+    normalized_logs = [str(log) for log in logs if str(log or "").strip()]
+    if _is_planner_expert_selection_pending(state):
+        return normalized_logs
+    return [
+        log
+        for log in normalized_logs
+        if not _is_planner_expert_selection_wait_log(log)
+    ]
+
+
 def _infer_interaction_scope(pending_interrupt: Dict[str, Any]) -> str:
     node_type = str(pending_interrupt.get("node_type") or "").strip()
     interrupt_kind = str(pending_interrupt.get("interrupt_kind") or "").strip()
@@ -203,12 +239,17 @@ def _build_question_schema(question: str, context: Dict[str, Any] | None = None)
 def _build_interaction_summary_from_payload(human_input: Dict[str, Any], pending_interrupt: Dict[str, Any]) -> str:
     action = str((human_input or {}).get("action") or "").strip()
     response = (human_input or {}).get("response") or {}
+    response_type = str(response.get("type") or "").strip().lower()
     answer = str((human_input or {}).get("answer") or response.get("text") or "").strip()
     feedback = str((human_input or {}).get("feedback") or response.get("feedback") or "").strip()
     selected_option = str((human_input or {}).get("selected_option") or response.get("value") or "").strip()
     selected_experts = _normalize_string_list(
         (human_input or {}).get("selected_experts") if isinstance((human_input or {}).get("selected_experts"), list)
-        else response.get("values") or response.get("selected_experts")
+        else response.get("selected_experts") or (response.get("values") if response_type == "expert_multi_select" else None)
+    )
+    selected_options = _normalize_string_list(
+        (human_input or {}).get("selected_options") if isinstance((human_input or {}).get("selected_options"), list)
+        else response.get("selected_options") or (response.get("values") if response_type == "multi_select" else None)
     )
     if action == "approve":
         return "Approved to continue."
@@ -216,6 +257,9 @@ def _build_interaction_summary_from_payload(human_input: Dict[str, Any], pending
         return feedback or "Requested revision before retry."
     if selected_experts:
         summary = f"Selected experts: {', '.join(selected_experts)}"
+        return f"{summary}. {answer}".strip(". ") if answer else summary
+    if selected_options:
+        summary = f"Selected options: {', '.join(selected_options)}"
         return f"{summary}. {answer}".strip(". ") if answer else summary
     if selected_option:
         summary = f"Selected option: {selected_option}"
@@ -1954,6 +1998,7 @@ async def run_orchestrator_task(
             if h not in seen:
                 combined_logs.append(h)
         
+        combined_logs = _filter_stale_planner_expert_selection_wait_logs(combined_logs, latest_state)
         if combined_logs:
             save_run_log(project_id, version, BASE_DIR, combined_logs)
 
@@ -2033,8 +2078,6 @@ def _translate_interaction_response_payload(
         or ""
     ).strip()
     values = response.get("values")
-    if not isinstance(values, list):
-        values = response.get("selected_experts")
     translated = {
         "interaction_id": interaction_id,
         "response": response,
@@ -2046,8 +2089,19 @@ def _translate_interaction_response_payload(
         else:
             action = "answer"
     translated["action"] = action
-    if response_type == "expert_multi_select" or isinstance(values, list):
-        translated["selected_experts"] = _normalize_string_list(values)
+    if response_type == "expert_multi_select":
+        expert_values = values if isinstance(values, list) else response.get("selected_experts")
+        translated["selected_experts"] = _normalize_string_list(expert_values)
+        translated["answer"] = response_text
+    elif isinstance(response.get("selected_experts"), list):
+        translated["selected_experts"] = _normalize_string_list(response.get("selected_experts"))
+        translated["answer"] = response_text
+    elif response_type == "multi_select":
+        option_values = values if isinstance(values, list) else response.get("selected_options")
+        translated["selected_options"] = _normalize_string_list(option_values)
+        translated["answer"] = response_text
+    elif isinstance(response.get("selected_options"), list):
+        translated["selected_options"] = _normalize_string_list(response.get("selected_options"))
         translated["answer"] = response_text
     elif "value" in response and response.get("value") not in (None, ""):
         translated["selected_option"] = str(response.get("value")).strip()
@@ -2069,6 +2123,7 @@ async def resume_workflow(project_id: str, version: str, human_input: dict):
     feedback = (human_input or {}).get("feedback", "")
     answer = (human_input or {}).get("answer", "")
     selected_option = ((human_input or {}).get("selected_option") or "").strip()
+    selected_options = _normalize_string_list((human_input or {}).get("selected_options"))
     if action not in {"approve", "revise", "answer"}:
         return False
 
@@ -2116,6 +2171,7 @@ async def resume_workflow(project_id: str, version: str, human_input: dict):
         "answer": str(answer or "").strip(),
         "feedback": str(feedback or "").strip(),
         "selected_option": selected_option or None,
+        "selected_options": selected_options or None,
         "answer_merge_targets": _normalize_string_list(
             (((human_input or {}).get("response") or {}).get("answer_merge_targets"))
             or ((pending_interrupt.get("context") or {}).get("answer_merge_targets"))
@@ -2127,9 +2183,10 @@ async def resume_workflow(project_id: str, version: str, human_input: dict):
         normalized_feedback = normalized_answer
         has_selected_experts_payload = isinstance((human_input or {}).get("selected_experts"), list)
         selected_experts = _normalize_string_list((human_input or {}).get("selected_experts"))
+        has_selected_options_payload = isinstance((human_input or {}).get("selected_options"), list)
         interrupt_context = pending_interrupt.get("context") or {}
         interaction_type = str(interrupt_context.get("interaction_type") or "").strip()
-        if not normalized_answer and not selected_option and not has_selected_experts_payload:
+        if not normalized_answer and not selected_option and not has_selected_experts_payload and not has_selected_options_payload:
             return False
         resume_target_node = pending_interrupt.get("resume_target") or requested_node_id or "planner"
         target_key = requested_node_id or "planner"
@@ -2143,12 +2200,17 @@ async def resume_workflow(project_id: str, version: str, human_input: dict):
             summary = f"Selected experts: {', '.join(selected_experts) if selected_experts else '(none)'}"
             if normalized_answer:
                 summary = f"{summary}. {normalized_answer}"
+        if has_selected_options_payload:
+            summary = f"Selected options: {', '.join(selected_options) if selected_options else '(none)'}"
+            if normalized_answer:
+                summary = f"{summary}. {normalized_answer}"
         answer_entries.append(
             {
                 "interrupt_id": requested_interrupt_id,
                 "question": pending_interrupt.get("question") or current_state.get("waiting_reason"),
                 "answer": normalized_answer,
                 "selected_option": selected_option or None,
+                "selected_options": selected_options if has_selected_options_payload else None,
                 "selected_experts": selected_experts if has_selected_experts_payload else None,
                 "recommended_experts": (
                     _normalize_string_list(interrupt_context.get("recommended_experts"))
@@ -2160,6 +2222,7 @@ async def resume_workflow(project_id: str, version: str, human_input: dict):
             }
         )
         human_answers[target_key] = answer_entries
+        interaction_answer_payload["selected_options"] = selected_options if has_selected_options_payload else None
         interaction_answer_payload["selected_experts"] = selected_experts if has_selected_experts_payload else None
         interaction_answer_payload["summary"] = summary
     elif action == "approve":
@@ -2194,7 +2257,12 @@ async def resume_workflow(project_id: str, version: str, human_input: dict):
     _persist_clarification_artifacts(project_id, version, state=resumed_state)
 
     _delete_checkpoint_state(project_id, version)
-    _ensure_job(run_id)
+    job = _ensure_job(run_id)
+    job["logs"] = _filter_stale_planner_expert_selection_wait_logs(job.get("logs", []), resumed_state)
+    existing_persisted_logs = get_run_log(project_id, version, BASE_DIR)
+    persisted_logs = _filter_stale_planner_expert_selection_wait_logs(existing_persisted_logs, resumed_state)
+    if existing_persisted_logs != persisted_logs:
+        save_run_log(project_id, version, BASE_DIR, persisted_logs)
     _set_runtime_state(
         project_id,
         version,
@@ -2812,7 +2880,7 @@ def get_version_logs(project_id: str, version: str) -> list:
         if log not in seen:
             seen.add(log)
             combined_logs.append(log)
-    return combined_logs
+    return _filter_stale_planner_expert_selection_wait_logs(combined_logs, current_state)
 
 
 def _resolve_experts_dir() -> Path:

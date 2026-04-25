@@ -131,6 +131,7 @@ export const api = {
       interrupt_id?: string;
       interaction_id?: string;
       selected_option?: string;
+      selected_options?: string[];
       selected_experts?: string[];
       answer?: string;
       feedback?: string;

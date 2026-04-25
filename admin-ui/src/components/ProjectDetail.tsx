@@ -261,6 +261,26 @@ const parsePlannerExpertOptions = (value: unknown): PlannerExpertOption[] => (
     : []
 );
 
+const normalizeInterruptOptions = (value: unknown): InterruptOption[] => (
+  Array.isArray(value)
+    ? value
+      .map((option): InterruptOption | null => {
+        if (!option || typeof option !== 'object') {
+          return null;
+        }
+        const row = option as Record<string, unknown>;
+        const value = String(row.value ?? row.id ?? '').trim();
+        if (!value) {
+          return null;
+        }
+        const label = String(row.label ?? row.name ?? value).trim() || value;
+        const description = String(row.description ?? row.help ?? '').trim();
+        return { value, label, description };
+      })
+      .filter((option): option is InterruptOption => option !== null)
+    : []
+);
+
 const readPlannerExpertSelection = (
   pendingInterrupt: WorkflowState['pending_interrupt'],
   currentInteraction: InteractionRecord | null,
@@ -350,6 +370,30 @@ const NODE_STATUS_PRIORITY: Record<NodeStatus, number> = {
 };
 
 const PLANNER_EXPERT_SELECTION_DRAFT_PREFIX = 'it-design-agent:planner-expert-selection';
+const PLANNER_EXPERT_SELECTION_WAIT_LOG_MARKERS = [
+  '规划器已给出专家推荐，等待人工确认',
+  'Planner has finished the initial expert recommendation',
+];
+
+const isPlannerExpertSelectionWaitLog = (text: string) => (
+  PLANNER_EXPERT_SELECTION_WAIT_LOG_MARKERS.some((marker) => text.includes(marker))
+);
+
+const isPlannerExpertSelectionInterruptLike = (
+  value: {
+    node_type?: string | null;
+    interrupt_kind?: string | null;
+    context?: Record<string, unknown> | null;
+  } | null | undefined,
+) => {
+  const context = (value?.context ?? {}) as Record<string, unknown>;
+  return String(value?.node_type ?? '').trim() === 'planner'
+    && (
+      String(value?.interrupt_kind ?? '').trim() === 'expert_selection'
+      || String(context.interaction_type ?? '').trim() === 'expert_selection'
+      || Array.isArray(context.available_experts)
+    );
+};
 
 const buildPlannerExpertSelectionDraftKey = (projectId: string, version: string, interruptId: string) => (
   `${PLANNER_EXPERT_SELECTION_DRAFT_PREFIX}:${projectId}:${version}:${interruptId}`
@@ -1149,13 +1193,13 @@ export function ProjectDetail() {
         .map((expert) => expert.id)
         .filter((expertId) => selectedPlannerExperts.includes(expertId))
       : undefined;
+    const schemaValues = Array.isArray(interactionResponseDraft.selected_values)
+      ? interactionResponseDraft.selected_values.map((item) => String(item))
+      : undefined;
     setResumeActionLoading(action);
     try {
       setStreamStatus('connecting');
       if (interactionId) {
-        const schemaValues = Array.isArray(interactionResponseDraft.selected_values)
-          ? interactionResponseDraft.selected_values.map((item) => String(item))
-          : undefined;
         const schemaValue = questionSchemaType === 'number'
           ? interactionResponseDraft.number_value
           : selectedInterruptOption || interactionResponseDraft.value;
@@ -1167,6 +1211,7 @@ export function ProjectDetail() {
               : (questionSchemaType || (selectedInterruptOption ? 'single_select' : 'long_text')),
             value: effectiveAction === 'answer' ? schemaValue : undefined,
             values: plannerExpertSelectionInterrupt ? selectedExpertsPayload : schemaValues,
+            selected_options: !plannerExpertSelectionInterrupt && questionSchemaType === 'multi_select' ? schemaValues : undefined,
             selected_experts: selectedExpertsPayload,
             text: effectiveAction === 'answer' ? reviewFeedback.trim() : undefined,
             feedback: effectiveAction === 'revise' ? reviewFeedback.trim() : undefined,
@@ -1182,6 +1227,7 @@ export function ProjectDetail() {
           node_id: pendingInterrupt?.node_id,
           interrupt_id: pendingInterrupt?.interrupt_id ?? undefined,
           selected_option: effectiveAction === 'answer' && selectedInterruptOption ? selectedInterruptOption : undefined,
+          selected_options: effectiveAction === 'answer' && questionSchemaType === 'multi_select' ? schemaValues : undefined,
           selected_experts: selectedExpertsPayload,
           answer: effectiveAction === 'answer' ? reviewFeedback.trim() : undefined,
           feedback: effectiveAction === 'revise' ? reviewFeedback.trim() : undefined,
@@ -1368,6 +1414,10 @@ export function ProjectDetail() {
   }, [selectedNode, artifacts]);
 
   const executionEntries = useMemo<ExecutionLogEntry[]>(() => {
+    const isCurrentlyWaitingForPlannerExpertSelection = workflowState?.run_status === 'waiting_human'
+      && isPlannerExpertSelectionInterruptLike(workflowState.pending_interrupt);
+    const shouldHideStalePlannerExpertSelectionWait = !isCurrentlyWaitingForPlannerExpertSelection;
+
     const eventEntries = runEvents.map((event) => {
       switch (event.event_type) {
         case 'node_started':
@@ -1375,12 +1425,18 @@ export function ProjectDetail() {
         case 'node_completed':
           return { kind: 'text', id: event.event_id, text: `[EVENT] ${event.node_type} completed with status ${event.status}`, tone: event.status === 'failed' ? 'error' as const : 'default' as const };
         case 'text_delta':
+          if (shouldHideStalePlannerExpertSelectionWait && isPlannerExpertSelectionWaitLog(event.delta)) {
+            return null;
+          }
           return { kind: 'text', id: event.event_id, text: event.delta, tone: event.delta.includes('[ERROR]') ? 'error' as const : 'default' as const };
         case 'artifact_updated':
           return { kind: 'text', id: event.event_id, text: `[EVENT] ${event.node_type} ${event.artifact_status} artifact ${event.artifact_name}`, tone: 'default' as const };
         case 'tool_event':
           return { kind: 'tool', id: event.event_id, event };
         case 'waiting_human':
+          if (shouldHideStalePlannerExpertSelectionWait && isPlannerExpertSelectionInterruptLike(event)) {
+            return null;
+          }
           return { kind: 'text', id: event.event_id, text: `[EVENT] Waiting for human input at ${event.node_type}: ${event.question}`, tone: 'default' as const };
         case 'run_completed':
           return { kind: 'text', id: event.event_id, text: '[EVENT] Run completed successfully', tone: 'default' as const };
@@ -1391,19 +1447,23 @@ export function ProjectDetail() {
       }
     }).filter((entry): entry is ExecutionLogEntry => entry !== null);
 
-    const diskLogEntries = versionLogs.map((log, idx) => ({
-      kind: 'text' as const,
-      id: `log-${idx}`,
-      text: log,
-      tone: log.includes('[ERROR]') ? 'error' as const : 'default' as const,
-    }));
+    const diskLogEntries = versionLogs
+      .filter((log) => !(shouldHideStalePlannerExpertSelectionWait && isPlannerExpertSelectionWaitLog(log)))
+      .map((log, idx) => ({
+        kind: 'text' as const,
+        id: `log-${idx}`,
+        text: log,
+        tone: log.includes('[ERROR]') ? 'error' as const : 'default' as const,
+      }));
 
-    const historyEntries = (workflowState?.history || []).map((log, idx) => ({
-      kind: 'text' as const,
-      id: `history-${idx}`,
-      text: log,
-      tone: log.includes('[ERROR]') ? 'error' as const : 'default' as const,
-    }));
+    const historyEntries = (workflowState?.history || [])
+      .filter((log) => !(shouldHideStalePlannerExpertSelectionWait && isPlannerExpertSelectionWaitLog(log)))
+      .map((log, idx) => ({
+        kind: 'text' as const,
+        id: `history-${idx}`,
+        text: log,
+        tone: log.includes('[ERROR]') ? 'error' as const : 'default' as const,
+      }));
 
     const mergedEntries: ExecutionLogEntry[] = [];
     const seen = new Set<string>();
@@ -1416,7 +1476,7 @@ export function ProjectDetail() {
     });
 
     return mergedEntries;
-  }, [runEvents, versionLogs, workflowState?.history]);
+  }, [runEvents, versionLogs, workflowState?.history, workflowState?.pending_interrupt, workflowState?.run_status]);
 
   const reasoningLogs = useMemo(() => {
     if (!selectedNode) return [];
@@ -1664,6 +1724,10 @@ export function ProjectDetail() {
   const pendingInterrupt = workflowState?.pending_interrupt ?? null;
   const isClarificationInterrupt = pendingInterrupt?.interrupt_kind === 'ask_human';
   const isCancelledState = workflowState?.waiting_reason?.includes('[CANCELLED]') ?? false;
+  const activeQuestionSchema = useMemo(
+    () => (currentInteraction?.question_schema ?? pendingInterrupt?.question_schema ?? {}) as Record<string, unknown>,
+    [currentInteraction?.question_schema, pendingInterrupt?.question_schema],
+  );
   const plannerExpertSelectionInterrupt = useMemo(() => {
     return readPlannerExpertSelection(pendingInterrupt, currentInteraction);
   }, [pendingInterrupt, currentInteraction]);
@@ -1716,25 +1780,19 @@ export function ProjectDetail() {
     [availableSortedPlannerExperts, i18n.language],
   );
   const interruptOptions = useMemo(() => {
-    const rawOptions = pendingInterrupt?.context?.options;
-    if (!Array.isArray(rawOptions)) {
-      return [];
+    const optionSources = [
+      pendingInterrupt?.context?.options,
+      activeQuestionSchema.options,
+      currentInteraction?.context?.options,
+    ];
+    for (const rawOptions of optionSources) {
+      const options = normalizeInterruptOptions(rawOptions);
+      if (options.length > 0) {
+        return options;
+      }
     }
-    return rawOptions
-      .map((option): InterruptOption | null => {
-        if (!option || typeof option !== 'object') {
-          return null;
-        }
-        const value = String((option as Record<string, unknown>).value ?? '').trim();
-        if (!value) {
-          return null;
-        }
-        const label = String((option as Record<string, unknown>).label ?? value).trim() || value;
-        const description = String((option as Record<string, unknown>).description ?? '').trim();
-        return { value, label, description };
-      })
-      .filter((option): option is InterruptOption => option !== null);
-  }, [pendingInterrupt]);
+    return [];
+  }, [activeQuestionSchema.options, currentInteraction?.context?.options, pendingInterrupt?.context?.options]);
   const hasPendingTodoTasks = useMemo(
     () => Boolean(workflowState?.task_queue?.some((task) => task.agent_type !== 'planner' && task.status === 'todo')),
     [workflowState?.task_queue],
@@ -2578,6 +2636,7 @@ export function ProjectDetail() {
             ) : (
               <HumanInteractionPanel
                 currentInteraction={currentInteraction}
+                questionSchema={activeQuestionSchema}
                 interactions={interactionHistory}
                 clarifiedRequirements={clarifiedRequirements}
                 currentNode={workflowState.current_node}
