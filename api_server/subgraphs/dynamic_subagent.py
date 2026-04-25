@@ -3704,7 +3704,7 @@ async def run_dynamic_subagent(
         print(f"[DEBUG] {capability}: injected {len(capability_answers)} human answer(s) into payload")
     # Also inject human_feedback if present
     human_feedback = state.get("human_feedback", "")
-    if human_feedback and capability_answers:
+    if human_feedback and (capability_answers or state.get("resume_target_node") == capability):
         payload["human_feedback"] = human_feedback
 
     history_updates = []

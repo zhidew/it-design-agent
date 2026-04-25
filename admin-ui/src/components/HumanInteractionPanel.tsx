@@ -100,6 +100,8 @@ export function HumanInteractionPanel({
   const isSchemaBoolean = schemaType === 'boolean';
   const isSchemaNumber = schemaType === 'number';
   const isSchemaArtifactConfirm = schemaType === 'artifact_confirm';
+  const isReviewInterrupt = !isClarificationInterrupt && !isPlannerExpertSelectionInterrupt;
+  const hasRevisionFeedback = reviewFeedback.trim().length > 0;
   const selectedSchemaValues = Array.isArray(responseDraft.selected_values)
     ? responseDraft.selected_values.map((item) => String(item))
     : [];
@@ -357,7 +359,7 @@ export function HumanInteractionPanel({
             <label className="text-[10px] font-black uppercase tracking-widest text-amber-700">
               {(isClarificationInterrupt || isPlannerExpertSelectionInterrupt)
                 ? t('projectDetail.waitingHuman.additionalDetails')
-                : t('projectDetail.waitingHuman.revisionFeedback')}
+                : t('projectDetail.waitingHuman.revisionFeedbackOnly')}
             </label>
             {isSchemaNumber ? (
               <input
@@ -399,6 +401,12 @@ export function HumanInteractionPanel({
             </div>
           )}
 
+          {isReviewInterrupt && hasRevisionFeedback && (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800">
+              {t('projectDetail.waitingHuman.approveDisabledWithFeedback')}
+            </div>
+          )}
+
           <div className="flex flex-col sm:flex-row gap-3">
             {(isClarificationInterrupt || isPlannerExpertSelectionInterrupt) ? (
               <button
@@ -423,7 +431,7 @@ export function HumanInteractionPanel({
               <>
                 <button
                   onClick={onApprove}
-                  disabled={resumeActionLoading !== null}
+                  disabled={resumeActionLoading !== null || hasRevisionFeedback}
                   className="flex-1 rounded-2xl bg-emerald-600 px-5 py-4 text-sm font-black uppercase tracking-widest text-white transition-all hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-300"
                 >
                   {resumeActionLoading === 'approve' ? t('projectDetail.waitingHuman.approving') : t('projectDetail.waitingHuman.approveContinue')}

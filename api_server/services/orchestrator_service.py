@@ -1639,6 +1639,12 @@ def _build_resume_task_queue(current_state: dict, resume_action: str, resume_tar
         if resume_target_node == "planner":
             return [{"id": "0", "agent_type": "planner", "status": "running", "dependencies": [], "priority": 100}]
         return current_state.get("task_queue", [])
+    if resume_target_node and resume_target_node not in {"planner", "supervisor"}:
+        reset_queue = _reset_retry_branch(current_state.get("task_queue", []), resume_target_node)
+        return [
+            {**task, "status": "running"} if task.get("agent_type") == resume_target_node else task
+            for task in reset_queue
+        ]
     return [{"id": "0", "agent_type": "planner", "status": "running", "dependencies": [], "priority": 100}]
 
 
@@ -2091,7 +2097,18 @@ async def resume_workflow(project_id: str, version: str, human_input: dict):
             return False
 
     normalized_feedback = feedback
-    resume_target_node = "supervisor" if action == "approve" else "planner"
+    pending_resume_target = str(
+        pending_interrupt.get("resume_target")
+        or pending_interrupt.get("node_type")
+        or requested_node_id
+        or ""
+    ).strip()
+    if action in {"approve", "revise"} and pending_resume_target:
+        resume_target_node = pending_resume_target
+    else:
+        resume_target_node = "supervisor" if action == "approve" else "planner"
+    if action == "approve" and resume_target_node == "planner":
+        resume_target_node = "supervisor"
     human_answers = dict(current_state.get("human_answers") or {})
     interaction_answer_payload: Dict[str, Any] = {
         "action": action,
