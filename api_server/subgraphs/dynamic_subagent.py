@@ -95,20 +95,49 @@ OUTPUT_PLAN_REQUIRED_MUST_COVER_GROUPS_BY_FILE: Dict[tuple[str, str], List[Dict[
         "detailed-design.md",
     ): [
         {
-            "label": "critical path",
-            "keywords": ["critical path", "core path", "core flow", "核心链路", "主链路"],
+            "label": "critical path / 关键路径",
+            "keywords": [
+                "critical path",
+                "core path",
+                "core flow",
+                "关键路径",
+                "关键链路",
+                "关键流程",
+                "核心路径",
+                "核心链路",
+                "核心流程",
+                "关键环节",
+                "关键任务",
+                "端到端流程",
+                "主路径",
+                "主链路",
+                "主流程",
+            ],
         },
         {
-            "label": "constraints",
-            "keywords": ["constraint", "constraints", "assumption", "约束", "限制", "前提"],
+            "label": "constraints / 约束",
+            "keywords": ["constraint", "constraints", "assumption", "约束", "限制", "前提", "假设", "边界"],
         },
         {
-            "label": "risks",
-            "keywords": ["risk", "risks", "风险", "隐患"],
+            "label": "risks / 风险",
+            "keywords": ["risk", "risks", "风险", "隐患", "问题", "缺口"],
         },
         {
-            "label": "degradation or fallback",
-            "keywords": ["degradation", "fallback", "graceful", "降级", "兜底", "回退"],
+            "label": "degradation or fallback / 降级或兜底",
+            "keywords": [
+                "degradation",
+                "fallback",
+                "graceful",
+                "降级",
+                "兜底",
+                "回退",
+                "容错",
+                "补偿",
+                "失败处理",
+                "异常处理",
+                "应急",
+                "容灾",
+            ],
         },
     ],
 }
@@ -381,7 +410,7 @@ def _default_must_cover_items_for_output(capability: str, target_file: str) -> L
     basename = Path(_normalize_relative_path(target_file)).name
     if capability == "design-assembler" and basename == "detailed-design.md":
         return [
-            "Critical path, hard constraints, primary risks, and degradation/fallback strategy for cross-artifact delivery.",
+            "跨产物交付的关键路径、硬约束、主要风险，以及降级/兜底策略。",
         ]
 
     suffix = Path(basename).suffix.lower()
@@ -2422,7 +2451,7 @@ Rules:
 7. Respect the approximate per-file char budgets shown above when choosing scope and must-cover items.
 8. Avoid planning files that would all need the same background, scope, or generic requirement-overview sections; shared context should live in one concise place, not every deliverable.
 9. `must_cover_by_file` is a hard contract: every selected file must contain at least one concrete must-cover item, otherwise execution fails fast.
-10. If the expert is `design-assembler` and `detailed-design.md` is selected, must-cover items must explicitly address critical path, constraints, risks, and degradation/fallback.
+10. If the expert is `design-assembler` and `detailed-design.md` is selected, must-cover items must explicitly address these semantic dimensions: critical path / 关键路径或核心链路, constraints / 约束, risks / 风险, and degradation/fallback / 降级或兜底. Use Simplified Chinese wording when the project language is Chinese.
 
 Return JSON in artifacts.output_plan:
 {{
