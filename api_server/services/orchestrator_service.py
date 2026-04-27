@@ -1692,6 +1692,23 @@ def _build_resume_task_queue(current_state: dict, resume_action: str, resume_tar
     return [{"id": "0", "agent_type": "planner", "status": "running", "dependencies": [], "priority": 100}]
 
 
+def _resolve_resume_workflow_phase(
+    task_queue: list[dict],
+    resume_action: str | None,
+    resume_target_node: str | None,
+    fallback_phase: str | None,
+) -> str | None:
+    if resume_target_node and resume_target_node not in {"planner", "supervisor"}:
+        target_task = next((task for task in task_queue if task.get("agent_type") == resume_target_node), None)
+        if target_task:
+            metadata = target_task.get("metadata") or {}
+            return target_task.get("phase") or metadata.get("workflow_phase") or fallback_phase
+
+    if resume_action == "revise":
+        return "ANALYSIS"
+    return fallback_phase
+
+
 def _reset_retry_branch(task_queue: list[dict], target_node_type: str) -> list[dict]:
     tasks_by_id = {task["id"]: dict(task) for task in task_queue}
     target_task = next((task for task in task_queue if task.get("agent_type") == target_node_type), None)
@@ -1773,14 +1790,22 @@ def _build_graph_input_state(
         except Exception as e:
             print(f"[ERROR] Failed to lookup model config for {model}: {e}")
 
+    resume_task_queue = _build_resume_task_queue(persisted_state or {}, resume_action or "", resume_target_node)
+    workflow_phase = _resolve_resume_workflow_phase(
+        resume_task_queue,
+        resume_action,
+        resume_target_node,
+        (persisted_state or {}).get("workflow_phase", "INIT"),
+    )
+
     state = {
         "project_id": project_id,
         "version": version,
         "run_id": job_id,
         "requirement": requirement_text or (persisted_state or {}).get("requirement", ""),
         "design_context": design_context,
-        "task_queue": _build_resume_task_queue(persisted_state or {}, resume_action or "", resume_target_node),
-        "workflow_phase": (persisted_state or {}).get("workflow_phase", "INIT"),
+        "task_queue": resume_task_queue,
+        "workflow_phase": workflow_phase,
         "history": _initial_history(project_id, history),
         "messages": messages,
         "artifacts": (persisted_state or {}).get("artifacts", {}),
@@ -1796,8 +1821,6 @@ def _build_graph_input_state(
         "resume_action": resume_action,
         "human_feedback": feedback,
     }
-    if resume_action == "revise":
-        state["workflow_phase"] = "ANALYSIS"
     return state
 
 
@@ -2230,8 +2253,16 @@ async def resume_workflow(project_id: str, version: str, human_input: dict):
     elif action == "revise":
         interaction_answer_payload["summary"] = feedback.strip() or "Requested revision before retry."
 
+    resume_task_queue = _build_resume_task_queue(current_state, action, resume_target_node)
+    resumed_workflow_phase = _resolve_resume_workflow_phase(
+        resume_task_queue,
+        action,
+        resume_target_node,
+        current_state.get("workflow_phase") or "INIT",
+    )
     resumed_state = {
         **current_state,
+        "task_queue": resume_task_queue,
         "pending_interrupt": None,
         "human_answers": human_answers,
         "resume_target_node": resume_target_node,
@@ -2239,6 +2270,7 @@ async def resume_workflow(project_id: str, version: str, human_input: dict):
         "waiting_reason": None,
         "run_status": RUN_STATUS_RUNNING,
         "current_node": "bootstrap",
+        "workflow_phase": resumed_workflow_phase,
     }
     if interaction_id:
         metadata_db.update_human_interaction(
@@ -2257,6 +2289,13 @@ async def resume_workflow(project_id: str, version: str, human_input: dict):
     _persist_clarification_artifacts(project_id, version, state=resumed_state)
 
     _delete_checkpoint_state(project_id, version)
+    _sync_workflow_projection_from_payload(
+        project_id,
+        version,
+        resumed_state,
+        run_id=run_id,
+        authoritative_tasks=True,
+    )
     job = _ensure_job(run_id)
     job["logs"] = _filter_stale_planner_expert_selection_wait_logs(job.get("logs", []), resumed_state)
     existing_persisted_logs = get_run_log(project_id, version, BASE_DIR)
@@ -2328,9 +2367,16 @@ async def retry_workflow_node(
             pass
 
     reset_queue = _reset_retry_branch(current_state.get("task_queue", []), node_type)
+    retry_task_queue = _build_resume_task_queue({"task_queue": reset_queue}, "approve", node_type)
+    retry_workflow_phase = _resolve_resume_workflow_phase(
+        retry_task_queue,
+        "approve",
+        node_type,
+        current_state.get("workflow_phase") or "INIT",
+    )
     retry_state = {
         **current_state,
-        "task_queue": _build_resume_task_queue({"task_queue": reset_queue}, "approve", node_type),
+        "task_queue": retry_task_queue,
         "history": [
             *(current_state.get("history") or []),
             f"[HUMAN] Retry node: {node_type}",
@@ -2341,6 +2387,7 @@ async def retry_workflow_node(
         "waiting_reason": None,
         "resume_action": "approve",
         "resume_target_node": node_type,
+        "workflow_phase": retry_workflow_phase,
     }
 
     _delete_checkpoint_state(project_id, version)
@@ -2353,6 +2400,13 @@ async def retry_workflow_node(
         waiting_reason=None,
         can_resume=False,
         job_id=run_id,
+    )
+    _sync_workflow_projection_from_payload(
+        project_id,
+        version,
+        retry_state,
+        run_id=run_id,
+        authoritative_tasks=True,
     )
     _finalize_waiting_interactions_for_version(
         project_id,

@@ -95,48 +95,74 @@ OUTPUT_PLAN_REQUIRED_MUST_COVER_GROUPS_BY_FILE: Dict[tuple[str, str], List[Dict[
         "detailed-design.md",
     ): [
         {
-            "label": "critical path / 关键路径",
+            "label": "synthesis / 综合结论",
             "keywords": [
-                "critical path",
-                "core path",
-                "core flow",
-                "关键路径",
-                "关键链路",
-                "关键流程",
-                "核心路径",
-                "核心链路",
-                "核心流程",
-                "关键环节",
-                "关键任务",
-                "端到端流程",
-                "主路径",
-                "主链路",
-                "主流程",
+                "synthesis",
+                "synthesized",
+                "final design",
+                "design conclusion",
+                "core conclusion",
+                "综合",
+                "汇总",
+                "聚合",
+                "整合",
+                "最终设计",
+                "设计结论",
+                "核心设计结论",
             ],
         },
         {
-            "label": "constraints / 约束",
-            "keywords": ["constraint", "constraints", "assumption", "约束", "限制", "前提", "假设", "边界"],
-        },
-        {
-            "label": "risks / 风险",
-            "keywords": ["risk", "risks", "风险", "隐患", "问题", "缺口"],
-        },
-        {
-            "label": "degradation or fallback / 降级或兜底",
+            "label": "cross-artifact alignment / 跨产物一致性",
             "keywords": [
-                "degradation",
-                "fallback",
-                "graceful",
-                "降级",
-                "兜底",
-                "回退",
-                "容错",
-                "补偿",
-                "失败处理",
-                "异常处理",
-                "应急",
-                "容灾",
+                "cross-artifact",
+                "alignment",
+                "consistency",
+                "conflict",
+                "gap",
+                "upstream artifact",
+                "跨产物",
+                "跨专家",
+                "一致性",
+                "对齐",
+                "冲突",
+                "缺口",
+                "上游产物",
+            ],
+        },
+        {
+            "label": "traceability / 追踪关系",
+            "keywords": [
+                "traceability",
+                "trace",
+                "source",
+                "requirement mapping",
+                "decision source",
+                "evidence",
+                "追踪",
+                "追溯",
+                "映射",
+                "来源",
+                "需求",
+                "关键决策",
+                "证据",
+            ],
+        },
+        {
+            "label": "residual risks and open questions / 残余风险和待确认项",
+            "keywords": [
+                "residual risk",
+                "risk",
+                "assumption",
+                "open question",
+                "unresolved",
+                "low confidence",
+                "待确认",
+                "待澄清",
+                "残余风险",
+                "风险",
+                "假设",
+                "未决",
+                "低置信",
             ],
         },
     ],
@@ -410,7 +436,7 @@ def _default_must_cover_items_for_output(capability: str, target_file: str) -> L
     basename = Path(_normalize_relative_path(target_file)).name
     if capability == "design-assembler" and basename == "detailed-design.md":
         return [
-            "跨产物交付的关键路径、硬约束、主要风险，以及降级/兜底策略。",
+            "聚合上游设计结论，覆盖跨产物一致性/冲突/缺口、需求与关键决策追踪，以及残余风险和待确认项。",
         ]
 
     suffix = Path(basename).suffix.lower()
@@ -2451,7 +2477,7 @@ Rules:
 7. Respect the approximate per-file char budgets shown above when choosing scope and must-cover items.
 8. Avoid planning files that would all need the same background, scope, or generic requirement-overview sections; shared context should live in one concise place, not every deliverable.
 9. `must_cover_by_file` is a hard contract: every selected file must contain at least one concrete must-cover item, otherwise execution fails fast.
-10. If the expert is `design-assembler` and `detailed-design.md` is selected, must-cover items must explicitly address these semantic dimensions: critical path / 关键路径或核心链路, constraints / 约束, risks / 风险, and degradation/fallback / 降级或兜底. Use Simplified Chinese wording when the project language is Chinese.
+10. If the expert is `design-assembler` and `detailed-design.md` is selected, must-cover items must stay inside the assembler boundary: synthesis / 综合结论, cross-artifact alignment / 跨产物一致性（含冲突和缺口）, traceability / 追踪关系, and residual risks or open questions / 残余风险和待确认项. Do not require domain-specific implementation details such as critical path, fallback, schema, API, test, or ops details unless they are already grounded in upstream artifacts. Use Simplified Chinese wording when the project language is Chinese.
 
 Return JSON in artifacts.output_plan:
 {{
