@@ -168,6 +168,23 @@ OUTPUT_PLAN_REQUIRED_MUST_COVER_GROUPS_BY_FILE: Dict[tuple[str, str], List[Dict[
     ],
 }
 
+DESIGN_ASSEMBLER_OWN_OUTPUTS = {
+    "detailed-design.md",
+    "implementation-plan.json",
+    "traceability.json",
+    "review-checklist.md",
+}
+TEXT_ARTIFACT_SUFFIXES = {
+    ".md",
+    ".txt",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".sql",
+    ".csv",
+    ".tsv",
+}
+
 SHARED_CONTEXT_OWNER_CAPABILITIES = {"modular-design", "design-assembler"}
 GENERIC_SHARED_CONTEXT_HEADING_MARKERS = (
     "背景",
@@ -1777,6 +1794,12 @@ def _persist_workspace_snapshot(
         encoding="utf-8",
     )
 
+    actual_workspace_artifacts = _build_actual_workspace_artifact_summaries(
+        artifacts_dir,
+        upstream_artifacts,
+        expected_files,
+    )
+
     workspace_index = {
         "capability": capability,
         "candidate_files": candidate_files,
@@ -1792,6 +1815,7 @@ def _persist_workspace_snapshot(
         "react_trace_path": _normalize_relative_path(str(react_trace_path.relative_to(artifacts_dir))),
         "finalization_trace_path": _normalize_relative_path(str(final_trace_path.relative_to(artifacts_dir))),
         "upstream_artifacts": upstream_artifacts,
+        "actual_workspace_artifacts": actual_workspace_artifacts,
         "current_expected_artifacts": _collect_artifact_status(artifacts_dir, expected_files),
         "observation_count": len(observations),
         "react_step_count": len(react_trace),
@@ -2579,6 +2603,70 @@ def _read_workspace_text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _summarize_workspace_artifact_file(path: Path, *, artifacts_dir: Path) -> Dict[str, Any]:
+    row: Dict[str, Any] = {
+        "path": _normalize_relative_path(str(path.relative_to(artifacts_dir))),
+        "size_bytes": path.stat().st_size if path.exists() else 0,
+    }
+    suffix = path.suffix.lower()
+    if suffix not in TEXT_ARTIFACT_SUFFIXES:
+        row["kind"] = suffix.lstrip(".") or "binary"
+        return row
+
+    try:
+        content = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        row["kind"] = "binary"
+        return row
+
+    row["kind"] = suffix.lstrip(".") or "text"
+    if suffix == ".md":
+        headings = _extract_markdown_heading_titles(content)
+        if headings:
+            row["headings"] = headings[:12]
+        section_summaries = _summarize_markdown_sections_for_prompt(content, limit=4)
+        if section_summaries:
+            row["section_summaries"] = section_summaries
+    elif suffix == ".json":
+        parsed = _read_workspace_json(path)
+        if isinstance(parsed, dict):
+            row["top_level_keys"] = list(parsed.keys())[:16]
+        elif isinstance(parsed, list):
+            row["item_count"] = len(parsed)
+
+    row["excerpt"] = _summarize_value_for_prompt(content.strip(), max_string=700)
+    return row
+
+
+def _build_actual_workspace_artifact_summaries(
+    artifacts_dir: Path,
+    upstream_artifacts: Dict[str, List[str]],
+    expected_files: List[str],
+    *,
+    max_files: int = 18,
+) -> List[Dict[str, Any]]:
+    expected = {_normalize_relative_path(item) for item in expected_files}
+    seen: set[str] = set()
+    rows: List[Dict[str, Any]] = []
+
+    for owner, file_names in upstream_artifacts.items():
+        for file_name in file_names:
+            normalized = _normalize_relative_path(file_name)
+            if normalized in seen or normalized in expected:
+                continue
+            path = artifacts_dir / normalized
+            if not path.exists() or not path.is_file():
+                continue
+            row = _summarize_workspace_artifact_file(path, artifacts_dir=artifacts_dir)
+            row["source_owner"] = owner
+            rows.append(row)
+            seen.add(normalized)
+            if len(rows) >= max_files:
+                return rows
+
+    return rows
+
+
 def _compact_requirement_digest_for_final_prompt(requirement_digest: str) -> str:
     if not requirement_digest.strip():
         return ""
@@ -2718,6 +2806,18 @@ def _build_generation_batches(target_file: str, output_plan: Dict[str, Any]) -> 
     return batches
 
 
+def _resolve_template_hint_for_target(capability: str, target_file: str, template_hint: str) -> str:
+    basename = Path(_normalize_relative_path(target_file)).name
+    if capability == "design-assembler" and basename == "detailed-design.md":
+        return (
+            "Do not follow a fixed detailed-design table of contents. Build the section structure dynamically "
+            "from `actual_workspace_artifacts`, `workspace_index.upstream_artifacts`, and the output plan. "
+            "Only include sections for upstream artifact files that actually exist in this run; missing domains "
+            "must appear as gaps or open questions instead of empty template sections."
+        )
+    return template_hint
+
+
 def _compact_template_hint_for_prompt(template_hint: str) -> str:
     """Return template hint as-is; templates carry structural meaning and must not be truncated."""
     if not template_hint.strip():
@@ -2808,10 +2908,11 @@ Custom Instructions from SKILL.md:
 """
 
     template_section = ""
-    if template_hint:
+    resolved_template_hint = _resolve_template_hint_for_target(capability, target_file, template_hint)
+    if resolved_template_hint:
         template_section = f"""
 Template/style hint for `{target_file}`:
-{_compact_template_hint_for_prompt(template_hint)}
+{_compact_template_hint_for_prompt(resolved_template_hint)}
 """
 
     skipped_block = "\n".join(
@@ -2863,6 +2964,7 @@ Rules:
 11. If this is not the first batch, continue the same file naturally and avoid repeating sections already covered in the current artifact.
 12. Do not emit a markdown heading that already exists in `current_artifact_headings` unless you are intentionally refining that exact section in place.
 13. Also avoid creating a new section whose body is semantically very close to any item in `current_artifact_section_summaries`, even if you change the heading wording.
+14. For design-assembler `detailed-design.md`, derive headings from the actual upstream artifacts summarized in the user prompt; do not create empty sections for artifact types that are absent from this workspace.
 """.strip()
 
 
@@ -2895,6 +2997,19 @@ def default_generate_artifact_for_output(
     requirement_digest = _read_workspace_text(artifacts_dir / workspace_paths["requirement_digest"])
     coverage_brief = _read_workspace_json(artifacts_dir / workspace_paths["coverage_brief"])
     observations_summary = _read_workspace_json(artifacts_dir / workspace_paths["grounded_observations_summary"])
+    workspace_index = _read_workspace_json(artifacts_dir / workspace_paths["workspace_index"])
+    upstream_artifacts = workspace_index.get("upstream_artifacts") if isinstance(workspace_index, dict) else {}
+    if not isinstance(upstream_artifacts, dict):
+        upstream_artifacts = {}
+    actual_workspace_artifacts = _build_actual_workspace_artifact_summaries(
+        artifacts_dir,
+        {
+            str(owner): [str(item) for item in files if str(item).strip()]
+            for owner, files in upstream_artifacts.items()
+            if isinstance(files, list)
+        },
+        list(output_plan.get("selected_outputs") or []),
+    )
     current_artifact_path = artifacts_dir / target_file
     current_artifact = current_artifact_path.read_text(encoding="utf-8") if current_artifact_path.exists() else ""
     current_artifact_headings = _extract_markdown_heading_titles(current_artifact)[:16]
@@ -2921,6 +3036,14 @@ def default_generate_artifact_for_output(
                 max_string=1800,
             ),
             "coverage_brief": compact_coverage_brief,
+            "workspace_index": _summarize_value_for_prompt(
+                workspace_index,
+                max_depth=3,
+                max_string=240,
+                max_list_items=10,
+                max_dict_items=14,
+            ),
+            "actual_workspace_artifacts": actual_workspace_artifacts,
             "grounded_observations_summary": _compact_grounded_observations_summary_for_final_prompt(observations_summary),
             "current_artifact_headings": current_artifact_headings,
             "current_artifact_section_summaries": current_artifact_section_summaries,
@@ -3147,7 +3270,7 @@ def build_final_artifacts_prompt(
     """
     template_sections = []
     for file_name in expected_files:
-        template_content = templates.get(file_name, "")
+        template_content = _resolve_template_hint_for_target(capability, file_name, templates.get(file_name, ""))
         if template_content:
             template_sections.append(f"[{file_name}]\n{template_content}")
     
@@ -3179,7 +3302,7 @@ Requirements:
 1. Reflect only content supported by the observations.
 2. Use consistent naming conventions.
 3. Include enough structure for downstream consumers.
-4. Use the templates as style references.
+4. Use templates only as light style references; when actual workspace artifacts are available, their content and structure take precedence over template sections.
 5. {boundary_note}
 6. {opening_guardrail}
 7. Do not restate shared context or upstream artifacts verbatim; synthesize them and cite briefly when needed.
@@ -3256,12 +3379,14 @@ Scope boundary:
 Rules:
 1. The full requirement text is intentionally NOT embedded here. Start from the requirement digest and coverage brief, and only read the baseline file again if needed.
 2. Prefer reading `artifacts/{workspace_paths['workspace_index']}`, `artifacts/{workspace_paths['output_plan']}`, `artifacts/{workspace_paths['coverage_brief']}`, and `artifacts/{workspace_paths['requirement_digest']}` before writing.
+2a. If `workspace_index.actual_workspace_artifacts` is present, use it as the primary outline source and read only the listed upstream files that are relevant to the current artifact.
 3. Write final artifacts incrementally. One file at a time is preferred.
 4. Use only the write or validation tools that the runtime tool contract exposes for this expert.
 5. When multiple permitted write tools exist, prefer the narrowest one that preserves grounded structure.
 6. Batch only read-only actions. Never batch `write_file`, `append_file`, `upsert_markdown_sections`, or `patch_file`.
 7. For non-owner artifacts, start directly with expert-specific sections. Do not recreate generic background, scope, or goal sections from the digest.
 8. Do not copy large blocks from the requirement digest or upstream artifacts. Synthesize and cite them briefly.
+8a. For design-assembler `detailed-design.md`, create sections from the actual upstream artifacts that exist in this workspace; do not reproduce a static architecture/domain/API/data/test template when those artifacts are absent.
 9. Set `done=true` only when every expected artifact exists under `artifacts/` and is materially complete.
 
 Return JSON in artifacts.decision:
@@ -3410,7 +3535,7 @@ def default_next_react_decision(
     template_hints = {}
     for name, content in templates.items():
         if content:
-            template_hints[name.replace(".", "_")] = content
+            template_hints[name.replace(".", "_")] = _resolve_template_hint_for_target(capability, name, content)
     
     user_prompt = json.dumps(
         {
@@ -4898,6 +5023,15 @@ def _get_upstream_artifact_mapping() -> Dict[str, Dict[str, List[str]]]:
 
 
 def _discover_upstream_artifacts(capability: str, artifacts_dir: Path) -> Dict[str, List[str]]:
+    if capability == "design-assembler" and artifacts_dir.exists():
+        actual_files = sorted(
+            _normalize_relative_path(item.name)
+            for item in artifacts_dir.iterdir()
+            if item.is_file()
+            and item.name not in DESIGN_ASSEMBLER_OWN_OUTPUTS
+            and not item.name.startswith(".")
+        )
+        return {"actual_workspace": actual_files} if actual_files else {}
     return _discover_upstream_artifacts_from_profiles(capability, artifacts_dir)
 
 
