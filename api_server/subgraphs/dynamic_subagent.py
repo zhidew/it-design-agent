@@ -18,10 +18,12 @@ Usage:
 from __future__ import annotations
 
 import json
+import importlib.util
 import os
 import re
 from difflib import SequenceMatcher
 from pathlib import Path
+from types import ModuleType
 from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
 from graphs.tools.permissions import DEFAULT_READ_TOOLS, DEFAULT_WRITE_TOOLS, build_effective_tools
@@ -89,91 +91,6 @@ OUTPUT_MUST_COVER_LIMIT_BY_FILE = {
     ("integration-design", "asyncapi.yaml"): 4,
 }
 
-OUTPUT_PLAN_REQUIRED_MUST_COVER_GROUPS_BY_FILE: Dict[tuple[str, str], List[Dict[str, Any]]] = {
-    (
-        "design-assembler",
-        "detailed-design.md",
-    ): [
-        {
-            "label": "synthesis / 综合结论",
-            "keywords": [
-                "synthesis",
-                "synthesized",
-                "final design",
-                "design conclusion",
-                "core conclusion",
-                "综合",
-                "汇总",
-                "聚合",
-                "整合",
-                "最终设计",
-                "设计结论",
-                "核心设计结论",
-            ],
-        },
-        {
-            "label": "cross-artifact alignment / 跨产物一致性",
-            "keywords": [
-                "cross-artifact",
-                "alignment",
-                "consistency",
-                "conflict",
-                "gap",
-                "upstream artifact",
-                "跨产物",
-                "跨专家",
-                "一致性",
-                "对齐",
-                "冲突",
-                "缺口",
-                "上游产物",
-            ],
-        },
-        {
-            "label": "traceability / 追踪关系",
-            "keywords": [
-                "traceability",
-                "trace",
-                "source",
-                "requirement mapping",
-                "decision source",
-                "evidence",
-                "追踪",
-                "追溯",
-                "映射",
-                "来源",
-                "需求",
-                "关键决策",
-                "证据",
-            ],
-        },
-        {
-            "label": "residual risks and open questions / 残余风险和待确认项",
-            "keywords": [
-                "residual risk",
-                "risk",
-                "assumption",
-                "open question",
-                "unresolved",
-                "low confidence",
-                "待确认",
-                "待澄清",
-                "残余风险",
-                "风险",
-                "假设",
-                "未决",
-                "低置信",
-            ],
-        },
-    ],
-}
-
-DESIGN_ASSEMBLER_OWN_OUTPUTS = {
-    "detailed-design.md",
-    "implementation-plan.json",
-    "traceability.json",
-    "review-checklist.md",
-}
 TEXT_ARTIFACT_SUFFIXES = {
     ".md",
     ".txt",
@@ -184,6 +101,7 @@ TEXT_ARTIFACT_SUFFIXES = {
     ".csv",
     ".tsv",
 }
+_SKILL_RUNTIME_MODULE_CACHE: Dict[str, ModuleType] = {}
 
 SHARED_CONTEXT_OWNER_CAPABILITIES = {"modular-design", "design-assembler"}
 GENERIC_SHARED_CONTEXT_HEADING_MARKERS = (
@@ -355,6 +273,56 @@ def _normalize_relative_path(raw_path: str) -> str:
     return raw_path.strip().replace("\\", "/").lstrip("./")
 
 
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _load_skill_runtime_module(capability: str) -> Optional[ModuleType]:
+    """Load optional deterministic runtime hooks shipped with a skill."""
+    safe_capability = _normalize_relative_path(capability)
+    if not safe_capability or "/" in safe_capability or "\\" in safe_capability:
+        return None
+    skill_dir = _repo_root() / "skills" / safe_capability
+    candidates = [
+        skill_dir / "runtime.py",
+        skill_dir / "runtime" / "skill_runtime.py",
+        skill_dir / "runtime" / "design_assembly.py",
+    ]
+    runtime_path = next((path for path in candidates if path.exists() and path.is_file()), None)
+    if not runtime_path:
+        return None
+
+    cache_key = str(runtime_path)
+    cached = _SKILL_RUNTIME_MODULE_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    module_name = f"_skill_runtime_{re.sub(r'[^a-zA-Z0-9_]', '_', safe_capability)}"
+    spec = importlib.util.spec_from_file_location(module_name, runtime_path)
+    if spec is None or spec.loader is None:
+        return None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    _SKILL_RUNTIME_MODULE_CACHE[cache_key] = module
+    return module
+
+
+def _call_skill_runtime_hook(
+    capability: str,
+    hook_name: str,
+    *args: Any,
+    default: Any = None,
+    **kwargs: Any,
+) -> Any:
+    module = _load_skill_runtime_module(capability)
+    if module is None:
+        return default
+    hook = getattr(module, hook_name, None)
+    if not callable(hook):
+        return default
+    return hook(*args, **kwargs)
+
+
 def _normalize_signature_text(value: Any) -> str:
     text = str(value or "").strip().lower()
     text = re.sub(r"`[^`]+`", "<ref>", text)
@@ -450,12 +418,17 @@ def _match_output_candidate(raw_value: Any, candidate_outputs: List[str]) -> Opt
 
 
 def _default_must_cover_items_for_output(capability: str, target_file: str) -> List[str]:
-    basename = Path(_normalize_relative_path(target_file)).name
-    if capability == "design-assembler" and basename == "detailed-design.md":
-        return [
-            "聚合上游设计结论，覆盖跨产物一致性/冲突/缺口、需求与关键决策追踪，以及残余风险和待确认项。",
-        ]
+    runtime_default = _call_skill_runtime_hook(
+        capability,
+        "default_must_cover_items",
+        target_file=target_file,
+    )
+    if isinstance(runtime_default, list):
+        items = [str(item).strip() for item in runtime_default if str(item).strip()]
+        if items:
+            return items
 
+    basename = Path(_normalize_relative_path(target_file)).name
     suffix = Path(basename).suffix.lower()
     if suffix == ".md":
         return [
@@ -484,8 +457,13 @@ def _missing_required_must_cover_groups(
     must_cover_items: List[str],
 ) -> List[str]:
     basename = Path(_normalize_relative_path(target_file)).name
-    rules = OUTPUT_PLAN_REQUIRED_MUST_COVER_GROUPS_BY_FILE.get((capability, basename)) or []
-    if not rules:
+    rules = _call_skill_runtime_hook(
+        capability,
+        "required_must_cover_groups",
+        target_file=basename,
+        default=[],
+    )
+    if not isinstance(rules, list) or not rules:
         return []
 
     normalized_items = [_normalize_coverage_contract_text(item) for item in must_cover_items if str(item).strip()]
@@ -1735,6 +1713,7 @@ def _persist_workspace_snapshot(
     observations_summary_path = work_dir / "grounded-observations-summary.json"
     react_trace_path = work_dir / "react-trace.json"
     final_trace_path = work_dir / "finalization-trace.json"
+    assembly_plan_path = work_dir / "assembly-plan.json"
     workspace_index_path = work_dir / "workspace-index.json"
 
     requirement_digest_path.write_text(
@@ -1749,17 +1728,18 @@ def _persist_workspace_snapshot(
         ),
         encoding="utf-8",
     )
+    coverage_brief = _build_coverage_brief(
+        payload,
+        capability,
+        candidate_files,
+        expected_files,
+        candidate_output_files=candidate_output_files,
+        output_plan=output_plan,
+        agent_config=agent_config,
+    )
     coverage_brief_path.write_text(
         json.dumps(
-            _build_coverage_brief(
-                payload,
-                capability,
-                candidate_files,
-                expected_files,
-                candidate_output_files=candidate_output_files,
-                output_plan=output_plan,
-                agent_config=agent_config,
-            ),
+            coverage_brief,
             ensure_ascii=False,
             indent=2,
         ),
@@ -1799,6 +1779,19 @@ def _persist_workspace_snapshot(
         upstream_artifacts,
         expected_files,
     )
+    assembly_plan = _build_skill_workspace_plan(
+        capability=capability,
+        actual_workspace_artifacts=actual_workspace_artifacts,
+        output_plan=output_plan,
+        coverage_brief=coverage_brief,
+    )
+    assembly_plan_rel_path: Optional[str] = None
+    if assembly_plan.get("status") != "not_applicable":
+        assembly_plan_path.write_text(
+            json.dumps(_sanitize_prompt_payload(assembly_plan, project_root), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        assembly_plan_rel_path = _normalize_relative_path(str(assembly_plan_path.relative_to(artifacts_dir)))
 
     workspace_index = {
         "capability": capability,
@@ -1821,12 +1814,14 @@ def _persist_workspace_snapshot(
         "react_step_count": len(react_trace),
         "finalization_step_count": len(final_trace),
     }
+    if assembly_plan_rel_path:
+        workspace_index["assembly_plan_path"] = assembly_plan_rel_path
     workspace_index_path.write_text(
         json.dumps(_sanitize_prompt_payload(workspace_index, project_root), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
 
-    return {
+    workspace_paths = {
         "requirement_digest": _normalize_relative_path(str(requirement_digest_path.relative_to(artifacts_dir))),
         "coverage_brief": _normalize_relative_path(str(coverage_brief_path.relative_to(artifacts_dir))),
         "output_plan": _normalize_relative_path(str(output_plan_path.relative_to(artifacts_dir))),
@@ -1836,6 +1831,9 @@ def _persist_workspace_snapshot(
         "react_trace": _normalize_relative_path(str(react_trace_path.relative_to(artifacts_dir))),
         "finalization_trace": _normalize_relative_path(str(final_trace_path.relative_to(artifacts_dir))),
     }
+    if assembly_plan_rel_path:
+        workspace_paths["assembly_plan"] = assembly_plan_rel_path
+    return workspace_paths
 
 
 def _write_finalization_step_log(
@@ -2479,6 +2477,13 @@ def build_output_planning_prompt(
 Custom Instructions from SKILL.md:
 {prompt_instructions[:1200]}
 """
+    runtime_rule = _call_skill_runtime_hook(
+        capability,
+        "output_planning_rule",
+        candidate_outputs=candidate_outputs,
+        default="",
+    )
+    expert_rule = f"\n10. {runtime_rule}" if isinstance(runtime_rule, str) and runtime_rule.strip() else ""
 
     return f"""
 You are the {capability} output planner.
@@ -2501,7 +2506,7 @@ Rules:
 7. Respect the approximate per-file char budgets shown above when choosing scope and must-cover items.
 8. Avoid planning files that would all need the same background, scope, or generic requirement-overview sections; shared context should live in one concise place, not every deliverable.
 9. `must_cover_by_file` is a hard contract: every selected file must contain at least one concrete must-cover item, otherwise execution fails fast.
-10. If the expert is `design-assembler` and `detailed-design.md` is selected, must-cover items must stay inside the assembler boundary: synthesis / 综合结论, cross-artifact alignment / 跨产物一致性（含冲突和缺口）, traceability / 追踪关系, and residual risks or open questions / 残余风险和待确认项. Do not require domain-specific implementation details such as critical path, fallback, schema, API, test, or ops details unless they are already grounded in upstream artifacts. Use Simplified Chinese wording when the project language is Chinese.
+{expert_rule}
 
 Return JSON in artifacts.output_plan:
 {{
@@ -2667,6 +2672,45 @@ def _build_actual_workspace_artifact_summaries(
     return rows
 
 
+def _build_skill_workspace_plan(
+    *,
+    capability: str,
+    actual_workspace_artifacts: List[Dict[str, Any]],
+    output_plan: Dict[str, Any],
+    coverage_brief: Dict[str, Any],
+) -> Dict[str, Any]:
+    runtime_plan = _call_skill_runtime_hook(
+        capability,
+        "build_workspace_plan",
+        actual_workspace_artifacts=actual_workspace_artifacts,
+        output_plan=output_plan,
+        coverage_brief=coverage_brief,
+    )
+    if isinstance(runtime_plan, dict):
+        return runtime_plan
+
+    return {
+        "capability": capability,
+        "status": "not_applicable",
+        "selected_outputs": list(output_plan.get("selected_outputs") or []),
+    }
+
+
+def _build_design_assembly_plan(
+    *,
+    capability: str,
+    actual_workspace_artifacts: List[Dict[str, Any]],
+    output_plan: Dict[str, Any],
+    coverage_brief: Dict[str, Any],
+) -> Dict[str, Any]:
+    return _build_skill_workspace_plan(
+        capability=capability,
+        actual_workspace_artifacts=actual_workspace_artifacts,
+        output_plan=output_plan,
+        coverage_brief=coverage_brief,
+    )
+
+
 def _compact_requirement_digest_for_final_prompt(requirement_digest: str) -> str:
     if not requirement_digest.strip():
         return ""
@@ -2807,15 +2851,13 @@ def _build_generation_batches(target_file: str, output_plan: Dict[str, Any]) -> 
 
 
 def _resolve_template_hint_for_target(capability: str, target_file: str, template_hint: str) -> str:
-    basename = Path(_normalize_relative_path(target_file)).name
-    if capability == "design-assembler" and basename == "detailed-design.md":
-        return (
-            "Do not follow a fixed detailed-design table of contents. Build the section structure dynamically "
-            "from `actual_workspace_artifacts`, `workspace_index.upstream_artifacts`, and the output plan. "
-            "Only include sections for upstream artifact files that actually exist in this run; missing domains "
-            "must appear as gaps or open questions instead of empty template sections."
-        )
-    return template_hint
+    resolved = _call_skill_runtime_hook(
+        capability,
+        "resolve_template_hint",
+        target_file=target_file,
+        template_hint=template_hint,
+    )
+    return resolved if isinstance(resolved, str) else template_hint
 
 
 def _compact_template_hint_for_prompt(template_hint: str) -> str:
@@ -2899,6 +2941,17 @@ def build_targeted_artifact_prompt(
         if _owns_shared_context(capability, topic_ownership)
         else "Start directly with expert-specific sections. Do not open with a long project background or requirement overview."
     )
+    runtime_artifact_rule = _call_skill_runtime_hook(
+        capability,
+        "targeted_artifact_rule",
+        target_file=target_file,
+        default="",
+    )
+    expert_artifact_rule = (
+        f"\n14. {runtime_artifact_rule}"
+        if isinstance(runtime_artifact_rule, str) and runtime_artifact_rule.strip()
+        else ""
+    )
     batch_char_budget = total_char_budget if batch_total <= 1 else max(800, total_char_budget // max(1, batch_total))
     custom_section = ""
     if prompt_instructions:
@@ -2964,7 +3017,7 @@ Rules:
 11. If this is not the first batch, continue the same file naturally and avoid repeating sections already covered in the current artifact.
 12. Do not emit a markdown heading that already exists in `current_artifact_headings` unless you are intentionally refining that exact section in place.
 13. Also avoid creating a new section whose body is semantically very close to any item in `current_artifact_section_summaries`, even if you change the heading wording.
-14. For design-assembler `detailed-design.md`, derive headings from the actual upstream artifacts summarized in the user prompt; do not create empty sections for artifact types that are absent from this workspace.
+{expert_artifact_rule}
 """.strip()
 
 
@@ -2998,6 +3051,8 @@ def default_generate_artifact_for_output(
     coverage_brief = _read_workspace_json(artifacts_dir / workspace_paths["coverage_brief"])
     observations_summary = _read_workspace_json(artifacts_dir / workspace_paths["grounded_observations_summary"])
     workspace_index = _read_workspace_json(artifacts_dir / workspace_paths["workspace_index"])
+    assembly_plan_path = workspace_paths.get("assembly_plan")
+    assembly_plan = _read_workspace_json(artifacts_dir / assembly_plan_path) if assembly_plan_path else {}
     upstream_artifacts = workspace_index.get("upstream_artifacts") if isinstance(workspace_index, dict) else {}
     if not isinstance(upstream_artifacts, dict):
         upstream_artifacts = {}
@@ -3040,6 +3095,13 @@ def default_generate_artifact_for_output(
                 workspace_index,
                 max_depth=3,
                 max_string=240,
+                max_list_items=10,
+                max_dict_items=14,
+            ),
+            "assembly_plan": _summarize_value_for_prompt(
+                assembly_plan,
+                max_depth=4,
+                max_string=420,
                 max_list_items=10,
                 max_dict_items=14,
             ),
@@ -3333,9 +3395,24 @@ def build_finalization_system_prompt(
     expected_block = "\n".join(f"- {file_name}" for file_name in expected_files)
     shared_context_block = _build_shared_context_prompt_block(capability, topic_ownership)
     boundary_note = _scope_boundary_note(capability, agent_config=agent_config, runtime_profile=runtime_profile)
-    workspace_block = "\n".join(
+    runtime_finalization_rule = _call_skill_runtime_hook(
+        capability,
+        "finalization_rule",
+        workspace_paths=workspace_paths,
+        default="",
+    )
+    expert_finalization_rule = (
+        f"\n8a. {runtime_finalization_rule}"
+        if isinstance(runtime_finalization_rule, str) and runtime_finalization_rule.strip()
+        else ""
+    )
+    workspace_lines = [
+        f"- workspace index: artifacts/{workspace_paths['workspace_index']}",
+    ]
+    if workspace_paths.get("assembly_plan"):
+        workspace_lines.append(f"- assembly plan: artifacts/{workspace_paths['assembly_plan']}")
+    workspace_lines.extend(
         [
-            f"- workspace index: artifacts/{workspace_paths['workspace_index']}",
             f"- requirement digest: artifacts/{workspace_paths['requirement_digest']}",
             f"- coverage brief: artifacts/{workspace_paths['coverage_brief']}",
             f"- output plan: artifacts/{workspace_paths['output_plan']}",
@@ -3345,6 +3422,7 @@ def build_finalization_system_prompt(
             f"- finalization trace: artifacts/{workspace_paths['finalization_trace']}",
         ]
     )
+    workspace_block = "\n".join(workspace_lines)
     custom_section = ""
     if prompt_instructions:
         custom_section = f"""
@@ -3378,15 +3456,15 @@ Scope boundary:
 
 Rules:
 1. The full requirement text is intentionally NOT embedded here. Start from the requirement digest and coverage brief, and only read the baseline file again if needed.
-2. Prefer reading `artifacts/{workspace_paths['workspace_index']}`, `artifacts/{workspace_paths['output_plan']}`, `artifacts/{workspace_paths['coverage_brief']}`, and `artifacts/{workspace_paths['requirement_digest']}` before writing.
-2a. If `workspace_index.actual_workspace_artifacts` is present, use it as the primary outline source and read only the listed upstream files that are relevant to the current artifact.
+2. Prefer reading `artifacts/{workspace_paths['workspace_index']}`, `artifacts/{workspace_paths.get('assembly_plan') or workspace_paths['output_plan']}`, `artifacts/{workspace_paths['coverage_brief']}`, and `artifacts/{workspace_paths['requirement_digest']}` before writing.
+2a. If a skill-owned workspace plan such as `assembly-plan.json` exists, treat it as the primary expert-specific contract and use `workspace_index.actual_workspace_artifacts` only to drill into listed source files when the plan needs more detail.
 3. Write final artifacts incrementally. One file at a time is preferred.
 4. Use only the write or validation tools that the runtime tool contract exposes for this expert.
 5. When multiple permitted write tools exist, prefer the narrowest one that preserves grounded structure.
 6. Batch only read-only actions. Never batch `write_file`, `append_file`, `upsert_markdown_sections`, or `patch_file`.
 7. For non-owner artifacts, start directly with expert-specific sections. Do not recreate generic background, scope, or goal sections from the digest.
 8. Do not copy large blocks from the requirement digest or upstream artifacts. Synthesize and cite them briefly.
-8a. For design-assembler `detailed-design.md`, create sections from the actual upstream artifacts that exist in this workspace; do not reproduce a static architecture/domain/API/data/test template when those artifacts are absent.
+{expert_finalization_rule}
 9. Set `done=true` only when every expected artifact exists under `artifacts/` and is materially complete.
 
 Return JSON in artifacts.decision:
@@ -5023,15 +5101,17 @@ def _get_upstream_artifact_mapping() -> Dict[str, Dict[str, List[str]]]:
 
 
 def _discover_upstream_artifacts(capability: str, artifacts_dir: Path) -> Dict[str, List[str]]:
-    if capability == "design-assembler" and artifacts_dir.exists():
-        actual_files = sorted(
-            _normalize_relative_path(item.name)
-            for item in artifacts_dir.iterdir()
-            if item.is_file()
-            and item.name not in DESIGN_ASSEMBLER_OWN_OUTPUTS
-            and not item.name.startswith(".")
-        )
-        return {"actual_workspace": actual_files} if actual_files else {}
+    discovered = _call_skill_runtime_hook(
+        capability,
+        "discover_upstream_artifacts",
+        artifacts_dir=artifacts_dir,
+    )
+    if isinstance(discovered, dict):
+        return {
+            str(owner): [_normalize_relative_path(str(item)) for item in files]
+            for owner, files in discovered.items()
+            if isinstance(files, list)
+        }
     return _discover_upstream_artifacts_from_profiles(capability, artifacts_dir)
 
 

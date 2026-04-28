@@ -71,6 +71,7 @@ keywords:
 - 模板参考 `assets/templates/` 下本专家对应模板与结构示例，不在此重复声明 canonical 输出文件名。
 - 上游输入来自 runtime 选中的活动专家产物，应保留来源可追溯性。
 - 详细设计必须是“聚合与对齐”结果，而不是绕过上游专家重新发明设计。
+- 确定性聚合辅助逻辑位于 `runtime/design_assembly.py`，用于发现实际上游产物、构建 `assembly-plan.json` 和覆盖 `detailed-design.md` 的动态结构提示。
 
 # 注意事项 (Notes)
 
