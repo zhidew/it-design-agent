@@ -785,9 +785,20 @@ def _build_legacy_task_queue(project_id: str, version: str) -> list[dict]:
 
     validator_status = "todo"
     val_log_path = logs_dir / "validator.log"
+    validator_report_path = project_root / "artifacts" / "validation-report.md"
+    validator_evidence_path = project_root / "evidence" / "validator.json"
+    validator_reasoning_path = logs_dir / "validator-reasoning.md"
     if val_log_path.exists():
         content = val_log_path.read_text(encoding="utf-8")
         validator_status = "success" if "[SUCCESS]" in content else "failed"
+    elif validator_report_path.exists() and validator_evidence_path.exists():
+        validator_status = "success"
+    elif validator_evidence_path.exists() or validator_reasoning_path.exists():
+        try:
+            evidence = json.loads(validator_evidence_path.read_text(encoding="utf-8")) if validator_evidence_path.exists() else {}
+            validator_status = "failed" if evidence.get("failure_reason") else "success"
+        except Exception:
+            validator_status = "failed"
 
     # Build task map dynamically from registry
     expert_outputs = _get_registry_expert_outputs()

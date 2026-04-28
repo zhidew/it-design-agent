@@ -23,9 +23,17 @@ const AGENT_MAPPING: Record<string, string[]> = {
   'test-design': ['test-strategy-design.md', 'test-solution-design.md'],
   'ops-design': ['slo.yaml', 'observability-spec.yaml', 'deployment-runbook.md'],
   'design-assembler': ['detailed-design.md', 'traceability.json', 'review-checklist.md'],
-  // validator 使用独立的报告展示逻辑，不走产物清单
-  validator: [],
+  validator: ['validation-report.md', 'validator-findings.json', 'validator.json', 'validator-reasoning.md'],
 };
+
+const VALIDATOR_ARTIFACT_ORDER = [
+  'validation-report.md',
+  'validator-findings.json',
+  'validator.json',
+  'validator-reasoning.md',
+];
+
+const normalizeArtifactPattern = (value: string) => value.replace(/^(?:artifacts|evidence|logs|release)\//, '');
 
 type StreamStatus = 'idle' | 'connecting' | 'connected' | 'error';
 type RunStatus = 'scheduled' | 'queued' | 'running' | 'waiting_human' | 'success' | 'failed';
@@ -1394,23 +1402,45 @@ export function ProjectDetail() {
           ...(evidence.selected_outputs || []),
           ...(evidence.expected_files || []),
           ...(evidence.candidate_output_files || []),
-        ].filter((value, index, array) => Boolean(value) && array.indexOf(value) === index);
+        ]
+          .map((value) => normalizeArtifactPattern(value))
+          .filter((value, index, array) => Boolean(value) && array.indexOf(value) === index);
       } catch {
         evidencePatterns = [];
       }
     }
 
-    const patterns = evidencePatterns.length > 0 ? evidencePatterns : (AGENT_MAPPING[selectedNode] || []);
+    const mappedPatterns = AGENT_MAPPING[selectedNode] || [];
+    const patterns = selectedNode === 'validator'
+      ? [...evidencePatterns, ...mappedPatterns].filter((value, index, array) => Boolean(value) && array.indexOf(value) === index)
+      : (evidencePatterns.length > 0 ? evidencePatterns : mappedPatterns);
     if (patterns.length === 0) {
       return [];
     }
-    return Object.keys(artifacts).filter((filename) =>
+    const matchingArtifacts = Object.keys(artifacts).filter((filename) =>
       !filename.endsWith('-reasoning.md') && patterns.some(
         (pattern) => filename.startsWith(pattern) || filename === pattern ||
           (pattern === 'requirements.json' && filename.includes('requirements')) ||
           (selectedNode === 'planner' && (filename.includes('model') || filename.includes('lookup') || filename === 'original-requirements.md'))
       ),
     );
+
+    if (selectedNode !== 'validator') {
+      return matchingArtifacts;
+    }
+
+    const validatorArtifacts = [
+      ...matchingArtifacts,
+      ...Object.keys(artifacts).filter((filename) => filename === 'validator-reasoning.md'),
+    ].filter((value, index, array) => array.indexOf(value) === index);
+
+    return validatorArtifacts.sort((left, right) => {
+      const leftIndex = VALIDATOR_ARTIFACT_ORDER.indexOf(left);
+      const rightIndex = VALIDATOR_ARTIFACT_ORDER.indexOf(right);
+      const normalizedLeft = leftIndex === -1 ? Number.MAX_SAFE_INTEGER : leftIndex;
+      const normalizedRight = rightIndex === -1 ? Number.MAX_SAFE_INTEGER : rightIndex;
+      return normalizedLeft - normalizedRight || left.localeCompare(right);
+    });
   }, [selectedNode, artifacts]);
 
   const executionEntries = useMemo<ExecutionLogEntry[]>(() => {
@@ -1493,8 +1523,13 @@ export function ProjectDetail() {
       return [artifacts['planner-reasoning.md']];
     }
 
-    if (selectedNode === 'validator' && artifacts['validator.log']) {
-      return [artifacts['validator.log']];
+    if (selectedNode === 'validator') {
+      if (artifacts['validator-reasoning.md']) {
+        return [artifacts['validator-reasoning.md']];
+      }
+      if (artifacts['validator.log']) {
+        return [artifacts['validator.log']];
+      }
     }
 
     return [];
@@ -1871,13 +1906,18 @@ export function ProjectDetail() {
       return;
     }
 
+    if (selectedNode === 'validator' && (!selectedFile || !filteredArtifacts.includes(selectedFile))) {
+      setSelectedFile(filteredArtifacts[0]);
+      return;
+    }
+
     // Default selection disabled to hide preview by default
     /*
     if (!selectedFile || !filteredArtifacts.includes(selectedFile)) {
       setSelectedFile(filteredArtifacts[0]);
     }
     */
-  }, [filteredArtifacts, selectedFile]);
+  }, [filteredArtifacts, selectedFile, selectedNode]);
 
   const renderUploadBtn = (type: InputFile['type'], label: string, icon: React.ReactNode, required: boolean = false) => {
     const hasFile = inputFiles.some(f => f.type === type);
@@ -2724,15 +2764,13 @@ export function ProjectDetail() {
               <div className="h-px flex-1 bg-gray-100" />
             </div>
 
-            {!isValidatorNode && (
-              <ArtifactViewer
-                artifacts={artifacts}
-                selectedFile={selectedFile}
-                onSelectFile={handleSelectFile}
-                filteredArtifacts={filteredArtifacts}
-                t={t}
-              />
-            )}
+            <ArtifactViewer
+              artifacts={artifacts}
+              selectedFile={selectedFile}
+              onSelectFile={handleSelectFile}
+              filteredArtifacts={filteredArtifacts}
+              t={t}
+            />
           </section>
 
           <section className="bg-white rounded-3xl border border-gray-100 shadow-sm p-8 space-y-4">
