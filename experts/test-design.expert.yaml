@@ -2,15 +2,15 @@ name: Test Design Expert
 name_en: Test Design Expert
 name_zh: 测试设计专家
 capability: test-design
-description: 负责基于 IR 颗粒度输出测试策略设计与测试方案设计，并判断当前 IR 颗粒度是否适中；默认先做策略设计，再基于策略结果做方案设计，若已有可复用策略则允许只输出测试方案设计。
+description: 负责基于当前输入需求/需求条目的颗粒度输出测试策略设计与测试方案设计，并判断其边界是否适中；默认先做策略设计，再基于策略结果做方案设计，若已有可复用策略则允许只输出测试方案设计。IR 只是运行时输入来源标签，不应成为对用户追问的理由。
 version: 0.3.0
 skills:
   - test-design
 keywords:
   - 测试策略
   - 测试方案
-  - IR测试设计
-  - IR颗粒度
+  - 需求级测试设计
+  - 需求颗粒度
   - 测试策略设计
   - 测试方案设计
   - 策略复用
@@ -80,7 +80,7 @@ interaction:
 metadata:
   boundary_contract:
     owns:
-      - IR-level test strategy design, test solution design, verification themes, strategy reuse assessment, and IR granularity assessment
+      - requirement-level test strategy design, test solution design, verification themes, strategy reuse assessment, and requirement granularity assessment
       - test strategy design must come before test solution design unless an applicable existing strategy is explicitly reused and cited
     excludes:
       - test case steps, equivalence-class enumeration, boundary-value listings, automation scripts, or redesign of architecture, domain, API, integration, data, config, or ops artifacts
@@ -115,18 +115,18 @@ metadata:
       - regression
   prompt_hints:
     file_guidance:
-      test-strategy-design.md: 先判断 IR 颗粒度和策略复用关系，再定义测试目标、范围、层级、优先级、风险、进入/退出准则。
+      test-strategy-design.md: 先判断当前输入需求/需求条目的颗粒度和策略复用关系，再定义测试目标、范围、层级、优先级、风险、进入/退出准则。
       test-solution-design.md: 基于策略结果组织验证主题、回归影响面、非功能关注点、数据/环境/观测方案，不展开测试用例步骤。
-    default_file_guidance: 聚焦 IR 级测试策略与测试方案设计，禁止下钻到测试用例步骤、等价类表或边界值枚举。
+    default_file_guidance: 聚焦需求级测试策略与测试方案设计；IR 只是输入材料标签，若基线需求已存在，不要请求用户再次提供 IR 内容。禁止下钻到测试用例步骤、等价类表或边界值枚举。
   delivery_contract:
     must_answer:
-      - 当前 IR 的颗粒度是否适中，是否需要拆分、并入或保持当前边界。
-      - 当前 IR 是否需要新增测试策略设计；若不需要，复用哪份既有策略以及它的适用边界是什么。
+      - 当前输入需求/需求条目的颗粒度是否适中，是否需要拆分、并入或保持当前边界。
+      - 当前输入需求/需求条目是否需要新增测试策略设计；若不需要，复用哪份既有策略以及它的适用边界是什么。
       - 测试策略设计是否明确测试目标、范围边界、风险优先级、测试层级和进入/退出准则。
       - 测试方案设计是否基于策略设计结果展开，并说明验证主题簇、回归影响面、非功能关注点，以及数据/环境/观测方案。
     evidence_expectations:
       - 若只输出 test-solution-design.md，必须引用既有测试策略来源并解释继承关系。
-      - 测试方案设计必须回指 IR 验收项与上游设计事实，禁止直接展开为测试用例步骤、等价类明细或边界值枚举。
+      - 测试方案设计必须回指需求验收项与上游设计事实，禁止直接展开为测试用例步骤、等价类明细或边界值枚举。
     artifact_review_checklist:
       test-strategy-design.md:
         - 需要明确是新增策略、复用既有策略还是维持现状，并说明判定依据。

@@ -178,7 +178,11 @@
     },
     "waitingHuman": {
       "sessionTitle": "Clarification Session",
+      "requirementSessionTitle": "Requirement clarification session",
+      "designSessionTitle": "Design clarification session",
+      "reviewTitle": "Design result confirmation",
       "sessionDescription": "The system is waiting for additional human input or planning confirmation. Review the current question, prior rounds, and the confirmed requirement summary.",
+      "reviewDescription": "The system is waiting for your confirmation. Continue when no changes are needed, or enter feedback to request an adjustment.",
       "currentQuestion": "Current question",
       "expertSelectionCurrentQuestion": "Expert confirmation",
       "confirmedRequirements": "Confirmed requirement summary",
@@ -200,10 +204,10 @@
       "additionalDetails": "Additional details (optional)",
       "optionalDetails": "Additional details (optional)",
       "revisionFeedback": "Revision feedback",
-      "revisionFeedbackOnly": "Revision feedback (only for revise and retry)",
-      "approveDisabledWithFeedback": "Revision feedback is filled in. Click Revise Retry, or clear the feedback before approving.",
+      "revisionFeedbackOnly": "Revision feedback (for requested changes)",
+      "approveDisabledWithFeedback": "Revision feedback is filled in. Click Submit Feedback, or clear the feedback before choosing Continue Without Changes.",
       "clarificationPlaceholder": "If none of the options fit, explain your answer here. You can also add constraints, scope, or business context.",
-      "revisionPlaceholder": "To request changes, enter feedback and click Revise Retry. To continue without changes, leave this blank and click Approve Continue.",
+      "revisionPlaceholder": "To request changes, enter feedback and click Submit Feedback. To continue without changes, leave this blank and click Continue Without Changes.",
       "expertSelectionTitle": "Confirm participating experts",
       "expertSelectionDescription": "Review the experts for this run. Before execution starts, you can add experts or uncheck selected ones.",
       "plannerRecommendedExperts": "Planner recommended experts",
@@ -224,8 +228,8 @@
       "submitAnswer": "Submit Answer",
       "confirmExperts": "Confirm Experts",
       "approving": "Approving...",
-      "approveContinue": "Approve Continue",
-      "reviseRetry": "Revise Retry"
+      "approveContinue": "Continue Without Changes",
+      "reviseRetry": "Submit Feedback"
     },
     "schedule": {
       "open": "Schedule design start",

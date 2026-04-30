@@ -1,8 +1,8 @@
-# IR级测试方案设计 (IR Test Solution Design)
+# 需求级测试方案设计 (Requirement-Level Test Solution Design)
 
 > **RR 标识**: {{rr_id}}
-> **IR 标识**: {{ir_id}}
-> **IR 名称**: {{ir_name}}
+> **需求标识**: {{ir_id}}
+> **需求名称**: {{ir_name}}
 > **策略来源**: {{strategy_source}}
 
 ## 1. 方案前提与策略继承
@@ -16,16 +16,16 @@
 | 继承的退出准则 | {{inherited_exit_criteria}} |
 | 不适用的策略项 | {{non_applicable_strategy_items}} |
 
-## 2. 当前 IR 测试方案范围
+## 2. 当前需求测试方案范围
 
 - In Scope：{{in_scope}}
 - Out of Scope：{{out_of_scope}}
-- 当前 IR 关键风险：{{key_risks}}
+- 当前需求关键风险：{{key_risks}}
 - 回归影响面：{{regression_impact}}
 
 ## 3. 验证主题与方案编排
 
-| 验证单元 | 验证主题 | 覆盖的 IR 验收项 | 继承的策略约束 | 上游依据 | 优先级 | 测试层级 |
+| 验证单元 | 验证主题 | 覆盖的需求验收项 | 继承的策略约束 | 上游依据 | 优先级 | 测试层级 |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | `VU-01` | {{verification_theme_1}} | {{acceptance_refs_1}} | {{strategy_refs_1}} | {{upstream_refs_1}} | P0 | {{test_layers_1}} |
 | `VU-02` | {{verification_theme_2}} | {{acceptance_refs_2}} | {{strategy_refs_2}} | {{upstream_refs_2}} | P1 | {{test_layers_2}} |
@@ -47,7 +47,7 @@
 
 ## 6. 前提、假设与缺口
 
-- 当前 IR 边界假设：{{ir_boundary_assumption}}
+- 当前需求边界假设：{{ir_boundary_assumption}}
 - 策略复用说明：{{strategy_reuse_note}}
 - 上游缺口：{{upstream_gaps}}
 - 暂不覆盖项：{{deferred_items}}

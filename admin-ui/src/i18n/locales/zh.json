@@ -178,7 +178,11 @@
     },
     "waitingHuman": {
       "sessionTitle": "需求澄清会话",
+      "requirementSessionTitle": "需求澄清会话",
+      "designSessionTitle": "设计澄清会话",
+      "reviewTitle": "设计结果确认",
       "sessionDescription": "系统正在等待人工补充信息或确认规划结果。你可以查看当前问题、历史问答，以及已确认的需求摘要。",
+      "reviewDescription": "系统正在等待你确认当前结果。无需修改时直接继续；需要调整时填写意见并提交。",
       "currentQuestion": "当前问题",
       "expertSelectionCurrentQuestion": "专家确认",
       "confirmedRequirements": "已确认需求摘要",
@@ -200,10 +204,10 @@
       "additionalDetails": "补充说明（可选）",
       "optionalDetails": "补充说明（可选）",
       "revisionFeedback": "修改意见",
-      "revisionFeedbackOnly": "修改意见（仅用于修改后重试）",
-      "approveDisabledWithFeedback": "已填写修改意见。请点击“修改后重试”，或清空修改意见后再批准继续。",
+      "revisionFeedbackOnly": "修改意见（需要调整时填写）",
+      "approveDisabledWithFeedback": "已填写修改意见。请点击“提交修改意见”，或清空修改意见后选择“无需修改，继续执行”。",
       "clarificationPlaceholder": "如果没有合适的选项，请在此处说明。您也可以补充约束条件、范围或业务上下文。",
-      "revisionPlaceholder": "如需修改，请填写意见后点击“修改后重试”；如无需修改，请留空并点击“批准继续”。",
+      "revisionPlaceholder": "如需调整，请填写意见后点击“提交修改意见”；如无需修改，请留空并点击“无需修改，继续执行”。",
       "expertSelectionTitle": "确认参与专家",
       "expertSelectionDescription": "请确认本次参与执行的专家。开始执行前，您可以补充专家或取消勾选。",
       "plannerRecommendedExperts": "规划器推荐专家",
@@ -224,8 +228,8 @@
       "submitAnswer": "提交回答",
       "confirmExperts": "确认专家",
       "approving": "审批中...",
-      "approveContinue": "批准继续",
-      "reviseRetry": "修改后重试"
+      "approveContinue": "无需修改，继续执行",
+      "reviseRetry": "提交修改意见"
     },
     "schedule": {
       "open": "预约启动设计",

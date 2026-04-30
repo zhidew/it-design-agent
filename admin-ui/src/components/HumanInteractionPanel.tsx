@@ -102,6 +102,7 @@ export function HumanInteractionPanel({
   const isSchemaNumber = schemaType === 'number';
   const isSchemaArtifactConfirm = schemaType === 'artifact_confirm';
   const isReviewInterrupt = !isClarificationInterrupt && !isPlannerExpertSelectionInterrupt;
+  const isRequirementClarification = currentInteraction?.scope === 'requirement_clarification' || currentNode === 'requirement_clarifier';
   const hasRevisionFeedback = reviewFeedback.trim().length > 0;
   const hasClarificationOptions = isClarificationInterrupt
     && !isPlannerExpertSelectionInterrupt
@@ -130,6 +131,18 @@ export function HumanInteractionPanel({
   const freeTextPlaceholder = isPlannerExpertSelectionInterrupt
     ? t('projectDetail.waitingHuman.expertSelectionNotePlaceholder')
     : t('projectDetail.waitingHuman.clarificationPlaceholder');
+  const panelTitle = isPlannerExpertSelectionInterrupt
+    ? t('projectDetail.waitingHuman.expertSelectionTitle')
+    : isReviewInterrupt
+      ? t('projectDetail.waitingHuman.reviewTitle')
+      : isRequirementClarification
+        ? t('projectDetail.waitingHuman.requirementSessionTitle')
+        : t('projectDetail.waitingHuman.designSessionTitle');
+  const panelDescription = isPlannerExpertSelectionInterrupt
+    ? t('projectDetail.waitingHuman.expertSelectionDescription')
+    : isReviewInterrupt
+      ? t('projectDetail.waitingHuman.reviewDescription')
+      : t('projectDetail.waitingHuman.sessionDescription');
   const primaryOptionsLabel = isSchemaMultiSelect
     ? t('projectDetail.waitingHuman.primaryOptionsMulti')
     : t('projectDetail.waitingHuman.primaryOptions');
@@ -160,16 +173,10 @@ export function HumanInteractionPanel({
             {t('projectDetail.retry.waitingHuman')}
           </div>
           <h2 className="text-xl font-black tracking-tight text-amber-950">
-            {isPlannerExpertSelectionInterrupt
-              ? t('projectDetail.waitingHuman.expertSelectionTitle')
-              : t('projectDetail.waitingHuman.sessionTitle')}
+            {panelTitle}
           </h2>
           <p className="text-sm font-medium text-amber-900/80">
-            {latestQuestion || (
-              isPlannerExpertSelectionInterrupt
-                ? t('projectDetail.waitingHuman.expertSelectionDescription')
-                : t('projectDetail.waitingHuman.sessionDescription')
-            )}
+            {latestQuestion || panelDescription}
           </p>
         </div>
         <div className="flex flex-col items-end gap-2">

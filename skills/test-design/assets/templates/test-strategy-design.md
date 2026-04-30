@@ -1,15 +1,15 @@
-# IR级测试策略设计 (IR Test Strategy Design)
+# 需求级测试策略设计 (Requirement-Level Test Strategy Design)
 
 > **RR 标识**: {{rr_id}}
-> **IR 标识**: {{ir_id}}
-> **IR 名称**: {{ir_name}}
+> **需求标识**: {{ir_id}}
+> **需求名称**: {{ir_name}}
 > **策略结论**: {{strategy_decision}}
 
-## 1. IR 边界与颗粒度判断
+## 1. 需求边界与颗粒度判断
 
 | 维度 | 说明 |
 | :--- | :--- |
-| IR 目标 | {{ir_goal}} |
+| 需求目标 | {{ir_goal}} |
 | 颗粒度判断 | {{granularity_assessment}} |
 | 处置建议 | {{granularity_action}} |
 | 当前边界 | {{current_scope_boundary}} |

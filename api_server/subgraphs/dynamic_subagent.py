@@ -3136,6 +3136,32 @@ def default_generate_artifact_for_output(
     )
 
 
+def _is_requirement_content_request(question: str) -> bool:
+    normalized = re.sub(r"\s+", "", str(question or "").casefold())
+    if not normalized:
+        return False
+
+    chinese_markers = [
+        "提供具体的ir内容",
+        "提供ir内容",
+        "补充ir内容",
+        "填写ir内容",
+        "上传ir内容",
+        "提供具体需求内容",
+        "提供需求内容",
+        "补充需求内容",
+        "请提供具体的需求",
+        "请补充完整需求",
+    ]
+    if any(marker in normalized for marker in chinese_markers):
+        return True
+
+    english_text = str(question or "").casefold()
+    provide_pattern = r"\b(provide|share|upload|paste)\b.{0,40}\b(ir|requirement|requirements)\b.{0,40}\b(content|details|text)\b"
+    missing_pattern = r"\b(ir|requirement|requirements)\b.{0,40}\b(missing|not provided|absent|unavailable)\b"
+    return bool(re.search(provide_pattern, english_text) or re.search(missing_pattern, english_text))
+
+
 def build_react_system_prompt(
     capability: str,
     prompt_instructions: str,
@@ -3302,6 +3328,8 @@ Human-in-the-loop:
 {chr(10).join(interaction_lines)}
 - Put the chosen topic into `human_context.topic`, the preferred question type into `human_context.preferred_answer_type`, and the merge targets into `human_context.answer_merge_targets`.
 - Only use this when the gap cannot be resolved by reading available files or querying configured assets.
+- Never ask the human to provide the IR, requirement text, or "specific IR content" when candidate baseline files are available; read the baseline file first and continue from that context.
+- If requirement granularity or scope is imperfect but the baseline content exists, record the assumption or gap in the artifact instead of pausing for a generic IR-content request.
 - Do NOT set needs_human for minor uncertainties or nice-to-have details.
 - When needs_human is true, set done=true as well since execution must pause.
 """.strip()
@@ -4244,6 +4272,24 @@ async def run_dynamic_subagent(
             expert_needs_human = bool(decision.get("needs_human"))
             expert_question = str(decision.get("human_question") or "").strip()
             expert_context = decision.get("human_context") if isinstance(decision.get("human_context"), dict) else {}
+            if expert_needs_human and _is_requirement_content_request(expert_question) and candidate_files:
+                baseline_path = candidate_files[0]
+                history_updates.append(
+                    f"[{capability}] ReAct step {step}: suppressed generic requirement-content clarification; reading `{baseline_path}` instead."
+                )
+                decision["needs_human"] = False
+                decision["done"] = False
+                decision["actions"] = [
+                    {
+                        "tool_name": "read_file_chunk",
+                        "tool_input": {
+                            "path": baseline_path,
+                            "start_line": 1,
+                            "end_line": 120,
+                        },
+                    }
+                ]
+                expert_needs_human = False
             if expert_needs_human and not expert_question:
                 expert_question = (
                     f"[{capability}] encountered an information gap during design that requires human clarification "
