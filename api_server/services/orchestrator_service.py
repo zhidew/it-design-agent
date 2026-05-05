@@ -14,7 +14,7 @@ import yaml
 from graphs.builder import CHECKPOINT_DB_PATH, CHECKPOINTS_DIR, create_design_graph
 from graphs.state import merge_artifacts
 from models.events import dump_event, validate_event_payload
-from services.log_service import get_run_log, save_run_log
+from services.log_service import format_run_log_entry, get_run_log, run_log_dedupe_key, save_run_log
 from services.db_service import JSON_UNSET, metadata_db
 from services.artifact_governance_runtime import finalize_expert_artifact_outputs
 from services.design_artifact_service import sync_artifacts_from_disk
@@ -1361,7 +1361,8 @@ def _coerce_event_output(output) -> dict:
 
 def _append_job_log(job_id: str, message: str, project_id: str | None = None, version: str | None = None):
     job = _ensure_job(job_id)
-    job["logs"].append(message)
+    log_entry = format_run_log_entry(message)
+    job["logs"].append(log_entry)
     
     # Try to persist log incrementally if we have project context
     try:
@@ -1377,7 +1378,7 @@ def _append_job_log(job_id: str, message: str, project_id: str | None = None, ve
             log_dir.mkdir(parents=True, exist_ok=True)
             log_file = log_dir / "orchestrator_run.log"
             with open(log_file, "a", encoding="utf-8") as f:
-                f.write(message + "\n")
+                f.write(log_entry + "\n")
     except Exception as e:
         # Ignore errors during incremental logging to avoid crashing the worker
         print(f"[Orchestrator] Failed to append log to disk: {e}")
@@ -2285,9 +2286,11 @@ async def run_orchestrator_task(
         # Merge memory logs and history, maintaining order but avoiding duplicates
         # Priority: Memory logs are more detailed (real-time), History are milestone-based
         combined_logs = list(mem_logs)
-        seen = set(combined_logs)
+        seen = {run_log_dedupe_key(log) for log in combined_logs}
         for h in history:
-            if h not in seen:
+            key = run_log_dedupe_key(h)
+            if key not in seen:
+                seen.add(key)
                 combined_logs.append(h)
         
         combined_logs = _filter_stale_planner_expert_selection_wait_logs(combined_logs, latest_state)
@@ -2605,7 +2608,9 @@ async def resume_workflow(project_id: str, version: str, human_input: dict):
             resume_action=action,
             feedback=normalized_feedback,
             persisted_state_override=resumed_state,
-            preflight_checked=False,
+            # The run already reached a human interrupt through real LLM calls.
+            # Avoid a second probe on resume that can diverge from the runtime model path.
+            preflight_checked=True,
         )
     )
     return True
@@ -3252,10 +3257,11 @@ def get_version_logs(project_id: str, version: str) -> list:
     live_logs = jobs.get(run_id, {}).get("logs", []) if run_id else []
 
     combined_logs = list(persisted_logs)
-    seen = set(combined_logs)
+    seen = {run_log_dedupe_key(log) for log in combined_logs}
     for log in live_logs:
-        if log not in seen:
-            seen.add(log)
+        key = run_log_dedupe_key(log)
+        if key not in seen:
+            seen.add(key)
             combined_logs.append(log)
     return _filter_stale_planner_expert_selection_wait_logs(combined_logs, current_state)
 

@@ -2,11 +2,37 @@ import os
 import json
 import datetime
 import hashlib
+import re
 from pathlib import Path
 
 # =====================================================================
 # 持久化日志存储功能
 # =====================================================================
+
+_RUN_LOG_TIMESTAMP_RE = re.compile(r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}\]\s+")
+
+
+def _get_run_log_timestamp() -> str:
+    """Generate a human-readable local timestamp for orchestrator_run.log."""
+    return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+
+
+def format_run_log_entry(message: str) -> str:
+    """
+    Prefix an orchestrator run log line with a timestamp unless it already has one.
+    """
+    text = str(message or "")
+    if _RUN_LOG_TIMESTAMP_RE.match(text):
+        return text
+    return f"[{_get_run_log_timestamp()}] {text}"
+
+
+def run_log_dedupe_key(message: str) -> str:
+    """
+    Return a stable comparison key so timestamped and legacy untimestamped
+    copies of the same log line are treated as duplicates.
+    """
+    return _RUN_LOG_TIMESTAMP_RE.sub("", str(message or ""), count=1)
 
 def save_run_log(project_id: str, version: str, base_dir: Path, logs: list):
     """
@@ -19,7 +45,7 @@ def save_run_log(project_id: str, version: str, base_dir: Path, logs: list):
         
         with open(log_file, "w", encoding="utf-8") as f:
             for log in logs:
-                f.write(log + "\n")
+                f.write(format_run_log_entry(log) + "\n")
         print(f"[LogService] Successfully saved {len(logs)} logs to {log_file}")
     except Exception as e:
         print(f"[LogService] Error saving logs: {e}")
