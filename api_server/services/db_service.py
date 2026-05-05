@@ -358,6 +358,251 @@ class MetadataDB:
             )
             conn.execute(
                 """
+                CREATE TABLE IF NOT EXISTS design_artifacts (
+                    artifact_id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    version_id TEXT NOT NULL,
+                    run_id TEXT,
+                    expert_id TEXT NOT NULL,
+                    artifact_type TEXT NOT NULL,
+                    artifact_version INTEGER NOT NULL DEFAULT 1,
+                    parent_artifact_id TEXT,
+                    status TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    file_name TEXT NOT NULL,
+                    file_path TEXT NOT NULL,
+                    content_hash TEXT NOT NULL,
+                    summary TEXT,
+                    source_refs_json TEXT,
+                    dependency_refs_json TEXT,
+                    decision_refs_json TEXT,
+                    reflection_report_id TEXT,
+                    consistency_report_id TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS design_artifact_events (
+                    event_id TEXT PRIMARY KEY,
+                    artifact_id TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    payload_json TEXT,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (artifact_id) REFERENCES design_artifacts(artifact_id) ON DELETE CASCADE
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS expert_reflection_reports (
+                    report_id TEXT PRIMARY KEY,
+                    artifact_id TEXT NOT NULL,
+                    expert_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    confidence REAL NOT NULL DEFAULT 0,
+                    checks_json TEXT,
+                    issues_json TEXT,
+                    assumptions_json TEXT,
+                    open_questions_json TEXT,
+                    required_actions_json TEXT,
+                    blocks_downstream INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (artifact_id) REFERENCES design_artifacts(artifact_id) ON DELETE CASCADE
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS system_consistency_reports (
+                    report_id TEXT PRIMARY KEY,
+                    artifact_id TEXT NOT NULL,
+                    project_id TEXT NOT NULL,
+                    version_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    checks_json TEXT,
+                    conflict_ids_json TEXT,
+                    suggested_actions_json TEXT,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (artifact_id) REFERENCES design_artifacts(artifact_id) ON DELETE CASCADE
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS context_conflicts (
+                    conflict_id TEXT PRIMARY KEY,
+                    report_id TEXT,
+                    project_id TEXT NOT NULL,
+                    version_id TEXT NOT NULL,
+                    artifact_id TEXT,
+                    conflict_type TEXT NOT NULL,
+                    semantic TEXT NOT NULL,
+                    severity TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    summary TEXT NOT NULL,
+                    evidence_refs_json TEXT,
+                    suggested_actions_json TEXT,
+                    decision_id TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (report_id) REFERENCES system_consistency_reports(report_id) ON DELETE CASCADE
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS decision_logs (
+                    decision_id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    version_id TEXT NOT NULL,
+                    scope TEXT NOT NULL,
+                    conflict_ids_json TEXT,
+                    decision TEXT NOT NULL,
+                    basis TEXT NOT NULL,
+                    authority TEXT NOT NULL,
+                    applies_to_json TEXT,
+                    evidence_refs_json TEXT,
+                    created_by TEXT,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS revision_sessions (
+                    revision_session_id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    version_id TEXT NOT NULL,
+                    target_artifact_id TEXT NOT NULL,
+                    target_expert_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    user_feedback TEXT,
+                    normalized_revision_request_json TEXT,
+                    conflict_report_id TEXT,
+                    decision_id TEXT,
+                    affected_artifacts_json TEXT,
+                    created_artifact_id TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (target_artifact_id) REFERENCES design_artifacts(artifact_id) ON DELETE CASCADE
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS revision_session_events (
+                    event_id TEXT PRIMARY KEY,
+                    revision_session_id TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    payload_json TEXT,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (revision_session_id) REFERENCES revision_sessions(revision_session_id) ON DELETE CASCADE
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS artifact_anchors (
+                    anchor_id TEXT PRIMARY KEY,
+                    artifact_id TEXT NOT NULL,
+                    file_name TEXT NOT NULL,
+                    anchor_type TEXT NOT NULL,
+                    label TEXT,
+                    text_excerpt TEXT NOT NULL,
+                    start_offset INTEGER NOT NULL,
+                    end_offset INTEGER NOT NULL,
+                    structural_path_json TEXT,
+                    content_hash TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (artifact_id) REFERENCES design_artifacts(artifact_id) ON DELETE CASCADE
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS artifact_dependency_edges (
+                    edge_id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    version_id TEXT NOT NULL,
+                    upstream_artifact_id TEXT NOT NULL,
+                    downstream_artifact_id TEXT NOT NULL,
+                    dependency_type TEXT NOT NULL,
+                    evidence_json TEXT,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (upstream_artifact_id) REFERENCES design_artifacts(artifact_id) ON DELETE CASCADE,
+                    FOREIGN KEY (downstream_artifact_id) REFERENCES design_artifacts(artifact_id) ON DELETE CASCADE
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS artifact_impact_records (
+                    impact_id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    version_id TEXT NOT NULL,
+                    source_artifact_id TEXT NOT NULL,
+                    impacted_artifact_id TEXT NOT NULL,
+                    impact_status TEXT NOT NULL,
+                    trigger_type TEXT NOT NULL,
+                    trigger_ref_id TEXT,
+                    reason TEXT NOT NULL,
+                    evidence_json TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (source_artifact_id) REFERENCES design_artifacts(artifact_id) ON DELETE CASCADE,
+                    FOREIGN KEY (impacted_artifact_id) REFERENCES design_artifacts(artifact_id) ON DELETE CASCADE
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS revision_patches (
+                    patch_id TEXT PRIMARY KEY,
+                    revision_session_id TEXT NOT NULL,
+                    artifact_id TEXT NOT NULL,
+                    anchor_id TEXT NOT NULL,
+                    scope TEXT NOT NULL,
+                    preserve_policy TEXT NOT NULL,
+                    patch_status TEXT NOT NULL,
+                    source_content_hash TEXT NOT NULL,
+                    allowed_range_json TEXT,
+                    diff_json TEXT,
+                    rationale TEXT,
+                    predicted_impact_json TEXT,
+                    created_artifact_id TEXT,
+                    apply_result_json TEXT,
+                    post_apply_content_hash TEXT,
+                    post_apply_validation_json TEXT,
+                    created_at TEXT NOT NULL,
+                    applied_at TEXT,
+                    FOREIGN KEY (revision_session_id) REFERENCES revision_sessions(revision_session_id) ON DELETE CASCADE,
+                    FOREIGN KEY (artifact_id) REFERENCES design_artifacts(artifact_id) ON DELETE CASCADE,
+                    FOREIGN KEY (anchor_id) REFERENCES artifact_anchors(anchor_id) ON DELETE CASCADE
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS artifact_section_reviews (
+                    section_review_id TEXT PRIMARY KEY,
+                    artifact_id TEXT NOT NULL,
+                    anchor_id TEXT,
+                    status TEXT NOT NULL,
+                    reviewer_note TEXT,
+                    revision_session_id TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (artifact_id) REFERENCES design_artifacts(artifact_id) ON DELETE CASCADE,
+                    FOREIGN KEY (anchor_id) REFERENCES artifact_anchors(anchor_id) ON DELETE SET NULL,
+                    FOREIGN KEY (revision_session_id) REFERENCES revision_sessions(revision_session_id) ON DELETE SET NULL
+                )
+                """
+            )
+            conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS scheduled_runs (
                     schedule_id TEXT PRIMARY KEY,
                     project_id TEXT NOT NULL,
@@ -398,6 +643,36 @@ class MetadataDB:
             )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_scheduled_runs_project_version ON scheduled_runs(project_id, version_id)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_design_artifacts_project_version ON design_artifacts(project_id, version_id, expert_id, updated_at)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_design_artifacts_file ON design_artifacts(project_id, version_id, file_path, artifact_version)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_system_consistency_reports_artifact ON system_consistency_reports(artifact_id, created_at)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_context_conflicts_project_version ON context_conflicts(project_id, version_id, status, severity)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_decision_logs_project_version ON decision_logs(project_id, version_id, created_at)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_revision_sessions_target ON revision_sessions(target_artifact_id, updated_at)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_artifact_dependency_edges_upstream ON artifact_dependency_edges(project_id, version_id, upstream_artifact_id)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_artifact_impact_records_source ON artifact_impact_records(project_id, version_id, source_artifact_id, impact_status)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_revision_patches_session ON revision_patches(revision_session_id, created_at)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_artifact_section_reviews_artifact ON artifact_section_reviews(artifact_id, status, updated_at)"
             )
             self._ensure_column(conn, "project_model_configs", "headers", "TEXT")
             self._ensure_column(conn, "workflow_runs", "pending_interrupt_json", "TEXT")
@@ -1321,6 +1596,1063 @@ class MetadataDB:
             for row in rows
         ]
 
+    def create_design_artifact(
+        self,
+        *,
+        artifact_id: str,
+        project_id: str,
+        version_id: str,
+        run_id: Optional[str],
+        expert_id: str,
+        artifact_type: str,
+        artifact_version: int,
+        parent_artifact_id: Optional[str],
+        status: str,
+        title: str,
+        file_name: str,
+        file_path: str,
+        content_hash: str,
+        summary: Optional[str] = None,
+        source_refs: Optional[List[Any]] = None,
+        dependency_refs: Optional[List[Any]] = None,
+        decision_refs: Optional[List[Any]] = None,
+        reflection_report_id: Optional[str] = None,
+        consistency_report_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        now = self._utcnow()
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO design_artifacts (
+                    artifact_id, project_id, version_id, run_id, expert_id, artifact_type,
+                    artifact_version, parent_artifact_id, status, title, file_name, file_path,
+                    content_hash, summary, source_refs_json, dependency_refs_json, decision_refs_json,
+                    reflection_report_id, consistency_report_id, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    artifact_id,
+                    project_id,
+                    version_id,
+                    run_id,
+                    expert_id,
+                    artifact_type,
+                    int(artifact_version or 1),
+                    parent_artifact_id,
+                    status,
+                    title,
+                    file_name,
+                    file_path,
+                    content_hash,
+                    summary or "",
+                    self._dumps_json(source_refs or []),
+                    self._dumps_json(dependency_refs or []),
+                    self._dumps_json(decision_refs or []),
+                    reflection_report_id,
+                    consistency_report_id,
+                    now,
+                    now,
+                ),
+            )
+            conn.commit()
+        return self.get_design_artifact(artifact_id) or {}
+
+    def update_design_artifact(
+        self,
+        artifact_id: str,
+        *,
+        status: Optional[str] = None,
+        reflection_report_id: Optional[str] = None,
+        consistency_report_id: Optional[str] = None,
+        decision_refs: Any = JSON_UNSET,
+    ) -> Optional[Dict[str, Any]]:
+        existing = self.get_design_artifact(artifact_id)
+        if not existing:
+            return None
+        effective_decision_refs = existing.get("decision_refs") if decision_refs is JSON_UNSET else (decision_refs or [])
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                UPDATE design_artifacts
+                SET status = ?,
+                    reflection_report_id = ?,
+                    consistency_report_id = ?,
+                    decision_refs_json = ?,
+                    updated_at = ?
+                WHERE artifact_id = ?
+                """,
+                (
+                    status or existing.get("status"),
+                    reflection_report_id if reflection_report_id is not None else existing.get("reflection_report_id"),
+                    consistency_report_id if consistency_report_id is not None else existing.get("consistency_report_id"),
+                    self._dumps_json(effective_decision_refs),
+                    self._utcnow(),
+                    artifact_id,
+                ),
+            )
+            conn.commit()
+        return self.get_design_artifact(artifact_id)
+
+    def get_design_artifact(self, artifact_id: str) -> Optional[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM design_artifacts WHERE artifact_id = ?",
+                (artifact_id,),
+            ).fetchone()
+        return self._row_to_design_artifact(dict(row)) if row else None
+
+    def get_latest_design_artifact_by_file(self, project_id: str, version_id: str, file_path: str) -> Optional[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM design_artifacts
+                WHERE project_id = ? AND version_id = ? AND file_path = ?
+                ORDER BY artifact_version DESC, updated_at DESC
+                LIMIT 1
+                """,
+                (project_id, version_id, file_path),
+            ).fetchone()
+        return self._row_to_design_artifact(dict(row)) if row else None
+
+    def list_design_artifacts(self, project_id: str, version_id: str, *, expert_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        query = """
+            SELECT * FROM design_artifacts
+            WHERE project_id = ? AND version_id = ?
+        """
+        params: List[Any] = [project_id, version_id]
+        if expert_id:
+            query += " AND expert_id = ?"
+            params.append(expert_id)
+        query += " ORDER BY updated_at DESC, artifact_version DESC"
+        with self._get_connection() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [self._row_to_design_artifact(dict(row)) for row in rows]
+
+    def append_design_artifact_event(
+        self,
+        *,
+        event_id: str,
+        artifact_id: str,
+        event_type: str,
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO design_artifact_events (
+                    event_id, artifact_id, event_type, payload_json, created_at
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (event_id, artifact_id, event_type, self._dumps_json(payload or {}), self._utcnow()),
+            )
+            conn.commit()
+
+    def upsert_artifact_dependency_edge(
+        self,
+        *,
+        edge_id: str,
+        project_id: str,
+        version_id: str,
+        upstream_artifact_id: str,
+        downstream_artifact_id: str,
+        dependency_type: str,
+        evidence: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        now = self._utcnow()
+        existing = None
+        with self._get_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM artifact_dependency_edges
+                WHERE project_id = ? AND version_id = ? AND upstream_artifact_id = ? AND downstream_artifact_id = ?
+                LIMIT 1
+                """,
+                (project_id, version_id, upstream_artifact_id, downstream_artifact_id),
+            ).fetchone()
+            existing = self._row_to_artifact_dependency_edge(dict(row)) if row else None
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO artifact_dependency_edges (
+                    edge_id, project_id, version_id, upstream_artifact_id, downstream_artifact_id,
+                    dependency_type, evidence_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    existing["edge_id"] if existing else edge_id,
+                    project_id,
+                    version_id,
+                    upstream_artifact_id,
+                    downstream_artifact_id,
+                    dependency_type,
+                    self._dumps_json(evidence or {}),
+                    existing["created_at"] if existing else now,
+                ),
+            )
+            conn.commit()
+        return self.get_artifact_dependency_edge(existing["edge_id"] if existing else edge_id) or {}
+
+    def get_artifact_dependency_edge(self, edge_id: str) -> Optional[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM artifact_dependency_edges WHERE edge_id = ?",
+                (edge_id,),
+            ).fetchone()
+        return self._row_to_artifact_dependency_edge(dict(row)) if row else None
+
+    def list_artifact_dependency_edges(
+        self,
+        *,
+        project_id: Optional[str] = None,
+        version_id: Optional[str] = None,
+        upstream_artifact_id: Optional[str] = None,
+        downstream_artifact_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        query = "SELECT * FROM artifact_dependency_edges WHERE 1 = 1"
+        params: List[Any] = []
+        if project_id:
+            query += " AND project_id = ?"
+            params.append(project_id)
+        if version_id:
+            query += " AND version_id = ?"
+            params.append(version_id)
+        if upstream_artifact_id:
+            query += " AND upstream_artifact_id = ?"
+            params.append(upstream_artifact_id)
+        if downstream_artifact_id:
+            query += " AND downstream_artifact_id = ?"
+            params.append(downstream_artifact_id)
+        query += " ORDER BY created_at DESC"
+        with self._get_connection() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [self._row_to_artifact_dependency_edge(dict(row)) for row in rows]
+
+    def create_artifact_impact_record(
+        self,
+        *,
+        impact_id: str,
+        project_id: str,
+        version_id: str,
+        source_artifact_id: str,
+        impacted_artifact_id: str,
+        impact_status: str,
+        trigger_type: str,
+        trigger_ref_id: Optional[str],
+        reason: str,
+        evidence: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        now = self._utcnow()
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO artifact_impact_records (
+                    impact_id, project_id, version_id, source_artifact_id, impacted_artifact_id,
+                    impact_status, trigger_type, trigger_ref_id, reason, evidence_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    impact_id,
+                    project_id,
+                    version_id,
+                    source_artifact_id,
+                    impacted_artifact_id,
+                    impact_status,
+                    trigger_type,
+                    trigger_ref_id,
+                    reason,
+                    self._dumps_json(evidence or {}),
+                    now,
+                    now,
+                ),
+            )
+            conn.commit()
+        return self.get_artifact_impact_record(impact_id) or {}
+
+    def get_artifact_impact_record(self, impact_id: str) -> Optional[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM artifact_impact_records WHERE impact_id = ?",
+                (impact_id,),
+            ).fetchone()
+        return self._row_to_artifact_impact_record(dict(row)) if row else None
+
+    def list_artifact_impact_records(
+        self,
+        *,
+        project_id: Optional[str] = None,
+        version_id: Optional[str] = None,
+        source_artifact_id: Optional[str] = None,
+        impacted_artifact_id: Optional[str] = None,
+        impact_status: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        query = "SELECT * FROM artifact_impact_records WHERE 1 = 1"
+        params: List[Any] = []
+        if project_id:
+            query += " AND project_id = ?"
+            params.append(project_id)
+        if version_id:
+            query += " AND version_id = ?"
+            params.append(version_id)
+        if source_artifact_id:
+            query += " AND source_artifact_id = ?"
+            params.append(source_artifact_id)
+        if impacted_artifact_id:
+            query += " AND impacted_artifact_id = ?"
+            params.append(impacted_artifact_id)
+        if impact_status:
+            query += " AND impact_status = ?"
+            params.append(impact_status)
+        query += " ORDER BY updated_at DESC, created_at DESC"
+        with self._get_connection() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [self._row_to_artifact_impact_record(dict(row)) for row in rows]
+
+    def create_expert_reflection_report(
+        self,
+        *,
+        report_id: str,
+        artifact_id: str,
+        expert_id: str,
+        status: str,
+        confidence: float,
+        checks: Dict[str, Any],
+        issues: List[Any],
+        assumptions: List[Any],
+        open_questions: List[Any],
+        required_actions: List[Any],
+        blocks_downstream: bool = False,
+    ) -> Dict[str, Any]:
+        now = self._utcnow()
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO expert_reflection_reports (
+                    report_id, artifact_id, expert_id, status, confidence, checks_json, issues_json,
+                    assumptions_json, open_questions_json, required_actions_json, blocks_downstream, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    report_id,
+                    artifact_id,
+                    expert_id,
+                    status,
+                    float(confidence or 0),
+                    self._dumps_json(checks or {}),
+                    self._dumps_json(issues or []),
+                    self._dumps_json(assumptions or []),
+                    self._dumps_json(open_questions or []),
+                    self._dumps_json(required_actions or []),
+                    1 if blocks_downstream else 0,
+                    now,
+                ),
+            )
+            conn.commit()
+        return self.get_expert_reflection_report(report_id) or {}
+
+    def get_expert_reflection_report(self, report_id: str) -> Optional[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM expert_reflection_reports WHERE report_id = ?",
+                (report_id,),
+            ).fetchone()
+        return self._row_to_reflection_report(dict(row)) if row else None
+
+    def get_reflection_report_for_artifact(self, artifact_id: str) -> Optional[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM expert_reflection_reports
+                WHERE artifact_id = ?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (artifact_id,),
+            ).fetchone()
+        return self._row_to_reflection_report(dict(row)) if row else None
+
+    def create_system_consistency_report(
+        self,
+        *,
+        report_id: str,
+        artifact_id: str,
+        project_id: str,
+        version_id: str,
+        status: str,
+        checks: List[Dict[str, Any]],
+        conflict_ids: List[str],
+        suggested_actions: List[str],
+    ) -> Dict[str, Any]:
+        now = self._utcnow()
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO system_consistency_reports (
+                    report_id, artifact_id, project_id, version_id, status,
+                    checks_json, conflict_ids_json, suggested_actions_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    report_id,
+                    artifact_id,
+                    project_id,
+                    version_id,
+                    status,
+                    self._dumps_json(checks or []),
+                    self._dumps_json(conflict_ids or []),
+                    self._dumps_json(suggested_actions or []),
+                    now,
+                ),
+            )
+            conn.commit()
+        return self.get_system_consistency_report(report_id) or {}
+
+    def update_system_consistency_report(
+        self,
+        report_id: str,
+        *,
+        conflict_ids: Optional[List[str]] = None,
+        suggested_actions: Optional[List[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        existing = self.get_system_consistency_report(report_id)
+        if not existing:
+            return None
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                UPDATE system_consistency_reports
+                SET conflict_ids_json = ?,
+                    suggested_actions_json = ?
+                WHERE report_id = ?
+                """,
+                (
+                    self._dumps_json(conflict_ids if conflict_ids is not None else existing.get("conflict_ids", [])),
+                    self._dumps_json(suggested_actions if suggested_actions is not None else existing.get("suggested_actions", [])),
+                    report_id,
+                ),
+            )
+            conn.commit()
+        return self.get_system_consistency_report(report_id)
+
+    def get_system_consistency_report(self, report_id: str) -> Optional[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM system_consistency_reports WHERE report_id = ?",
+                (report_id,),
+            ).fetchone()
+        return self._row_to_system_consistency_report(dict(row)) if row else None
+
+    def get_system_consistency_report_for_artifact(self, artifact_id: str) -> Optional[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM system_consistency_reports
+                WHERE artifact_id = ?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (artifact_id,),
+            ).fetchone()
+        return self._row_to_system_consistency_report(dict(row)) if row else None
+
+    def create_context_conflict(
+        self,
+        *,
+        conflict_id: str,
+        report_id: Optional[str],
+        project_id: str,
+        version_id: str,
+        artifact_id: Optional[str],
+        conflict_type: str,
+        semantic: str,
+        severity: str,
+        status: str,
+        summary: str,
+        evidence_refs: Optional[List[Any]] = None,
+        suggested_actions: Optional[List[str]] = None,
+        decision_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        now = self._utcnow()
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO context_conflicts (
+                    conflict_id, report_id, project_id, version_id, artifact_id,
+                    conflict_type, semantic, severity, status, summary,
+                    evidence_refs_json, suggested_actions_json, decision_id, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    conflict_id,
+                    report_id,
+                    project_id,
+                    version_id,
+                    artifact_id,
+                    conflict_type,
+                    semantic,
+                    severity,
+                    status,
+                    summary,
+                    self._dumps_json(evidence_refs or []),
+                    self._dumps_json(suggested_actions or []),
+                    decision_id,
+                    now,
+                    now,
+                ),
+            )
+            conn.commit()
+        return self.get_context_conflict(conflict_id) or {}
+
+    def get_context_conflict(self, conflict_id: str) -> Optional[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM context_conflicts WHERE conflict_id = ?",
+                (conflict_id,),
+            ).fetchone()
+        return self._row_to_context_conflict(dict(row)) if row else None
+
+    def list_context_conflicts(
+        self,
+        *,
+        project_id: Optional[str] = None,
+        version_id: Optional[str] = None,
+        report_id: Optional[str] = None,
+        artifact_id: Optional[str] = None,
+        status: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        query = "SELECT * FROM context_conflicts WHERE 1 = 1"
+        params: List[Any] = []
+        if project_id:
+            query += " AND project_id = ?"
+            params.append(project_id)
+        if version_id:
+            query += " AND version_id = ?"
+            params.append(version_id)
+        if report_id:
+            query += " AND report_id = ?"
+            params.append(report_id)
+        if artifact_id:
+            query += " AND artifact_id = ?"
+            params.append(artifact_id)
+        if status:
+            query += " AND status = ?"
+            params.append(status)
+        query += " ORDER BY created_at DESC"
+        with self._get_connection() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [self._row_to_context_conflict(dict(row)) for row in rows]
+
+    def create_decision_log(
+        self,
+        *,
+        decision_id: str,
+        project_id: str,
+        version_id: str,
+        scope: str,
+        conflict_ids: Optional[List[str]] = None,
+        decision: str,
+        basis: str,
+        authority: str,
+        applies_to: Optional[List[str]] = None,
+        evidence_refs: Optional[List[Dict[str, Any]]] = None,
+        created_by: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO decision_logs (
+                    decision_id, project_id, version_id, scope, conflict_ids_json,
+                    decision, basis, authority, applies_to_json, evidence_refs_json,
+                    created_by, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    decision_id,
+                    project_id,
+                    version_id,
+                    scope,
+                    self._dumps_json(conflict_ids or []),
+                    decision,
+                    basis,
+                    authority,
+                    self._dumps_json(applies_to or []),
+                    self._dumps_json(evidence_refs or []),
+                    created_by,
+                    self._utcnow(),
+                ),
+            )
+            conn.commit()
+        return self.get_decision_log(decision_id) or {}
+
+    def get_decision_log(self, decision_id: str) -> Optional[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM decision_logs WHERE decision_id = ?",
+                (decision_id,),
+            ).fetchone()
+        return self._row_to_decision_log(dict(row)) if row else None
+
+    def list_decision_logs(
+        self,
+        *,
+        project_id: Optional[str] = None,
+        version_id: Optional[str] = None,
+        scope: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        query = "SELECT * FROM decision_logs WHERE 1 = 1"
+        params: List[Any] = []
+        if project_id:
+            query += " AND project_id = ?"
+            params.append(project_id)
+        if version_id:
+            query += " AND version_id = ?"
+            params.append(version_id)
+        if scope:
+            query += " AND scope = ?"
+            params.append(scope)
+        query += " ORDER BY created_at DESC"
+        with self._get_connection() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [self._row_to_decision_log(dict(row)) for row in rows]
+
+    def list_decision_logs_for_conflict(self, conflict_id: str) -> List[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM decision_logs
+                WHERE conflict_ids_json LIKE ?
+                ORDER BY created_at DESC
+                """,
+                (f'%"{conflict_id}"%',),
+            ).fetchall()
+        return [self._row_to_decision_log(dict(row)) for row in rows]
+
+    def update_context_conflict(
+        self,
+        conflict_id: str,
+        *,
+        status: Optional[str] = None,
+        decision_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        existing = self.get_context_conflict(conflict_id)
+        if not existing:
+            return None
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                UPDATE context_conflicts
+                SET status = ?,
+                    decision_id = ?,
+                    updated_at = ?
+                WHERE conflict_id = ?
+                """,
+                (
+                    status or existing.get("status"),
+                    decision_id if decision_id is not None else existing.get("decision_id"),
+                    self._utcnow(),
+                    conflict_id,
+                ),
+            )
+            conn.commit()
+        return self.get_context_conflict(conflict_id)
+
+    def list_open_context_conflicts(self, project_id: str, version_id: str) -> List[Dict[str, Any]]:
+        return self.list_context_conflicts(project_id=project_id, version_id=version_id, status="open")
+
+    def create_revision_session(
+        self,
+        *,
+        revision_session_id: str,
+        project_id: str,
+        version_id: str,
+        target_artifact_id: str,
+        target_expert_id: str,
+        status: str,
+        user_feedback: str = "",
+    ) -> Dict[str, Any]:
+        now = self._utcnow()
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO revision_sessions (
+                    revision_session_id, project_id, version_id, target_artifact_id, target_expert_id,
+                    status, user_feedback, normalized_revision_request_json, affected_artifacts_json,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    revision_session_id,
+                    project_id,
+                    version_id,
+                    target_artifact_id,
+                    target_expert_id,
+                    status,
+                    user_feedback or "",
+                    self._dumps_json({}),
+                    self._dumps_json([]),
+                    now,
+                    now,
+                ),
+            )
+            conn.commit()
+        return self.get_revision_session(revision_session_id) or {}
+
+    def update_revision_session(
+        self,
+        revision_session_id: str,
+        *,
+        status: Optional[str] = None,
+        user_feedback: Optional[str] = None,
+        normalized_revision_request: Any = JSON_UNSET,
+        conflict_report_id: Optional[str] = None,
+        decision_id: Optional[str] = None,
+        affected_artifacts: Any = JSON_UNSET,
+        created_artifact_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        existing = self.get_revision_session(revision_session_id)
+        if not existing:
+            return None
+        effective_normalized = existing.get("normalized_revision_request") if normalized_revision_request is JSON_UNSET else (normalized_revision_request or {})
+        effective_affected = existing.get("affected_artifacts") if affected_artifacts is JSON_UNSET else (affected_artifacts or [])
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                UPDATE revision_sessions
+                SET status = ?,
+                    user_feedback = ?,
+                    normalized_revision_request_json = ?,
+                    conflict_report_id = ?,
+                    decision_id = ?,
+                    affected_artifacts_json = ?,
+                    created_artifact_id = ?,
+                    updated_at = ?
+                WHERE revision_session_id = ?
+                """,
+                (
+                    status or existing.get("status"),
+                    user_feedback if user_feedback is not None else existing.get("user_feedback"),
+                    self._dumps_json(effective_normalized),
+                    conflict_report_id if conflict_report_id is not None else existing.get("conflict_report_id"),
+                    decision_id if decision_id is not None else existing.get("decision_id"),
+                    self._dumps_json(effective_affected),
+                    created_artifact_id if created_artifact_id is not None else existing.get("created_artifact_id"),
+                    self._utcnow(),
+                    revision_session_id,
+                ),
+            )
+            conn.commit()
+        return self.get_revision_session(revision_session_id)
+
+    def get_revision_session(self, revision_session_id: str) -> Optional[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM revision_sessions WHERE revision_session_id = ?",
+                (revision_session_id,),
+            ).fetchone()
+        return self._row_to_revision_session(dict(row)) if row else None
+
+    def list_revision_sessions(
+        self,
+        *,
+        project_id: Optional[str] = None,
+        version_id: Optional[str] = None,
+        target_artifact_id: Optional[str] = None,
+        status: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        query = "SELECT * FROM revision_sessions WHERE 1 = 1"
+        params: List[Any] = []
+        if project_id:
+            query += " AND project_id = ?"
+            params.append(project_id)
+        if version_id:
+            query += " AND version_id = ?"
+            params.append(version_id)
+        if target_artifact_id:
+            query += " AND target_artifact_id = ?"
+            params.append(target_artifact_id)
+        if status:
+            query += " AND status = ?"
+            params.append(status)
+        query += " ORDER BY updated_at DESC, created_at DESC"
+        with self._get_connection() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [self._row_to_revision_session(dict(row)) for row in rows]
+
+    def append_revision_session_event(
+        self,
+        *,
+        event_id: str,
+        revision_session_id: str,
+        event_type: str,
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO revision_session_events (
+                    event_id, revision_session_id, event_type, payload_json, created_at
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (event_id, revision_session_id, event_type, self._dumps_json(payload or {}), self._utcnow()),
+            )
+            conn.commit()
+
+    def list_revision_session_events(self, revision_session_id: str) -> List[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM revision_session_events
+                WHERE revision_session_id = ?
+                ORDER BY created_at ASC
+                """,
+                (revision_session_id,),
+            ).fetchall()
+        return [
+            {
+                "event_id": row["event_id"],
+                "revision_session_id": row["revision_session_id"],
+                "event_type": row["event_type"],
+                "payload": self._loads_json(row["payload_json"], {}),
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
+
+    def create_artifact_anchor(
+        self,
+        *,
+        anchor_id: str,
+        artifact_id: str,
+        file_name: str,
+        anchor_type: str,
+        label: str,
+        text_excerpt: str,
+        start_offset: int,
+        end_offset: int,
+        structural_path: Optional[Dict[str, Any]],
+        content_hash: str,
+    ) -> Dict[str, Any]:
+        now = self._utcnow()
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO artifact_anchors (
+                    anchor_id, artifact_id, file_name, anchor_type, label, text_excerpt,
+                    start_offset, end_offset, structural_path_json, content_hash, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    anchor_id,
+                    artifact_id,
+                    file_name,
+                    anchor_type,
+                    label,
+                    text_excerpt,
+                    int(start_offset),
+                    int(end_offset),
+                    self._dumps_json(structural_path or {}),
+                    content_hash,
+                    now,
+                ),
+            )
+            conn.commit()
+        return self.get_artifact_anchor(anchor_id) or {}
+
+    def get_artifact_anchor(self, anchor_id: str) -> Optional[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM artifact_anchors WHERE anchor_id = ?",
+                (anchor_id,),
+            ).fetchone()
+        return self._row_to_artifact_anchor(dict(row)) if row else None
+
+    def list_artifact_anchors(self, artifact_id: str) -> List[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM artifact_anchors WHERE artifact_id = ? ORDER BY created_at DESC",
+                (artifact_id,),
+            ).fetchall()
+        return [self._row_to_artifact_anchor(dict(row)) for row in rows]
+
+    def create_revision_patch(
+        self,
+        *,
+        patch_id: str,
+        revision_session_id: str,
+        artifact_id: str,
+        anchor_id: str,
+        scope: str,
+        preserve_policy: str,
+        patch_status: str,
+        source_content_hash: str,
+        allowed_range: Dict[str, Any],
+        diff: Dict[str, Any],
+        rationale: str,
+        predicted_impact: Dict[str, Any],
+        apply_result: Dict[str, Any],
+        post_apply_validation: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        now = self._utcnow()
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO revision_patches (
+                    patch_id, revision_session_id, artifact_id, anchor_id, scope, preserve_policy,
+                    patch_status, source_content_hash, allowed_range_json, diff_json, rationale,
+                    predicted_impact_json, apply_result_json, post_apply_validation_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    patch_id,
+                    revision_session_id,
+                    artifact_id,
+                    anchor_id,
+                    scope,
+                    preserve_policy,
+                    patch_status,
+                    source_content_hash,
+                    self._dumps_json(allowed_range or {}),
+                    self._dumps_json(diff or {}),
+                    rationale or "",
+                    self._dumps_json(predicted_impact or {}),
+                    self._dumps_json(apply_result or {}),
+                    self._dumps_json(post_apply_validation or {}),
+                    now,
+                ),
+            )
+            conn.commit()
+        return self.get_revision_patch(patch_id) or {}
+
+    def update_revision_patch(
+        self,
+        patch_id: str,
+        *,
+        patch_status: Optional[str] = None,
+        created_artifact_id: Optional[str] = None,
+        apply_result: Any = JSON_UNSET,
+        post_apply_content_hash: Optional[str] = None,
+        post_apply_validation: Any = JSON_UNSET,
+        applied: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        existing = self.get_revision_patch(patch_id)
+        if not existing:
+            return None
+        effective_apply_result = existing.get("apply_result") if apply_result is JSON_UNSET else (apply_result or {})
+        effective_validation = existing.get("post_apply_validation") if post_apply_validation is JSON_UNSET else (post_apply_validation or {})
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                UPDATE revision_patches
+                SET patch_status = ?,
+                    created_artifact_id = ?,
+                    apply_result_json = ?,
+                    post_apply_content_hash = ?,
+                    post_apply_validation_json = ?,
+                    applied_at = ?
+                WHERE patch_id = ?
+                """,
+                (
+                    patch_status or existing.get("patch_status"),
+                    created_artifact_id if created_artifact_id is not None else existing.get("created_artifact_id"),
+                    self._dumps_json(effective_apply_result),
+                    post_apply_content_hash if post_apply_content_hash is not None else existing.get("post_apply_content_hash"),
+                    self._dumps_json(effective_validation),
+                    self._utcnow() if applied else existing.get("applied_at"),
+                    patch_id,
+                ),
+            )
+            conn.commit()
+        return self.get_revision_patch(patch_id)
+
+    def get_revision_patch(self, patch_id: str) -> Optional[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM revision_patches WHERE patch_id = ?",
+                (patch_id,),
+            ).fetchone()
+        return self._row_to_revision_patch(dict(row)) if row else None
+
+    def list_revision_patches(self, revision_session_id: str) -> List[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM revision_patches WHERE revision_session_id = ? ORDER BY created_at DESC",
+                (revision_session_id,),
+            ).fetchall()
+        return [self._row_to_revision_patch(dict(row)) for row in rows]
+
+    def upsert_artifact_section_review(
+        self,
+        *,
+        section_review_id: str,
+        artifact_id: str,
+        anchor_id: Optional[str],
+        status: str,
+        reviewer_note: str = "",
+        revision_session_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        now = self._utcnow()
+        existing = None
+        with self._get_connection() as conn:
+            if anchor_id:
+                row = conn.execute(
+                    """
+                    SELECT * FROM artifact_section_reviews
+                    WHERE artifact_id = ? AND anchor_id = ?
+                    LIMIT 1
+                    """,
+                    (artifact_id, anchor_id),
+                ).fetchone()
+                existing = self._row_to_artifact_section_review(dict(row)) if row else None
+            review_id = existing["section_review_id"] if existing else section_review_id
+            created_at = existing.get("created_at") if existing else now
+            conn.execute(
+                """
+                INSERT INTO artifact_section_reviews (
+                    section_review_id, artifact_id, anchor_id, status, reviewer_note,
+                    revision_session_id, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(section_review_id) DO UPDATE SET
+                    status=excluded.status,
+                    reviewer_note=excluded.reviewer_note,
+                    revision_session_id=COALESCE(excluded.revision_session_id, artifact_section_reviews.revision_session_id),
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    review_id,
+                    artifact_id,
+                    anchor_id,
+                    status,
+                    reviewer_note or "",
+                    revision_session_id,
+                    created_at,
+                    now,
+                ),
+            )
+            conn.commit()
+        return self.get_artifact_section_review(review_id) or {}
+
+    def get_artifact_section_review(self, section_review_id: str) -> Optional[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM artifact_section_reviews WHERE section_review_id = ?",
+                (section_review_id,),
+            ).fetchone()
+        return self._row_to_artifact_section_review(dict(row)) if row else None
+
+    def list_artifact_section_reviews(
+        self,
+        artifact_id: str,
+        *,
+        status: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        query = "SELECT * FROM artifact_section_reviews WHERE artifact_id = ?"
+        params: List[Any] = [artifact_id]
+        if status:
+            query += " AND status = ?"
+            params.append(status)
+        query += " ORDER BY updated_at DESC"
+        with self._get_connection() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [self._row_to_artifact_section_review(dict(row)) for row in rows]
+
     def _row_to_workflow_task(self, row: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "project_id": row["project_id"],
@@ -1362,6 +2694,193 @@ class MetadataDB:
             "created_at": row.get("created_at"),
             "updated_at": row.get("updated_at"),
             "completed_at": row.get("completed_at"),
+        }
+
+    def _row_to_design_artifact(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "artifact_id": row["artifact_id"],
+            "project_id": row["project_id"],
+            "version_id": row["version_id"],
+            "run_id": row.get("run_id"),
+            "expert_id": row["expert_id"],
+            "artifact_type": row["artifact_type"],
+            "artifact_version": int(row.get("artifact_version") or 1),
+            "parent_artifact_id": row.get("parent_artifact_id"),
+            "status": row["status"],
+            "title": row["title"],
+            "file_name": row["file_name"],
+            "file_path": row["file_path"],
+            "content_hash": row["content_hash"],
+            "summary": row.get("summary") or "",
+            "source_refs": self._loads_json(row.get("source_refs_json"), []),
+            "dependency_refs": self._loads_json(row.get("dependency_refs_json"), []),
+            "decision_refs": self._loads_json(row.get("decision_refs_json"), []),
+            "reflection_report_id": row.get("reflection_report_id"),
+            "consistency_report_id": row.get("consistency_report_id"),
+            "created_at": row.get("created_at"),
+            "updated_at": row.get("updated_at"),
+        }
+
+    def _row_to_artifact_dependency_edge(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "edge_id": row["edge_id"],
+            "project_id": row["project_id"],
+            "version_id": row["version_id"],
+            "upstream_artifact_id": row["upstream_artifact_id"],
+            "downstream_artifact_id": row["downstream_artifact_id"],
+            "dependency_type": row["dependency_type"],
+            "evidence": self._loads_json(row.get("evidence_json"), {}),
+            "created_at": row.get("created_at"),
+        }
+
+    def _row_to_artifact_impact_record(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "impact_id": row["impact_id"],
+            "project_id": row["project_id"],
+            "version_id": row["version_id"],
+            "source_artifact_id": row["source_artifact_id"],
+            "impacted_artifact_id": row["impacted_artifact_id"],
+            "impact_status": row["impact_status"],
+            "trigger_type": row["trigger_type"],
+            "trigger_ref_id": row.get("trigger_ref_id"),
+            "reason": row["reason"],
+            "evidence": self._loads_json(row.get("evidence_json"), {}),
+            "created_at": row.get("created_at"),
+            "updated_at": row.get("updated_at"),
+        }
+
+    def _row_to_reflection_report(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "report_id": row["report_id"],
+            "artifact_id": row["artifact_id"],
+            "expert_id": row["expert_id"],
+            "status": row["status"],
+            "confidence": float(row.get("confidence") or 0),
+            "checks": self._loads_json(row.get("checks_json"), {}),
+            "issues": self._loads_json(row.get("issues_json"), []),
+            "assumptions": self._loads_json(row.get("assumptions_json"), []),
+            "open_questions": self._loads_json(row.get("open_questions_json"), []),
+            "required_actions": self._loads_json(row.get("required_actions_json"), []),
+            "blocks_downstream": bool(row.get("blocks_downstream")),
+            "created_at": row.get("created_at"),
+        }
+
+    def _row_to_system_consistency_report(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "report_id": row["report_id"],
+            "artifact_id": row["artifact_id"],
+            "project_id": row["project_id"],
+            "version_id": row["version_id"],
+            "status": row["status"],
+            "checks": self._loads_json(row.get("checks_json"), []),
+            "conflict_ids": self._loads_json(row.get("conflict_ids_json"), []),
+            "suggested_actions": self._loads_json(row.get("suggested_actions_json"), []),
+            "created_at": row.get("created_at"),
+        }
+
+    def _row_to_context_conflict(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "conflict_id": row["conflict_id"],
+            "report_id": row.get("report_id"),
+            "project_id": row["project_id"],
+            "version_id": row["version_id"],
+            "artifact_id": row.get("artifact_id"),
+            "conflict_type": row["conflict_type"],
+            "semantic": row["semantic"],
+            "severity": row["severity"],
+            "status": row["status"],
+            "summary": row["summary"],
+            "evidence_refs": self._loads_json(row.get("evidence_refs_json"), []),
+            "suggested_actions": self._loads_json(row.get("suggested_actions_json"), []),
+            "decision_id": row.get("decision_id"),
+            "created_at": row.get("created_at"),
+            "updated_at": row.get("updated_at"),
+        }
+
+    def _row_to_decision_log(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "decision_id": row["decision_id"],
+            "project_id": row["project_id"],
+            "version_id": row["version_id"],
+            "scope": row["scope"],
+            "conflict_ids": self._loads_json(row.get("conflict_ids_json"), []),
+            "decision": row["decision"],
+            "basis": row["basis"],
+            "authority": row["authority"],
+            "applies_to": self._loads_json(row.get("applies_to_json"), []),
+            "evidence_refs": self._loads_json(row.get("evidence_refs_json"), []),
+            "created_by": row.get("created_by"),
+            "created_at": row.get("created_at"),
+        }
+
+    def _row_to_revision_session(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        session_id = row["revision_session_id"]
+        return {
+            "revision_session_id": session_id,
+            "project_id": row["project_id"],
+            "version_id": row["version_id"],
+            "target_artifact_id": row["target_artifact_id"],
+            "target_expert_id": row["target_expert_id"],
+            "status": row["status"],
+            "user_feedback": row.get("user_feedback") or "",
+            "normalized_revision_request": self._loads_json(row.get("normalized_revision_request_json"), {}),
+            "conflict_report_id": row.get("conflict_report_id"),
+            "decision_id": row.get("decision_id"),
+            "affected_artifacts": self._loads_json(row.get("affected_artifacts_json"), []),
+            "created_artifact_id": row.get("created_artifact_id"),
+            "created_at": row.get("created_at"),
+            "updated_at": row.get("updated_at"),
+            "events": self.list_revision_session_events(session_id),
+            "patches": self.list_revision_patches(session_id),
+        }
+
+    def _row_to_artifact_anchor(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "anchor_id": row["anchor_id"],
+            "artifact_id": row["artifact_id"],
+            "file_name": row["file_name"],
+            "anchor_type": row["anchor_type"],
+            "label": row.get("label") or "",
+            "text_excerpt": row.get("text_excerpt") or "",
+            "start_offset": int(row.get("start_offset") or 0),
+            "end_offset": int(row.get("end_offset") or 0),
+            "structural_path": self._loads_json(row.get("structural_path_json"), {}),
+            "content_hash": row["content_hash"],
+            "created_at": row.get("created_at"),
+        }
+
+    def _row_to_revision_patch(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "patch_id": row["patch_id"],
+            "revision_session_id": row["revision_session_id"],
+            "artifact_id": row["artifact_id"],
+            "anchor_id": row["anchor_id"],
+            "scope": row["scope"],
+            "preserve_policy": row["preserve_policy"],
+            "patch_status": row["patch_status"],
+            "source_content_hash": row["source_content_hash"],
+            "allowed_range": self._loads_json(row.get("allowed_range_json"), {}),
+            "diff": self._loads_json(row.get("diff_json"), {}),
+            "rationale": row.get("rationale") or "",
+            "predicted_impact": self._loads_json(row.get("predicted_impact_json"), {}),
+            "created_artifact_id": row.get("created_artifact_id"),
+            "apply_result": self._loads_json(row.get("apply_result_json"), {}),
+            "post_apply_content_hash": row.get("post_apply_content_hash"),
+            "post_apply_validation": self._loads_json(row.get("post_apply_validation_json"), {}),
+            "created_at": row.get("created_at"),
+            "applied_at": row.get("applied_at"),
+        }
+
+    def _row_to_artifact_section_review(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "section_review_id": row["section_review_id"],
+            "artifact_id": row["artifact_id"],
+            "anchor_id": row.get("anchor_id"),
+            "status": row["status"],
+            "reviewer_note": row.get("reviewer_note") or "",
+            "revision_session_id": row.get("revision_session_id"),
+            "created_at": row.get("created_at"),
+            "updated_at": row.get("updated_at"),
         }
 
     def list_versions(self, project_id: str, page: int = 1, page_size: int = 10) -> Dict[str, Any]:

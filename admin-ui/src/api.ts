@@ -74,6 +74,170 @@ export interface ClarifiedRequirementsPayload {
   decision_log?: Array<Record<string, unknown>>;
 }
 
+export interface ReflectionReport {
+  report_id: string;
+  artifact_id: string;
+  expert_id: string;
+  status: string;
+  confidence: number;
+  checks: Record<string, { status: string; message: string }>;
+  issues: Array<Record<string, unknown>>;
+  blocks_downstream: boolean;
+  created_at: string;
+}
+
+export interface SystemConsistencyReport {
+  report_id: string;
+  artifact_id: string;
+  project_id: string;
+  version_id: string;
+  status: string;
+  checks: Array<{
+    check_id?: string;
+    status?: string;
+    message?: string;
+    evidence_refs?: Array<Record<string, unknown>>;
+  }>;
+  conflict_ids: string[];
+  suggested_actions: string[];
+  created_at: string;
+  conflicts?: Array<ContextConflict>;
+}
+
+export interface ContextConflict {
+  conflict_id: string;
+  report_id?: string | null;
+  project_id: string;
+  version_id: string;
+  artifact_id?: string | null;
+  conflict_type: string;
+  semantic: string;
+  severity: string;
+  status: string;
+  summary: string;
+  evidence_refs: Array<Record<string, unknown>>;
+  suggested_actions: string[];
+  decision_id?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SectionReview {
+  section_review_id: string;
+  artifact_id: string;
+  anchor_id?: string | null;
+  status: string;
+  reviewer_note: string;
+  revision_session_id?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DesignArtifact {
+  artifact_id: string;
+  project_id: string;
+  version_id: string;
+  run_id?: string | null;
+  expert_id: string;
+  artifact_type: string;
+  artifact_version: number;
+  parent_artifact_id?: string | null;
+  status: string;
+  title: string;
+  file_name: string;
+  file_path: string;
+  content_hash: string;
+  summary: string;
+  reflection?: ReflectionReport | null;
+  consistency?: SystemConsistencyReport | null;
+  decision_logs?: DecisionLog[];
+  impact_records?: ImpactRecord[];
+  incoming_impacts?: ImpactRecord[];
+  section_reviews?: SectionReview[];
+}
+
+export interface ArtifactAnchor {
+  anchor_id: string;
+  artifact_id: string;
+  file_name: string;
+  anchor_type: string;
+  label: string;
+  text_excerpt: string;
+  start_offset: number;
+  end_offset: number;
+  content_hash: string;
+  created_at: string;
+}
+
+export interface RevisionPatch {
+  patch_id: string;
+  revision_session_id: string;
+  artifact_id: string;
+  anchor_id: string;
+  patch_status: string;
+  preserve_policy: string;
+  diff: {
+    original_text?: string;
+    replacement_text?: string;
+    unified_diff?: string[];
+  };
+  rationale: string;
+  predicted_impact: Record<string, unknown>;
+  post_apply_validation: Record<string, unknown>;
+  created_artifact_id?: string | null;
+}
+
+export interface RevisionSession {
+  revision_session_id: string;
+  project_id: string;
+  version_id: string;
+  target_artifact_id: string;
+  target_expert_id: string;
+  status: string;
+  user_feedback: string;
+  normalized_revision_request: {
+    revision_type?: string;
+    revision_reason?: string;
+    as_is_or_to_be?: string;
+    semantic?: string;
+    candidate_conflicts?: string[];
+    decision_required?: boolean;
+    [key: string]: unknown;
+  };
+  events: Array<Record<string, unknown>>;
+  patches: RevisionPatch[];
+}
+
+export interface DecisionLog {
+  decision_id: string;
+  project_id: string;
+  version_id: string;
+  scope: string;
+  conflict_ids: string[];
+  decision: string;
+  basis: string;
+  authority: string;
+  applies_to: string[];
+  evidence_refs: Array<Record<string, unknown>>;
+  created_by?: string | null;
+  created_at: string;
+}
+
+export interface ImpactRecord {
+  impact_id: string;
+  project_id: string;
+  version_id: string;
+  source_artifact_id: string;
+  impacted_artifact_id: string;
+  impact_status: string;
+  trigger_type: string;
+  trigger_ref_id?: string | null;
+  reason: string;
+  evidence: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
 export const api = {
   getProjects: () => apiClient.get('/projects').then(res => res.data),
   createProject: (name: string, description?: string) => 
@@ -104,6 +268,56 @@ export const api = {
   },
   getProjectArtifacts: (projectId: string, version: string) => 
     apiClient.get(`/projects/${projectId}/versions/${version}/artifacts`).then(res => res.data),
+  listDesignArtifacts: (projectId: string, version: string, expertId?: string) =>
+    apiClient.get(`/projects/${projectId}/versions/${version}/design-artifacts`, { params: { expert_id: expertId } }).then(res => res.data as { items: DesignArtifact[] }),
+  acceptDesignArtifact: (projectId: string, version: string, artifactId: string, payload?: {
+    reviewer_note?: string;
+    accepted_by?: string;
+  }) => apiClient.post(`/projects/${projectId}/versions/${version}/artifacts/${artifactId}/accept`, payload || {}).then(res => res.data as DesignArtifact),
+  markSectionReview: (projectId: string, version: string, artifactId: string, payload: {
+    status: string;
+    anchor_id?: string | null;
+    reviewer_note?: string;
+    revision_session_id?: string | null;
+  }) => apiClient.post(`/projects/${projectId}/versions/${version}/artifacts/${artifactId}/section-reviews`, payload).then(res => res.data as SectionReview),
+  listDecisionLogs: (projectId: string, version: string) =>
+    apiClient.get(`/projects/${projectId}/versions/${version}/decision-logs`).then(res => res.data as { items: DecisionLog[] }),
+  listImpactRecords: (projectId: string, version: string, params?: {
+    source_artifact_id?: string;
+    impacted_artifact_id?: string;
+    impact_status?: string;
+  }) => apiClient.get(`/projects/${projectId}/versions/${version}/impact-records`, { params }).then(res => res.data as { items: ImpactRecord[] }),
+  createRevisionSession: (projectId: string, version: string, artifactId: string, userFeedback?: string) =>
+    apiClient.post(`/projects/${projectId}/versions/${version}/artifacts/${artifactId}/revision-sessions`, { user_feedback: userFeedback || '' }).then(res => res.data as RevisionSession),
+  addRevisionMessage: (projectId: string, version: string, sessionId: string, content: string, role = 'user') =>
+    apiClient.post(`/projects/${projectId}/versions/${version}/revision-sessions/${sessionId}/messages`, { role, content }).then(res => res.data as RevisionSession),
+  finalizeRevisionSession: (projectId: string, version: string, sessionId: string) =>
+    apiClient.post(`/projects/${projectId}/versions/${version}/revision-sessions/${sessionId}/finalize`).then(res => res.data as RevisionSession),
+  createArtifactAnchor: (projectId: string, version: string, artifactId: string, payload: {
+    file_name: string;
+    anchor_type?: string;
+    label?: string;
+    text_excerpt: string;
+    start_offset?: number;
+    end_offset?: number;
+  }) => apiClient.post(`/projects/${projectId}/versions/${version}/artifacts/${artifactId}/anchors`, payload).then(res => res.data as ArtifactAnchor),
+  createRevisionPatchPreview: (projectId: string, version: string, sessionId: string, payload: {
+    artifact_id: string;
+    anchor_id: string;
+    replacement_text: string;
+    rationale?: string;
+    preserve_policy?: string;
+  }) => apiClient.post(`/projects/${projectId}/versions/${version}/revision-sessions/${sessionId}/patch-preview`, payload).then(res => res.data as RevisionPatch),
+  applyRevisionPatch: (projectId: string, version: string, patchId: string) =>
+    apiClient.post(`/projects/${projectId}/versions/${version}/revision-patches/${patchId}/apply`).then(res => res.data as RevisionPatch),
+  createConflictDecision: (projectId: string, version: string, conflictId: string, payload: {
+    decision: string;
+    basis: string;
+    authority: string;
+    created_by?: string;
+  }) => apiClient.post(`/projects/${projectId}/versions/${version}/conflicts/${conflictId}/decisions`, payload).then(res => res.data as DecisionLog),
+  updateImpactRecordStatus: (projectId: string, version: string, impactId: string, status: string) =>
+    apiClient.post(`/projects/${projectId}/versions/${version}/impact-records/${impactId}/status`, { status }).then(res => res.data as ImpactRecord),
   getProjectState: (projectId: string, version: string) => 
     apiClient.get(`/projects/${projectId}/versions/${version}/state`).then(res => res.data),
   getCurrentInteraction: (projectId: string, version: string) =>

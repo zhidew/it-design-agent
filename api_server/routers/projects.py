@@ -2,9 +2,14 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File
 import shutil
 from typing import List
 from models.project import (
+    ArtifactAcceptRequest,
+    ConflictDecisionRequest,
     CancelRequest,
     ClarifiedRequirementsResponse,
     ContinueRequest,
+    DecisionCreateRequest,
+    ArtifactAnchorCreateRequest,
+    ImpactStatusUpdateRequest,
     InteractionDetailResponse,
     InteractionListResponse,
     InteractionResponseRequest,
@@ -12,13 +17,22 @@ from models.project import (
     NodeRetryRequest,
     ProjectCreateRequest,
     ProjectResponse,
+    RevisionMessageRequest,
+    RevisionPatchPreviewRequest,
+    RevisionSessionCreateRequest,
     ResumeRequest,
     ScheduleRunRequest,
     ScheduleRunResponse,
+    SectionReviewRequest,
     VersionRunRequest,
 )
 from models.management import VersionListResponse
 import services.orchestrator_service as orch
+from services import design_artifact_service as artifacts_service
+from services import context_consistency_service
+from services import decision_log_service
+from services import artifact_dependency_service
+from services import impact_analysis_service
 
 router = APIRouter(
     prefix="/api/v1/projects",
@@ -115,6 +129,287 @@ async def schedule_design_orchestrator(project_id: str, version: str, req: Sched
 async def get_artifacts(project_id: str, version: str):
     tree = orch.get_artifacts_tree(project_id, version)
     return tree
+
+
+@router.get("/{project_id}/versions/{version}/design-artifacts")
+async def list_design_artifacts(project_id: str, version: str, expert_id: str | None = None):
+    orch.get_artifacts_tree(project_id, version)
+    return {"items": artifacts_service.list_design_artifacts(project_id, version, expert_id=expert_id)}
+
+
+@router.get("/{project_id}/versions/{version}/artifacts/{artifact_id}/governance")
+async def get_design_artifact(project_id: str, version: str, artifact_id: str):
+    artifact = artifacts_service.get_design_artifact(artifact_id)
+    if not artifact or artifact["project_id"] != project_id or artifact["version_id"] != version:
+        raise HTTPException(status_code=404, detail="Design artifact not found.")
+    return artifact
+
+
+@router.post("/{project_id}/versions/{version}/artifacts/{artifact_id}/accept")
+async def accept_design_artifact(project_id: str, version: str, artifact_id: str, req: ArtifactAcceptRequest):
+    artifact = artifacts_service.get_design_artifact(artifact_id)
+    if not artifact or artifact["project_id"] != project_id or artifact["version_id"] != version:
+        raise HTTPException(status_code=404, detail="Design artifact not found.")
+    try:
+        return artifacts_service.accept_design_artifact(
+            artifact_id,
+            reviewer_note=req.reviewer_note or "",
+            accepted_by=req.accepted_by or "user",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/{project_id}/versions/{version}/artifacts/{artifact_id}/reflection")
+async def get_artifact_reflection(project_id: str, version: str, artifact_id: str):
+    artifact = artifacts_service.get_design_artifact(artifact_id)
+    if not artifact or artifact["project_id"] != project_id or artifact["version_id"] != version:
+        raise HTTPException(status_code=404, detail="Design artifact not found.")
+    return artifact.get("reflection") or {}
+
+
+@router.get("/{project_id}/versions/{version}/artifacts/{artifact_id}/consistency")
+async def get_artifact_consistency(project_id: str, version: str, artifact_id: str):
+    artifact = artifacts_service.get_design_artifact(artifact_id)
+    if not artifact or artifact["project_id"] != project_id or artifact["version_id"] != version:
+        raise HTTPException(status_code=404, detail="Design artifact not found.")
+    return artifact.get("consistency") or {}
+
+
+@router.post("/{project_id}/versions/{version}/artifacts/{artifact_id}/consistency/recheck")
+async def recheck_artifact_consistency(project_id: str, version: str, artifact_id: str):
+    artifact = artifacts_service.get_design_artifact(artifact_id)
+    if not artifact or artifact["project_id"] != project_id or artifact["version_id"] != version:
+        raise HTTPException(status_code=404, detail="Design artifact not found.")
+    try:
+        return context_consistency_service.run_consistency_check(artifact_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/{project_id}/versions/{version}/conflicts")
+async def list_context_conflicts(project_id: str, version: str, status: str | None = None):
+    return {"items": context_consistency_service.list_context_conflicts(project_id, version, status=status)}
+
+
+@router.post("/{project_id}/versions/{version}/artifacts/{artifact_id}/section-reviews")
+async def mark_artifact_section_review(project_id: str, version: str, artifact_id: str, req: SectionReviewRequest):
+    artifact = artifacts_service.get_design_artifact(artifact_id)
+    if not artifact or artifact["project_id"] != project_id or artifact["version_id"] != version:
+        raise HTTPException(status_code=404, detail="Design artifact not found.")
+    try:
+        return artifacts_service.mark_artifact_section_review(
+            artifact_id=artifact_id,
+            anchor_id=req.anchor_id,
+            status=req.status,
+            reviewer_note=req.reviewer_note or "",
+            revision_session_id=req.revision_session_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/{project_id}/versions/{version}/artifacts/{artifact_id}/section-reviews")
+async def list_artifact_section_reviews(project_id: str, version: str, artifact_id: str, status: str | None = None):
+    artifact = artifacts_service.get_design_artifact(artifact_id)
+    if not artifact or artifact["project_id"] != project_id or artifact["version_id"] != version:
+        raise HTTPException(status_code=404, detail="Design artifact not found.")
+    return {"items": artifacts_service.list_artifact_section_reviews(artifact_id, status=status)}
+
+
+@router.get("/{project_id}/versions/{version}/dependency-graph")
+async def get_artifact_dependency_graph(project_id: str, version: str):
+    return artifact_dependency_service.build_artifact_dependency_graph(project_id, version)
+
+
+@router.get("/{project_id}/versions/{version}/artifacts/{artifact_id}/downstream")
+async def list_downstream_artifacts(project_id: str, version: str, artifact_id: str):
+    artifact = artifacts_service.get_design_artifact(artifact_id)
+    if not artifact or artifact["project_id"] != project_id or artifact["version_id"] != version:
+        raise HTTPException(status_code=404, detail="Design artifact not found.")
+    return {"items": artifact_dependency_service.find_downstream_artifacts(artifact_id)}
+
+
+@router.get("/{project_id}/versions/{version}/impact-records")
+async def list_impact_records(
+    project_id: str,
+    version: str,
+    source_artifact_id: str | None = None,
+    impacted_artifact_id: str | None = None,
+    impact_status: str | None = None,
+):
+    return {
+        "items": impact_analysis_service.list_impact_records(
+            project_id,
+            version,
+            source_artifact_id=source_artifact_id,
+            impacted_artifact_id=impacted_artifact_id,
+            impact_status=impact_status,
+        )
+    }
+
+
+@router.post("/{project_id}/versions/{version}/impact-records/{impact_id}/status")
+async def update_impact_record_status(project_id: str, version: str, impact_id: str, req: ImpactStatusUpdateRequest):
+    try:
+        record = impact_analysis_service.mark_downstream_artifact_status(impact_id, req.status)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if record["project_id"] != project_id or record["version_id"] != version:
+        raise HTTPException(status_code=404, detail="Impact record not found.")
+    return record
+
+
+@router.get("/{project_id}/versions/{version}/decision-logs")
+async def list_decision_logs(project_id: str, version: str, scope: str | None = None):
+    return {"items": decision_log_service.list_decision_logs(project_id, version, scope=scope)}
+
+
+@router.get("/{project_id}/versions/{version}/decision-logs/{decision_id}")
+async def get_decision_log(project_id: str, version: str, decision_id: str):
+    decision = decision_log_service.get_decision_log(decision_id)
+    if not decision or decision["project_id"] != project_id or decision["version_id"] != version:
+        raise HTTPException(status_code=404, detail="Decision log not found.")
+    return decision
+
+
+@router.post("/{project_id}/versions/{version}/decision-logs")
+async def create_decision_log(project_id: str, version: str, req: DecisionCreateRequest):
+    try:
+        return decision_log_service.create_decision_log(
+            project_id=project_id,
+            version_id=version,
+            scope="project",
+            conflict_ids=req.conflict_ids,
+            decision=req.decision,
+            basis=req.basis,
+            authority=req.authority,
+            applies_to=req.applies_to,
+            created_by=req.created_by,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/{project_id}/versions/{version}/conflicts/{conflict_id}/decisions")
+async def resolve_context_conflict(project_id: str, version: str, conflict_id: str, req: ConflictDecisionRequest):
+    conflict = context_consistency_service.metadata_db.get_context_conflict(conflict_id)
+    if not conflict or conflict["project_id"] != project_id or conflict["version_id"] != version:
+        raise HTTPException(status_code=404, detail="Context conflict not found.")
+    try:
+        decision = decision_log_service.resolve_conflict_with_decision(
+            conflict_id=conflict_id,
+            decision=req.decision,
+            basis=req.basis,
+            authority=req.authority,
+            created_by=req.created_by,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return decision
+
+
+@router.post("/{project_id}/versions/{version}/artifacts/{artifact_id}/revision-sessions")
+async def create_revision_session(project_id: str, version: str, artifact_id: str, req: RevisionSessionCreateRequest):
+    try:
+        return artifacts_service.create_revision_session(
+            project_id=project_id,
+            version_id=version,
+            target_artifact_id=artifact_id,
+            user_feedback=req.user_feedback or "",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/{project_id}/versions/{version}/artifacts/{artifact_id}/revision-sessions")
+async def list_artifact_revision_sessions(project_id: str, version: str, artifact_id: str, status: str | None = None):
+    artifact = artifacts_service.get_design_artifact(artifact_id)
+    if not artifact or artifact["project_id"] != project_id or artifact["version_id"] != version:
+        raise HTTPException(status_code=404, detail="Design artifact not found.")
+    return {
+        "items": artifacts_service.list_revision_sessions(
+            project_id=project_id,
+            version_id=version,
+            target_artifact_id=artifact_id,
+            status=status,
+        )
+    }
+
+
+@router.get("/{project_id}/versions/{version}/revision-sessions/{session_id}")
+async def get_revision_session(project_id: str, version: str, session_id: str):
+    from services.db_service import metadata_db
+
+    session = metadata_db.get_revision_session(session_id)
+    if not session or session["project_id"] != project_id or session["version_id"] != version:
+        raise HTTPException(status_code=404, detail="Revision session not found.")
+    return session
+
+
+@router.post("/{project_id}/versions/{version}/revision-sessions/{session_id}/messages")
+async def add_revision_message(project_id: str, version: str, session_id: str, req: RevisionMessageRequest):
+    try:
+        session = artifacts_service.add_revision_message(session_id, req.role, req.content)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if session["project_id"] != project_id or session["version_id"] != version:
+        raise HTTPException(status_code=404, detail="Revision session not found.")
+    return session
+
+
+@router.post("/{project_id}/versions/{version}/revision-sessions/{session_id}/finalize")
+async def finalize_revision_session(project_id: str, version: str, session_id: str):
+    try:
+        session = artifacts_service.finalize_revision_session(session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if session["project_id"] != project_id or session["version_id"] != version:
+        raise HTTPException(status_code=404, detail="Revision session not found.")
+    return session
+
+
+@router.post("/{project_id}/versions/{version}/artifacts/{artifact_id}/anchors")
+async def create_artifact_anchor(project_id: str, version: str, artifact_id: str, req: ArtifactAnchorCreateRequest):
+    artifact = artifacts_service.get_design_artifact(artifact_id)
+    if not artifact or artifact["project_id"] != project_id or artifact["version_id"] != version:
+        raise HTTPException(status_code=404, detail="Design artifact not found.")
+    try:
+        return artifacts_service.create_anchor(
+            artifact_id=artifact_id,
+            file_name=req.file_name,
+            anchor_type=req.anchor_type,
+            text_excerpt=req.text_excerpt,
+            start_offset=req.start_offset,
+            end_offset=req.end_offset,
+            label=req.label,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/{project_id}/versions/{version}/revision-sessions/{session_id}/patch-preview")
+async def create_revision_patch_preview(project_id: str, version: str, session_id: str, req: RevisionPatchPreviewRequest):
+    try:
+        patch = artifacts_service.create_patch_preview(
+            revision_session_id=session_id,
+            artifact_id=req.artifact_id,
+            anchor_id=req.anchor_id,
+            replacement_text=req.replacement_text,
+            rationale=req.rationale or "",
+            preserve_policy=req.preserve_policy,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return patch
+
+
+@router.post("/{project_id}/versions/{version}/revision-patches/{patch_id}/apply")
+async def apply_revision_patch(project_id: str, version: str, patch_id: str):
+    try:
+        return artifacts_service.apply_revision_patch(patch_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 @router.get("/{project_id}/versions/{version}/state")
 async def get_workflow_state(project_id: str, version: str):

@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { useParams, Link, useLocation } from 'react-router-dom';
-import { api, type ClarifiedRequirementsPayload, type InteractionRecord } from '../api';
+import { api, type ClarifiedRequirementsPayload, type DesignArtifact, type InteractionRecord } from '../api';
 import { ArrowLeft, Play, RefreshCw, Activity, Check, X, Upload, FileText, Database, Layers, Book, List, Trash2, ChevronLeft, ChevronRight, Settings2, FolderGit2, BookOpen, Bot, Cpu, Square, Clock3 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { LanguageSwitcher } from './LanguageSwitcher';
@@ -178,6 +178,21 @@ interface ArtifactUpdatedEvent extends EventBase {
   node_type: string;
   artifact_name: string;
   artifact_status: ArtifactStatus;
+}
+
+interface ArtifactGovernanceReviewableEvent extends EventBase {
+  event_type: 'artifact_governance_reviewable';
+  node_id: string;
+  node_type: string;
+  status: 'ready_for_review' | 'needs_review' | 'blocked';
+  artifacts: Array<{
+    artifact_id: string;
+    file_name?: string;
+    status?: string;
+    review_status?: string;
+  }>;
+  errors: Array<Record<string, unknown>>;
+  dependency_graph: Record<string, unknown>;
 }
 
 interface ToolEvent extends EventBase {
@@ -358,6 +373,7 @@ type OrchestratorEvent =
   | NodeCompletedEvent
   | TextDeltaEvent
   | ArtifactUpdatedEvent
+  | ArtifactGovernanceReviewableEvent
   | ToolEvent
   | WaitingHumanEvent
   | RunCompletedEvent
@@ -467,6 +483,7 @@ export function ProjectDetail() {
   const [selectedVersion, setSelectedVersion] = useState<string | null>(null);
   const [currentRunId, setCurrentRunId] = useState<string | null>(null);
   const [artifacts, setArtifacts] = useState<Record<string, string>>({});
+  const [designArtifacts, setDesignArtifacts] = useState<DesignArtifact[]>([]);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [workflowState, setWorkflowState] = useState<WorkflowState | null>(null);
   const [currentInteraction, setCurrentInteraction] = useState<InteractionRecord | null>(null);
@@ -911,6 +928,12 @@ export function ProjectDetail() {
           void loadArtifacts(selectedVersion);
         }
         break;
+      case 'artifact_governance_reviewable':
+        if (selectedVersion) {
+          void loadArtifacts(selectedVersion);
+          void fetchState();
+        }
+        break;
       case 'waiting_human':
         if (selectedVersion) {
           void fetchState();
@@ -958,6 +981,7 @@ export function ProjectDetail() {
       'node_completed',
       'text_delta',
       'artifact_updated',
+      'artifact_governance_reviewable',
       'tool_event',
       'waiting_human',
       'run_completed',
@@ -1109,6 +1133,7 @@ export function ProjectDetail() {
     setCurrentRunId(null);
     setNodeStatuses({});
     setArtifacts({});
+    setDesignArtifacts([]);
     setSelectedFile(null);
     setWorkflowState(null);
     setCurrentInteraction(null);
@@ -1327,6 +1352,7 @@ export function ProjectDetail() {
           setWorkflowState(null);
           latestFetchedStateAtRef.current = 0;
           setArtifacts({});
+          setDesignArtifacts([]);
           setSelectedFile(null);
           setSelectedNode('planner');
           setStreamStatus('idle');
@@ -1378,10 +1404,15 @@ export function ProjectDetail() {
     if (!id) return;
     setIsArtifactsLoading(true);
     try {
-      const data = await api.getProjectArtifacts(id, version);
+      const [data, governance] = await Promise.all([
+        api.getProjectArtifacts(id, version),
+        api.listDesignArtifacts(id, version),
+      ]);
       setArtifacts(data);
+      setDesignArtifacts(governance.items || []);
     } catch {
       setArtifacts({});
+      setDesignArtifacts([]);
     } finally {
       setIsArtifactsLoading(false);
     }
@@ -1419,7 +1450,7 @@ export function ProjectDetail() {
     }
     const matchingArtifacts = Object.keys(artifacts).filter((filename) =>
       !filename.endsWith('-reasoning.md') && patterns.some(
-        (pattern) => filename.startsWith(pattern) || filename === pattern ||
+        (pattern) => filename.startsWith(pattern) || filename === pattern || filename.startsWith(`${pattern}.v`) ||
           (pattern === 'requirements.json' && filename.includes('requirements')) ||
           (selectedNode === 'planner' && (filename.includes('model') || filename.includes('lookup') || filename === 'original-requirements.md'))
       ),
@@ -1461,6 +1492,13 @@ export function ProjectDetail() {
           return { kind: 'text', id: event.event_id, text: event.delta, tone: event.delta.includes('[ERROR]') ? 'error' as const : 'default' as const };
         case 'artifact_updated':
           return { kind: 'text', id: event.event_id, text: `[EVENT] ${event.node_type} ${event.artifact_status} artifact ${event.artifact_name}`, tone: 'default' as const };
+        case 'artifact_governance_reviewable':
+          return {
+            kind: 'text',
+            id: event.event_id,
+            text: `[EVENT] ${event.node_type} governance ${event.status} for ${event.artifacts.length} artifact${event.artifacts.length === 1 ? '' : 's'}`,
+            tone: event.status === 'blocked' ? 'error' as const : 'default' as const,
+          };
         case 'tool_event':
           return { kind: 'tool', id: event.event_id, event };
         case 'waiting_human':
@@ -2765,10 +2803,14 @@ export function ProjectDetail() {
             </div>
 
             <ArtifactViewer
+              projectId={id || ''}
+              version={selectedVersion}
               artifacts={artifacts}
+              designArtifacts={designArtifacts}
               selectedFile={selectedFile}
               onSelectFile={handleSelectFile}
               filteredArtifacts={filteredArtifacts}
+              onArtifactsChanged={() => selectedVersion ? loadArtifacts(selectedVersion) : Promise.resolve()}
               t={t}
             />
           </section>

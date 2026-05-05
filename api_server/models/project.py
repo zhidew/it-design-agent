@@ -119,3 +119,61 @@ class ContinueRequest(BaseModel):
 
 class CancelRequest(BaseModel):
     reason: Optional[str] = None
+
+
+class RevisionSessionCreateRequest(BaseModel):
+    user_feedback: Optional[str] = ""
+
+
+class RevisionMessageRequest(BaseModel):
+    role: str = "user"
+    content: str
+
+
+class ArtifactAnchorCreateRequest(BaseModel):
+    file_name: str
+    anchor_type: str = "text_range"
+    label: Optional[str] = None
+    text_excerpt: str
+    start_offset: Optional[int] = None
+    end_offset: Optional[int] = None
+
+
+class RevisionPatchPreviewRequest(BaseModel):
+    artifact_id: str
+    anchor_id: str
+    replacement_text: str
+    rationale: Optional[str] = ""
+    preserve_policy: str = "preserve_unselected_content"
+
+
+class ArtifactAcceptRequest(BaseModel):
+    reviewer_note: Optional[str] = ""
+    accepted_by: Optional[str] = "user"
+
+
+class SectionReviewRequest(BaseModel):
+    status: str
+    anchor_id: Optional[str] = None
+    reviewer_note: Optional[str] = ""
+    revision_session_id: Optional[str] = None
+
+
+class DecisionCreateRequest(BaseModel):
+    conflict_ids: List[str] = Field(default_factory=list)
+    decision: str
+    basis: str
+    authority: str
+    applies_to: List[str] = Field(default_factory=list)
+    created_by: Optional[str] = None
+
+
+class ConflictDecisionRequest(BaseModel):
+    decision: str
+    basis: str
+    authority: str
+    created_by: Optional[str] = None
+
+
+class ImpactStatusUpdateRequest(BaseModel):
+    status: str

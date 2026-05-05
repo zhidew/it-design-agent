@@ -16,6 +16,8 @@ from graphs.state import merge_artifacts
 from models.events import dump_event, validate_event_payload
 from services.log_service import get_run_log, save_run_log
 from services.db_service import JSON_UNSET, metadata_db
+from services.artifact_governance_runtime import finalize_expert_artifact_outputs
+from services.design_artifact_service import sync_artifacts_from_disk
 from registry.expert_registry import ExpertRegistry
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -1419,6 +1421,126 @@ def _emit_artifact_updates(job_id: str, run_id: str, node_id: str, node_type: st
         )
 
 
+def _register_artifact_updates(
+    project_id: str,
+    version: str,
+    run_id: str,
+    node_type: str,
+    before: dict,
+    after: dict,
+) -> dict:
+    try:
+        result = finalize_expert_artifact_outputs(
+            project_id=project_id,
+            version_id=version,
+            run_id=run_id,
+            expert_id=node_type,
+            before=before,
+            after=after,
+        )
+    except Exception as exc:
+        print(f"[WARN] Failed to finalize artifact governance for '{node_type}': {exc}")
+        return {
+            "project_id": project_id,
+            "version_id": version,
+            "run_id": run_id,
+            "expert_id": node_type,
+            "status": "blocked",
+            "changed_artifact_names": [],
+            "artifact_count": 0,
+            "items": [],
+            "errors": [{"file_name": "*", "error": str(exc)}],
+            "dependency_graph": {"refreshed": False, "node_count": 0, "edge_count": 0},
+        }
+    for error in result.get("errors") or []:
+        print(f"[WARN] Failed to register design artifact '{error.get('file_name')}': {error.get('error')}")
+    return result
+
+
+def _emit_artifact_governance_reviewable(
+    job_id: str,
+    run_id: str,
+    node_id: str,
+    node_type: str,
+    governance: dict | None,
+):
+    if not governance:
+        return
+    if not governance.get("artifact_count") and not governance.get("errors"):
+        return
+    _publish_event(
+        job_id,
+        {
+            "event_id": _new_event_id(),
+            "event_type": "artifact_governance_reviewable",
+            "run_id": run_id,
+            "node_id": node_id,
+            "node_type": node_type,
+            "status": governance.get("status", "needs_review"),
+            "artifacts": governance.get("items") or [],
+            "errors": governance.get("errors") or [],
+            "dependency_graph": governance.get("dependency_graph") or {},
+            "timestamp": _now_iso(),
+        },
+    )
+
+
+def _record_artifact_governance_summary(
+    project_id: str,
+    version_id: str,
+    run_id: str,
+    node_id: str,
+    node_type: str,
+    governance: dict | None,
+):
+    if not governance:
+        return
+    if node_type in {"bootstrap", "supervisor"}:
+        return
+    if not governance.get("artifact_count") and not governance.get("errors"):
+        return
+    timestamp = _now_iso()
+    payload = {
+        "event_id": _new_event_id(),
+        "event_type": "artifact_governance_reviewable",
+        "run_id": run_id,
+        "node_id": node_id,
+        "node_type": node_type,
+        "status": governance.get("status", "needs_review"),
+        "artifacts": governance.get("items") or [],
+        "errors": governance.get("errors") or [],
+        "dependency_graph": governance.get("dependency_graph") or {},
+        "timestamp": timestamp,
+    }
+    existing_task = metadata_db.get_workflow_task(project_id, version_id, node_type) or {}
+    existing_metadata = existing_task.get("metadata") or {}
+    metadata_db.upsert_workflow_task(
+        project_id,
+        version_id,
+        node_type=node_type,
+        task_id=node_id,
+        run_id=run_id,
+        status=existing_task.get("status") or "running",
+        phase=existing_task.get("phase"),
+        priority=existing_task.get("priority"),
+        dependencies=existing_task.get("dependencies") or [],
+        metadata={**existing_metadata, "artifact_governance": payload},
+        authoritative=False,
+    )
+    metadata_db.append_workflow_task_event(
+        event_id=payload["event_id"],
+        project_id=project_id,
+        version_id=version_id,
+        run_id=run_id,
+        task_id=node_id,
+        node_type=node_type,
+        event_type="artifact_governance_reviewable",
+        status=payload["status"],
+        payload=payload,
+        created_at=timestamp,
+    )
+
+
 def _emit_tool_events(job_id: str, run_id: str, node_id: str, node_type: str, tool_results: list[dict] | None):
     for tool_result in tool_results or []:
         _publish_event(
@@ -1603,6 +1725,9 @@ def _handle_structured_graph_event(
 
     current_artifacts = _load_artifacts_from_disk(project_id, version)
     _emit_artifact_updates(job_id, run_id, node_id, node_type, previous_artifacts, current_artifacts)
+    artifact_governance = _register_artifact_updates(project_id, version, run_id, node_type, previous_artifacts, current_artifacts)
+    _record_artifact_governance_summary(project_id, version, run_id, node_id, node_type, artifact_governance)
+    _emit_artifact_governance_reviewable(job_id, run_id, node_id, node_type, artifact_governance)
 
     if payload.get("human_intervention_required"):
         pending_interrupt = payload.get("pending_interrupt") or {}
@@ -2930,7 +3055,12 @@ def delete_version(project_id: str, version: str) -> bool:
 
 
 def get_artifacts_tree(project_id: str, version: str):
-    return _load_artifacts_from_disk(project_id, version)
+    artifacts = _load_artifacts_from_disk(project_id, version)
+    try:
+        sync_artifacts_from_disk(project_id, version, artifacts)
+    except Exception as exc:
+        print(f"[WARN] Failed to sync design artifact registry: {exc}")
+    return artifacts
 
 
 def get_version_logs(project_id: str, version: str) -> list:
