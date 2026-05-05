@@ -345,6 +345,37 @@ def _hydrate_human_interaction(record: Dict[str, Any] | None) -> Dict[str, Any] 
     }
 
 
+def _pending_interrupt_from_interaction_record(record: Dict[str, Any] | None) -> Dict[str, Any]:
+    if not record:
+        return {}
+    context = record.get("context") if isinstance(record.get("context"), dict) else {}
+    question = str(record.get("question_text") or "").strip() or "Human input required to continue."
+    owner_node = str(record.get("owner_node") or "").strip() or "planner"
+    scope = str(record.get("scope") or "").strip()
+    interaction_type = str(context.get("interaction_type") or "").strip()
+    is_expert_selection = scope == "planner_review" and (
+        interaction_type == PLANNER_EXPERT_SELECTION_INTERACTION
+        or isinstance(context.get("available_experts"), list)
+        or isinstance((record.get("question_schema") or {}).get("available_experts"), list)
+    )
+    interrupt_kind = PLANNER_EXPERT_SELECTION_INTERACTION if is_expert_selection else ("ask_human" if scope.endswith("clarification") else "review")
+    node_id = "planner" if is_expert_selection and owner_node == "planner" else owner_node
+    pending_interrupt = {
+        "interaction_id": record["interaction_id"],
+        "interrupt_id": f"interaction:{record['interaction_id']}",
+        "node_id": node_id,
+        "node_type": owner_node,
+        "owner_node": owner_node,
+        "question": question,
+        "context": context,
+        "resume_target": owner_node,
+        "interrupt_kind": interrupt_kind,
+        "scope": scope or _infer_interaction_scope({"node_type": owner_node, "interrupt_kind": interrupt_kind, "context": context}),
+        "question_schema": record.get("question_schema") or _build_question_schema(question, context),
+    }
+    return pending_interrupt
+
+
 def _build_clarification_log(project_id: str, version: str) -> List[Dict[str, Any]]:
     interactions = metadata_db.list_human_interactions(project_id, version)
     log_entries: List[Dict[str, Any]] = []
@@ -2396,18 +2427,21 @@ async def resume_workflow(project_id: str, version: str, human_input: dict):
     if not run_id:
         return False
 
-    pending_interrupt = current_state.get("pending_interrupt") or {}
+    interaction_id = (human_input or {}).get("interaction_id")
+    interaction_record = metadata_db.get_human_interaction(interaction_id) if interaction_id else None
+    pending_interrupt = current_state.get("pending_interrupt") or _pending_interrupt_from_interaction_record(interaction_record)
     requested_node_id = (human_input or {}).get("node_id") or pending_interrupt.get("node_id") or current_state.get("current_node")
     requested_interrupt_id = (human_input or {}).get("interrupt_id") or pending_interrupt.get("interrupt_id")
-    interaction_id = (
-        (human_input or {}).get("interaction_id")
-        or pending_interrupt.get("interaction_id")
-    )
+    interaction_id = interaction_id or pending_interrupt.get("interaction_id")
 
     if pending_interrupt:
         if requested_node_id != pending_interrupt.get("node_id"):
             return False
-        if pending_interrupt.get("interrupt_id") and requested_interrupt_id != pending_interrupt.get("interrupt_id"):
+        if (
+            (human_input or {}).get("interrupt_id")
+            and pending_interrupt.get("interrupt_id")
+            and requested_interrupt_id != pending_interrupt.get("interrupt_id")
+        ):
             return False
         if pending_interrupt.get("interaction_id") and interaction_id != pending_interrupt.get("interaction_id"):
             return False

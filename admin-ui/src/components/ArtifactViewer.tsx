@@ -30,6 +30,18 @@ const getApiErrorMessage = (error: unknown, fallback: string) => {
   return fallback;
 };
 
+const isPlannerControlledArtifactFile = (fileName: string | null) => {
+  const normalized = (fileName || '').toLowerCase();
+  return [
+    'requirements.json',
+    'input-requirements.md',
+    'original-requirements.md',
+    'clarified-requirements.md',
+    'planner-reasoning.md',
+    'planner-output.md',
+  ].includes(normalized) || normalized.startsWith('planner-');
+};
+
 export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
   projectId,
   version,
@@ -71,7 +83,8 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
   const outgoingImpacts = activeDesignArtifact?.impact_records || [];
   const incomingImpacts = activeDesignArtifact?.incoming_impacts || [];
   const sectionReviews = activeDesignArtifact?.section_reviews || [];
-  const canDiscuss = Boolean(projectId && version && selectedFile && activeDesignArtifact);
+  const isPlannerControlledArtifact = isPlannerControlledArtifactFile(selectedFile);
+  const canDiscuss = Boolean(projectId && version && selectedFile && activeDesignArtifact && !isPlannerControlledArtifact);
   const normalizedIntent = revisionSession?.normalized_revision_request || {};
   const candidateConflictIds = Array.isArray(normalizedIntent.candidate_conflicts)
     ? (normalizedIntent.candidate_conflicts as string[])
@@ -287,7 +300,7 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
 
     return (
       <div className="flex-1 overflow-auto bg-white rounded-2xl border border-gray-100 shadow-sm p-6 sm:p-10 min-h-[500px] animate-in fade-in zoom-in-95 duration-300">
-        {activeDesignArtifact && (
+        {activeDesignArtifact && !isPlannerControlledArtifact && (
           <div className="mb-6 border-b border-gray-100 pb-5">
             <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
               <div className="min-w-0 flex-1">

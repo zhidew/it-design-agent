@@ -20,6 +20,7 @@ PLANNER_ARTIFACT_NAMES = {
     "requirements.json",
     "input-requirements.md",
     "original-requirements.md",
+    "clarified-requirements.md",
     "planner-reasoning.md",
     "planner-output.md",
 }
