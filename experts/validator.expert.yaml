@@ -90,6 +90,9 @@ policies:
   output_must_be_structured: true
   manual_override_forbidden: true
   descriptions_prefer_chinese: true
+  planner_selection:
+    llm_selectable: false
+    default_selected: true
 error_handling:
   on_missing_required_input: fail
   on_validation_failure: warn

@@ -18,6 +18,7 @@ from services.log_service import get_run_log, save_run_log
 from services.db_service import JSON_UNSET, metadata_db
 from services.artifact_governance_runtime import finalize_expert_artifact_outputs
 from services.design_artifact_service import sync_artifacts_from_disk
+from services.llm_service import resolve_runtime_llm_settings, test_llm_connectivity
 from registry.expert_registry import ExpertRegistry
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -619,6 +620,95 @@ def _set_runtime_state(
         started_at=started_at,
         finished_at=finished_at,
     )
+
+
+def _mark_workflow_failed(
+    project_id: str,
+    version: str,
+    run_id: str,
+    *,
+    reason: str,
+    job_id: str | None = None,
+    current_node: str | None = None,
+    task_queue: list[dict] | None = None,
+):
+    job_key = job_id or run_id
+    queue = task_queue if task_queue is not None else metadata_db.list_workflow_tasks(project_id, version)
+    failed_queue = []
+    for task in queue or []:
+        next_status = "failed"
+        failed_task = {**task, "status": next_status}
+        failed_queue.append(failed_task)
+        node_type = task.get("agent_type") or task.get("node_type")
+        if node_type and node_type not in {"bootstrap", "supervisor"}:
+            _publish_event(
+                job_key,
+                {
+                    "event_id": _new_event_id(),
+                    "event_type": "node_completed",
+                    "run_id": run_id,
+                    "node_id": task.get("id") or task.get("task_id") or node_type,
+                    "node_type": node_type,
+                    "status": next_status,
+                    "timestamp": _now_iso(),
+                },
+            )
+
+    if failed_queue:
+        metadata_db.replace_workflow_tasks(project_id, version, run_id=run_id, tasks=failed_queue)
+
+    _set_runtime_state(
+        project_id,
+        version,
+        run_status=RUN_STATUS_FAILED,
+        current_node=current_node,
+        waiting_reason=reason,
+        can_resume=True,
+        job_id=job_key,
+    )
+    _finalize_waiting_interactions_for_version(
+        project_id,
+        version,
+        new_status="superseded",
+        event_type="workflow_failed",
+        payload={"run_id": run_id, "reason": reason},
+    )
+    _ensure_job(job_key)["status"] = RUN_STATUS_FAILED
+    _append_job_log(job_key, f"[ERROR] {reason}", project_id=project_id, version=version)
+    _emit_run_failed(job_key, run_id, reason)
+
+
+def _run_llm_connectivity_preflight(
+    project_id: str,
+    version: str,
+    state: dict | None,
+    model: str | None = None,
+) -> dict:
+    probe_state = state or {}
+    if model:
+        probe_state = _build_graph_input_state(
+            "llm-preflight",
+            project_id,
+            version,
+            probe_state.get("requirement", ""),
+            probe_state,
+            model=model,
+        )
+    runtime_settings = resolve_runtime_llm_settings((probe_state.get("design_context") or {}))
+    if runtime_settings:
+        llm_settings = {
+            "api_key": runtime_settings.get("openai_api_key"),
+            "base_url": runtime_settings.get("openai_base_url"),
+            "model_name": runtime_settings.get("openai_model_name"),
+            "headers": runtime_settings.get("openai_headers") or {},
+        }
+    else:
+        llm_settings = {}
+    result = test_llm_connectivity(llm_settings)
+    if result.get("success"):
+        return result
+    message = str(result.get("message") or "LLM connectivity check failed.").strip()
+    raise RuntimeError(f"LLM 连接性验证失败：{message}")
 
 
 def _sync_workflow_projection_from_payload(
@@ -1970,6 +2060,7 @@ async def run_orchestrator_task(
     feedback: str = "",
     persisted_state_override: dict | None = None,
     model: str | None = None,
+    preflight_checked: bool = False,
 ):
     thread_id = _thread_id(project_id, version)
     print(f"\n[DEBUG] Starting/Resuming Job: {job_id} for Thread: {thread_id}")
@@ -2004,6 +2095,20 @@ async def run_orchestrator_task(
             feedback=feedback,
             model=model,
         )
+        if not preflight_checked:
+            preflight_result = await asyncio.to_thread(
+                _run_llm_connectivity_preflight,
+                project_id,
+                version,
+                initial_state,
+                None,
+            )
+            _append_job_log(
+                job_id,
+                f"[SYSTEM] LLM connectivity preflight passed: {preflight_result.get('message') or 'ok'}",
+                project_id=project_id,
+                version=version,
+            )
 
         config = _graph_config(project_id, version, job_id)
         known_artifacts = _load_artifacts_from_disk(project_id, version)
@@ -2121,26 +2226,23 @@ async def run_orchestrator_task(
 
         error_msg = f"[ERROR] LangGraph execution error: {exc}\n{traceback.format_exc()}"
         print(error_msg)
-        _ensure_job(job_id)["status"] = RUN_STATUS_FAILED
         _append_job_log(job_id, error_msg, project_id=project_id, version=version)
         _emit_text_delta(job_id, job_id, runtime_registry.get(thread_id, {}).get("current_node") or "run", runtime_registry.get(thread_id, {}).get("current_node") or "run", error_msg, "stderr")
-        _set_runtime_state(
+        current_state = get_workflow_state(project_id, version, include_runtime=False) or {}
+        current_queue = current_state.get("task_queue") or []
+        if not current_queue:
+            current_queue = [
+                {"id": "0", "agent_type": "planner", "stage": 0, "phase": "ANALYSIS", "status": "failed", "dependencies": [], "priority": 100}
+            ]
+        _mark_workflow_failed(
             project_id,
             version,
-            run_status=RUN_STATUS_FAILED,
-            current_node=None,
-            waiting_reason=str(exc),
-            can_resume=True,
             job_id=job_id,
+            run_id=job_id,
+            reason=str(exc),
+            current_node=current_state.get("current_node"),
+            task_queue=current_queue,
         )
-        _finalize_waiting_interactions_for_version(
-            project_id,
-            version,
-            new_status="superseded",
-            event_type="workflow_failed",
-            payload={"run_id": job_id, "reason": str(exc)},
-        )
-        _emit_run_failed(job_id, job_id, str(exc))
     finally:
         # Final log flush: combine memory logs with state history for maximum durability
         job = jobs.get(job_id)
@@ -2469,6 +2571,7 @@ async def resume_workflow(project_id: str, version: str, human_input: dict):
             resume_action=action,
             feedback=normalized_feedback,
             persisted_state_override=resumed_state,
+            preflight_checked=False,
         )
     )
     return True
@@ -2612,6 +2715,27 @@ async def continue_workflow(
         # Generate new run_id if not exists (e.g., after cancel)
         run_id = str(uuid.uuid4())
 
+    try:
+        preflight_result = await asyncio.to_thread(
+            _run_llm_connectivity_preflight,
+            project_id,
+            version,
+            current_state,
+            model,
+        )
+        print(f"[DEBUG] continue_workflow: LLM connectivity preflight passed: {preflight_result.get('message')}")
+    except Exception as exc:
+        reason = str(exc)
+        _mark_workflow_failed(
+            project_id,
+            version,
+            run_id,
+            reason=reason,
+            current_node=current_state.get("current_node"),
+            task_queue=current_state.get("task_queue") or [],
+        )
+        return True
+
     # Build history message based on continuation type
     if is_cancelled:
         history_msg = f"[HUMAN] Retry workflow with model={model or 'default'}"
@@ -2674,6 +2798,7 @@ async def continue_workflow(
             feedback="",
             persisted_state_override=continue_state,
             model=model,
+            preflight_checked=True,
         )
     )
     return True
@@ -2933,6 +3058,28 @@ def trigger_orchestrator(
         can_resume=False,
         job_id=job_id,
     )
+    preflight_state = {
+        "project_id": project_id,
+        "version": version,
+        "requirement": requirement_text,
+        "design_context": {},
+        "task_queue": [
+            {"id": "0", "agent_type": "planner", "stage": 0, "phase": "ANALYSIS", "status": "todo", "dependencies": [], "priority": 100}
+        ],
+    }
+    try:
+        _run_llm_connectivity_preflight(project_id, version, preflight_state, model)
+    except Exception as exc:
+        _mark_workflow_failed(
+            project_id,
+            version,
+            job_id,
+            reason=str(exc),
+            job_id=job_id,
+            current_node="planner",
+            task_queue=preflight_state["task_queue"],
+        )
+        return job_id
     _launch_runtime_task(
         _thread_id(project_id, version),
         run_orchestrator_task(
@@ -2941,6 +3088,7 @@ def trigger_orchestrator(
             version,
             requirement_text,
             model=model,
+            preflight_checked=True,
         ),
     )
     return job_id

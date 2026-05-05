@@ -120,6 +120,34 @@ def _build_expert_selection_interrupt_context(
         "allow_free_text": True,
     }
 
+
+def _get_planner_selection_policy(registry: Any, expert_id: str) -> Dict[str, Any]:
+    try:
+        config = registry.load_full_config(expert_id)
+    except Exception:
+        return {}
+    policy = (config.policies or {}).get("planner_selection")
+    return policy if isinstance(policy, dict) else {}
+
+
+def _split_planner_selectable_experts(
+    registry: Any,
+    expert_ids: List[str],
+) -> tuple[List[str], List[str]]:
+    llm_selectable: List[str] = []
+    default_selected: List[str] = []
+    for expert_id in _dedupe_preserve_order(expert_ids):
+        policy = _get_planner_selection_policy(registry, expert_id)
+        if policy.get("llm_selectable", True) is not False:
+            llm_selectable.append(expert_id)
+        if bool(policy.get("default_selected", False)):
+            default_selected.append(expert_id)
+    return llm_selectable, default_selected
+
+
+def _planner_failed_task() -> List[Task]:
+    return [{"id": "0", "agent_type": "planner", "stage": 0, "phase": "ANALYSIS", "status": "failed", "dependencies": [], "priority": 100}]
+
 def _collect_planner_signal_text(requirement_text: str, human_inputs: Dict[str, Any]) -> str:
     candidate_texts: List[str] = [str(requirement_text or "")]
 
@@ -465,8 +493,8 @@ def _get_supported_agent_ids() -> set:
     
     Includes both registry-based agents and built-in agents (validator).
     """
-    # Built-in agents that are not in the registry
-    builtin_agents = {"validator"}
+    # Built-in agents that may not be present in older registries.
+    builtin_agents = {"design-assembler", "validator"}
     
     try:
         from registry.agent_registry import AgentRegistry
@@ -1473,9 +1501,11 @@ async def planner_node(state: DesignState) -> Dict[str, Any]:
     enabled_ids = _dedupe_preserve_order(metadata_db.list_enabled_expert_ids(project_id))
     # Always exclude internal system agents from design planning
     design_expert_ids = [eid for eid in enabled_ids if eid != "expert-creator"]
+    llm_selectable_expert_ids, default_selected_expert_ids = _split_planner_selectable_experts(registry, design_expert_ids)
     enabled_experts = set(design_expert_ids)
+    llm_selectable_experts = set(llm_selectable_expert_ids)
     
-    agent_descriptions = registry.get_planner_agent_descriptions(filter_ids=design_expert_ids)
+    agent_descriptions = registry.get_planner_agent_descriptions(filter_ids=llm_selectable_expert_ids)
     if not agent_descriptions.strip():
         agent_descriptions = "(No design experts are currently enabled for this project. Please select only core system agents if applicable.)"
 
@@ -1488,6 +1518,7 @@ Available Experts for this Project:
 You MUST ONLY select from the 'Available Experts' listed above. These are the ONLY experts enabled for this project.
 If a required design domain is NOT available in the list, explain this gap in your reasoning and proceed with available ones.
 Select experts strictly based on the requirement and their documented capabilities.
+Some enabled experts may be default-selected by configuration and intentionally omitted from this LLM selection list. Do not invent or select experts that are not listed above.
 Evaluate the current input materials, uploaded file structure, and any prior human clarifications.
 Assume downstream expert controllers default to single-step ReAct and only permit short read-only action batches for evidence gathering.
 Treat this as a planning and expert-selection stage:
@@ -1655,18 +1686,40 @@ Output JSON format:
             elif isinstance(decision_data, list):
                 active_agents = set(decision_data)
             else:
-                active_agents = {"modular-design"}
+                raise ValueError(f"Planner LLM returned unsupported active_agents payload: {type(decision_data).__name__}")
         except Exception as exc:
-            print(f"[ERROR] Planner LLM failed: {exc}. Falling back to default.")
-            active_agents = {"modular-design"}
+            error_message = f"Planner LLM failed: {exc}"
+            print(f"[ERROR] {error_message}")
+            reasoning_sections = [
+                PLANNER_REASONING_TITLE,
+                "",
+                "**状态：** 规划器调用 LLM 失败，流程已停止。",
+                "",
+                f"**错误：** {error_message}",
+            ]
+            (project_path / "logs" / "planner-reasoning.md").write_text("\n".join(reasoning_sections), encoding="utf-8")
+            return {
+                "workflow_phase": "PLANNING",
+                "task_queue": _planner_failed_task(),
+                "history": [
+                    f"[ERROR] Planner LLM connectivity or generation failed: {exc}",
+                ],
+                "human_intervention_required": False,
+                "waiting_reason": error_message,
+                "pending_interrupt": None,
+                "run_status": "failed",
+                "last_worker": "planner",
+                "current_node": "planner",
+                "tool_results": tool_results,
+            }
 
         active_agents = _normalize_active_agents(active_agents)
         print(f"[DEBUG] Planner: active_agents after normalization: {sorted(active_agents)}")
-        print(f"[DEBUG] Planner: allowed design_experts for this project: {sorted(enabled_experts)}")
+        print(f"[DEBUG] Planner: allowed LLM-selectable design_experts for this project: {sorted(llm_selectable_experts)}")
 
-        if enabled_experts:
+        if llm_selectable_experts:
             # Only use experts that are explicitly enabled
-            active_agents = {agent for agent in active_agents if agent in enabled_experts}
+            active_agents = {agent for agent in active_agents if agent in llm_selectable_experts}
             print(f"[DEBUG] Planner: final filtered active_agents: {sorted(active_agents)}")
         else:
             # If no experts are enabled, we MUST NOT fallback to "all"
@@ -1677,11 +1730,18 @@ Output JSON format:
         pre_policy_agents = set(active_agents)
         active_agents = _apply_policy_based_auto_selection(
             active_agents=active_agents,
-            enabled_experts=enabled_experts,
+            enabled_experts=llm_selectable_experts,
             requirement_text=requirement_text,
             human_inputs=combined_human_inputs or human_inputs,
         )
         policy_auto_selected = sorted(active_agents - pre_policy_agents)
+
+    should_apply_default_selection = planner_selection_override is None and any(
+        agent in llm_selectable_experts for agent in active_agents
+    )
+    if should_apply_default_selection:
+        active_agents.update(agent for agent in default_selected_expert_ids if agent in enabled_experts)
+    configured_default_selected = sorted(set(default_selected_expert_ids) & active_agents)
     
     # Early return if human intervention is needed - don't build full task queue yet
     if needs_human:
@@ -1767,7 +1827,7 @@ Output JSON format:
             context=_build_expert_selection_interrupt_context(
                 enabled_expert_ids=design_expert_ids,
                 recommended_expert_ids=recommended_experts,
-                auto_selected_expert_ids=policy_auto_selected,
+                auto_selected_expert_ids=sorted(set(policy_auto_selected) | set(configured_default_selected)),
             ),
             resume_target="planner",
             interrupt_kind=PLANNER_EXPERT_SELECTION_INTERACTION,
@@ -1779,6 +1839,7 @@ Output JSON format:
             llm_decision.reasoning,
             "",
             f"**规划器推荐专家：** {_format_expert_list(recommended_experts)}",
+            f"**配置默认选中专家：** {_format_expert_list(configured_default_selected)}",
             "",
             "**状态：** 等待人工确认本次执行专家。",
         ]
@@ -1800,7 +1861,9 @@ Output JSON format:
                 "evidence_dir": "evidence",
             },
             "tool_context": tool_context_payload,
-            "active_agents": recommended_experts,
+            "active_agents": sorted(active_agents),
+            "planner_recommended_experts": recommended_experts,
+            "configured_default_selected_experts": configured_default_selected,
             "topic_ownership": topic_ownership,
             "domain_name": "Domain",
             "aggregate_root": "Entity",
@@ -1863,6 +1926,7 @@ Output JSON format:
         }
 
     # Build task queue only when we have a clear pipeline
+    configured_default_selected = sorted(set(default_selected_expert_ids) & active_agents)
     tasks = _build_task_queue(active_agents)
     print(f"[DEBUG] Planner: task_queue built with {len(tasks)} tasks: {[t['agent_type'] for t in tasks]}")
     topic_ownership = _build_topic_ownership_payload(active_agents)
@@ -1875,6 +1939,8 @@ Output JSON format:
         "",
         f"**最终选中专家：** {', '.join(sorted(list(active_agents)))}",
     ]
+    if configured_default_selected:
+        reasoning_sections.extend(["", f"**配置默认选中专家：** {_format_expert_list(configured_default_selected)}"])
     if execution_topology:
         reasoning_sections.extend(["", execution_topology])
     reasoning_content = "\n".join(reasoning_sections)
@@ -1895,6 +1961,7 @@ Output JSON format:
         },
         "tool_context": tool_context_payload,
         "active_agents": list(active_agents),
+        "configured_default_selected_experts": configured_default_selected,
         "topic_ownership": topic_ownership,
         "domain_name": "Domain",
         "aggregate_root": "Entity",
