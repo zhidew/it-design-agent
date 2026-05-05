@@ -184,7 +184,7 @@ interface ArtifactGovernanceReviewableEvent extends EventBase {
   event_type: 'artifact_governance_reviewable';
   node_id: string;
   node_type: string;
-  status: 'ready_for_review' | 'needs_review' | 'blocked';
+  status: 'auto_accepted' | 'ready_for_review' | 'needs_review' | 'blocked';
   artifacts: Array<{
     artifact_id: string;
     file_name?: string;

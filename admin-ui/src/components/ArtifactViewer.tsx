@@ -84,7 +84,7 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
   const disputedSectionCount = sectionReviews.filter((review) => ['disputed', 'revision_pending', 'blocked_by_conflict'].includes(review.status)).length;
   const overallReviewStatus = blockingConflictCount > 0 || activeDesignArtifact?.status === 'system_check_failed'
     ? 'blocked'
-    : activeDesignArtifact?.status === 'accepted'
+    : activeDesignArtifact?.status === 'accepted' || activeDesignArtifact?.status === 'auto_accepted'
       ? 'accepted'
       : warningConflictCount > 0 || openImpactCount > 0 || disputedSectionCount > 0 || reflection?.status === 'warning'
         ? 'needs_review'
@@ -343,7 +343,7 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
                 <button
                   type="button"
                   onClick={handleAcceptArtifact}
-                  disabled={!canDiscuss || isWorking || activeDesignArtifact.status === 'accepted' || overallReviewStatus === 'blocked'}
+                  disabled={!canDiscuss || isWorking || ['accepted', 'auto_accepted'].includes(activeDesignArtifact.status) || overallReviewStatus === 'blocked'}
                   className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-black text-white transition-all hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-300"
                   title="接受当前 Artifact 版本"
                 >
@@ -634,7 +634,7 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
                     Context Conflict
                   </div>
                   <div className="text-sm font-bold text-slate-800">
-                    {decisionRequired ? '需要先裁决后再继续下游自动接受' : '检测到 To-Be 或待确认差异'}
+                    {decisionRequired ? '需要先裁决，再判断是否影响下游产物' : '检测到 To-Be 或待确认差异'}
                   </div>
                   <div className="text-xs leading-5 text-slate-600">
                     系统判定：{String(normalizedIntent.semantic || 'missing_context')} · 候选冲突 {candidateConflictCount} 个
@@ -642,7 +642,7 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
                   <div className="grid gap-2 text-xs font-semibold text-slate-700">
                     <div className="rounded-lg bg-white/70 px-3 py-2">作为目标设计继续，并生成变更建议</div>
                     <div className="rounded-lg bg-white/70 px-3 py-2">按当前资产事实调整专家产出</div>
-                    <div className="rounded-lg bg-white/70 px-3 py-2">先标记待确认，暂缓下游自动接受</div>
+                    <div className="rounded-lg bg-white/70 px-3 py-2">先标记待确认，用户修订后再评估下游影响</div>
                   </div>
                   <div className="grid gap-2 sm:grid-cols-2">
                     <button

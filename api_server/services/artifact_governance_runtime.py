@@ -16,6 +16,7 @@ BLOCKING_ARTIFACT_STATUSES = {
     "content_drifted",
 }
 WARNING_ARTIFACT_STATUSES = {
+    "auto_accepted",
     "reflection_warning",
     "needs_revalidation",
     "needs_regeneration",
@@ -122,11 +123,9 @@ def _summarize_artifact(artifact: Dict[str, Any], graph: Dict[str, Any]) -> Dict
 
 
 def _runtime_status(items: List[Dict[str, Any]], errors: List[Dict[str, str]]) -> str:
-    if errors or any(item.get("review_status") == "blocked" for item in items):
-        return "blocked"
-    if any(item.get("review_status") == "needs_review" for item in items):
+    if errors:
         return "needs_review"
-    return "ready_for_review"
+    return "auto_accepted"
 
 
 def finalize_expert_artifact_outputs(

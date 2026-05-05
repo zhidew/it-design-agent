@@ -130,7 +130,7 @@ def _single_address_schema_conflicts(
                 suggested_actions=[
                     "作为 To-Be 目标继续，并生成数据模型变更建议。",
                     "按当前数据库 As-Is 调整专家产出。",
-                    "标记待确认，阻塞相关下游自动 accepted。",
+                    "标记待确认，并在用户修订后提示相关下游重新校验。",
                 ],
             )
         )
@@ -437,10 +437,14 @@ def run_consistency_check(artifact_id: str) -> Dict[str, Any]:
     if conflict_ids:
         report = metadata_db.update_system_consistency_report(report["report_id"], conflict_ids=conflict_ids) or report
 
-    if status == "failed":
-        metadata_db.update_design_artifact(artifact_id, status="system_check_failed", consistency_report_id=report["report_id"])
-    else:
-        metadata_db.update_design_artifact(artifact_id, consistency_report_id=report["report_id"])
+    content_integrity_failed = any(
+        check.get("check_id") == "artifact_content_integrity" and check.get("status") == "failed"
+        for check in checks
+    )
+    update_payload: Dict[str, Any] = {"consistency_report_id": report["report_id"]}
+    if status == "failed" and content_integrity_failed:
+        update_payload["status"] = "system_check_failed"
+    metadata_db.update_design_artifact(artifact_id, **update_payload)
     return get_consistency_report_for_artifact(artifact_id) or report
 
 

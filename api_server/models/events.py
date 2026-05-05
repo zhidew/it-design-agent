@@ -45,7 +45,7 @@ class ArtifactGovernanceReviewableEvent(EventModel):
     event_type: Literal["artifact_governance_reviewable"] = "artifact_governance_reviewable"
     node_id: str = Field(description="Stable node identifier associated with the governed artifact output.")
     node_type: str = Field(description="Node type or agent type that produced the governed artifact output.")
-    status: Literal["ready_for_review", "needs_review", "blocked"] = Field(description="Governance review status for this output batch.")
+    status: Literal["auto_accepted", "ready_for_review", "needs_review", "blocked"] = Field(description="Governance review status for this output batch.")
     artifacts: list[Dict[str, Any]] = Field(default_factory=list, description="Reviewable artifact summaries.")
     errors: list[Dict[str, Any]] = Field(default_factory=list, description="Non-fatal governance finalization errors.")
     dependency_graph: Dict[str, Any] = Field(default_factory=dict, description="Dependency graph refresh summary.")

@@ -35,7 +35,7 @@ export const governanceFixture: DesignArtifact = {
   artifact_type: 'md',
   artifact_version: 2,
   parent_artifact_id: 'artifact-api-v1',
-  status: 'ready_for_review',
+  status: 'auto_accepted',
   title: 'api-design.md',
   file_name: 'api-design.md',
   file_path: 'artifacts/api-design.md',
@@ -62,7 +62,7 @@ export const governanceFixture: DesignArtifact = {
     status: 'warning',
     checks: [{ check_id: 'artifact_vs_database_schema', status: 'warning', message: 'Review schema terms.' }],
     conflict_ids: ['conflict-1'],
-    suggested_actions: ['Review warning before acceptance.'],
+    suggested_actions: ['Review warning when editing this artifact.'],
     created_at: '2026-05-05T00:00:00Z',
     conflicts: [
       {

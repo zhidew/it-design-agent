@@ -15,6 +15,14 @@ from subgraphs.expert_reflection import record_reflection_observation
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 PROJECTS_DIR = BASE_DIR / "projects"
 CONTENT_DIRS = ("artifacts", "release", "evidence", "logs", "baseline")
+PLANNER_EXPERT_IDS = {"planner"}
+PLANNER_ARTIFACT_NAMES = {
+    "requirements.json",
+    "input-requirements.md",
+    "original-requirements.md",
+    "planner-reasoning.md",
+    "planner-output.md",
+}
 
 
 def _sha256_text(value: str) -> str:
@@ -55,13 +63,20 @@ def _artifact_type_for_file(file_name: str) -> str:
     return suffix or "text"
 
 
-def _status_from_reflection(reflection: Dict[str, Any]) -> str:
+def _status_from_reflection(reflection: Dict[str, Any], *, default_status: str = "auto_accepted") -> str:
+    if default_status == "auto_accepted":
+        return default_status
     status = reflection.get("status")
     if status == "blocking":
         return "reflection_failed"
-    if status == "warning":
+    if status == "warning" and default_status != "auto_accepted":
         return "reflection_warning"
-    return "ready_for_review"
+    return default_status
+
+
+def _is_planner_artifact(expert_id: str, file_name: str) -> bool:
+    lower = file_name.lower()
+    return expert_id in PLANNER_EXPERT_IDS or lower in PLANNER_ARTIFACT_NAMES or lower.startswith("planner-")
 
 
 def _build_summary(content: str) -> str:
@@ -82,6 +97,8 @@ def sync_file_artifact(
     dependency_refs: Optional[List[str]] = None,
     source_refs: Optional[List[str]] = None,
 ) -> Optional[Dict[str, Any]]:
+    if _is_planner_artifact(expert_id, file_name):
+        return None
     path = _resolve_artifact_path(project_id, version_id, file_name)
     if not path:
         return None
@@ -177,7 +194,7 @@ def sync_artifacts_from_disk(project_id: str, version_id: str, artifacts: Dict[s
 
 def infer_expert_id_for_file(file_name: str) -> str:
     lower = file_name.lower()
-    if lower in {"requirements.json", "input-requirements.md", "original-requirements.md"}:
+    if lower in PLANNER_ARTIFACT_NAMES or lower.startswith("planner-"):
         return "planner"
     if lower.startswith("schema") or lower in {"er.md", "migration-plan.md"}:
         return "data-design"
@@ -217,6 +234,11 @@ def accept_design_artifact(artifact_id: str, *, reviewer_note: str = "", accepte
     artifact = metadata_db.get_design_artifact(artifact_id)
     if not artifact:
         raise ValueError("Design artifact not found.")
+    should_propagate_revision = (
+        artifact.get("status") != "accepted"
+        and bool(artifact.get("parent_artifact_id"))
+        and artifact.get("status") in {"ready_for_review", "reflection_warning"}
+    )
     updated = metadata_db.update_design_artifact(artifact_id, status="accepted")
     metadata_db.append_design_artifact_event(
         event_id=str(uuid.uuid4()),
@@ -224,7 +246,64 @@ def accept_design_artifact(artifact_id: str, *, reviewer_note: str = "", accepte
         event_type="accepted",
         payload={"reviewer_note": reviewer_note or "", "accepted_by": accepted_by or "user"},
     )
+    if should_propagate_revision:
+        _propagate_accepted_revision_impact(artifact, reviewer_note=reviewer_note, accepted_by=accepted_by)
     return hydrate_artifact(updated or artifact)
+
+
+def _propagate_accepted_revision_impact(artifact: Dict[str, Any], *, reviewer_note: str = "", accepted_by: str = "user") -> None:
+    parent_artifact_id = artifact.get("parent_artifact_id")
+    if not parent_artifact_id:
+        return
+    try:
+        from services import impact_analysis_service
+
+        impact_result = impact_analysis_service.analyze_revision_impact(
+            parent_artifact_id,
+            {
+                "change_type": "schema_change" if artifact.get("artifact_type") == "sql" else "artifact_revision",
+                "accepted_artifact_id": artifact["artifact_id"],
+                "reviewer_note": reviewer_note or "",
+                "accepted_by": accepted_by or "user",
+            },
+            trigger_type="revision_accepted",
+            trigger_ref_id=artifact["artifact_id"],
+        )
+        sessions = metadata_db.list_revision_sessions(
+            project_id=artifact["project_id"],
+            version_id=artifact["version_id"],
+        )
+        affected_artifacts = [
+            {
+                "artifact_id": record["impacted_artifact_id"],
+                "impact_status": record["impact_status"],
+                "impact_id": record["impact_id"],
+            }
+            for record in impact_result.get("impact_records", [])
+        ]
+        for session in sessions:
+            if session.get("created_artifact_id") == artifact["artifact_id"]:
+                metadata_db.update_revision_session(
+                    session["revision_session_id"],
+                    status="revision_accepted",
+                    affected_artifacts=affected_artifacts,
+                )
+                metadata_db.append_revision_session_event(
+                    event_id=str(uuid.uuid4()),
+                    revision_session_id=session["revision_session_id"],
+                    event_type="revision_accepted",
+                    payload={
+                        "accepted_artifact_id": artifact["artifact_id"],
+                        "affected_artifacts": affected_artifacts,
+                    },
+                )
+    except Exception as exc:
+        metadata_db.append_design_artifact_event(
+            event_id=str(uuid.uuid4()),
+            artifact_id=artifact["artifact_id"],
+            event_type="impact_analysis_failed",
+            payload={"error": str(exc), "trigger": "revision_accepted"},
+        )
 
 
 def mark_artifact_section_review(
@@ -264,7 +343,7 @@ def mark_artifact_section_review(
             "revision_session_id": revision_session_id,
         },
     )
-    if status in {"disputed", "revision_pending", "blocked_by_conflict"} and artifact.get("status") == "accepted":
+    if status in {"disputed", "revision_pending", "blocked_by_conflict"} and artifact.get("status") in {"accepted", "auto_accepted"}:
         metadata_db.update_design_artifact(artifact_id, status="user_disputed")
     return review
 
@@ -585,7 +664,11 @@ def apply_revision_patch(patch_id: str) -> Dict[str, Any]:
         required_actions=reflection["required_actions"],
         blocks_downstream=reflection["blocks_downstream"],
     )
-    metadata_db.update_design_artifact(new_artifact["artifact_id"], reflection_report_id=report["report_id"], status=_status_from_reflection(reflection))
+    metadata_db.update_design_artifact(
+        new_artifact["artifact_id"],
+        reflection_report_id=report["report_id"],
+        status=_status_from_reflection(reflection, default_status="ready_for_review"),
+    )
     try:
         from services import context_consistency_service
 
@@ -598,27 +681,6 @@ def apply_revision_patch(patch_id: str) -> Dict[str, Any]:
             payload={"error": str(exc)},
         )
     metadata_db.update_design_artifact(artifact["artifact_id"], status="superseded")
-    impact_result = {"impact_records": []}
-    try:
-        from services import impact_analysis_service
-
-        impact_result = impact_analysis_service.analyze_revision_impact(
-            artifact["artifact_id"],
-            {
-                "change_type": "schema_change" if artifact["artifact_type"] == "sql" else "artifact_revision",
-                "created_artifact_id": new_artifact["artifact_id"],
-                "patch_id": patch_id,
-            },
-            trigger_type="patch_applied",
-            trigger_ref_id=patch_id,
-        )
-    except Exception as exc:
-        metadata_db.append_design_artifact_event(
-            event_id=str(uuid.uuid4()),
-            artifact_id=artifact["artifact_id"],
-            event_type="impact_analysis_failed",
-            payload={"error": str(exc), "patch_id": patch_id},
-        )
     updated_patch = metadata_db.update_revision_patch(
         patch_id,
         patch_status="applied",
@@ -629,24 +691,20 @@ def apply_revision_patch(patch_id: str) -> Dict[str, Any]:
         applied=True,
     )
     session_id = patch["revision_session_id"]
-    affected_artifacts = [
-        {
-            "artifact_id": record["impacted_artifact_id"],
-            "impact_status": record["impact_status"],
-            "impact_id": record["impact_id"],
-        }
-        for record in impact_result.get("impact_records", [])
-    ]
     metadata_db.update_revision_session(
         session_id,
-        status="patch_applied",
+        status="awaiting_revision_acceptance",
         created_artifact_id=new_artifact["artifact_id"],
-        affected_artifacts=affected_artifacts,
+        affected_artifacts=[],
     )
     metadata_db.append_revision_session_event(
         event_id=str(uuid.uuid4()),
         revision_session_id=session_id,
         event_type="patch_applied",
-        payload={"patch_id": patch_id, "created_artifact_id": new_artifact["artifact_id"]},
+        payload={
+            "patch_id": patch_id,
+            "created_artifact_id": new_artifact["artifact_id"],
+            "next_step": "accept_revision",
+        },
     )
     return updated_patch or patch
