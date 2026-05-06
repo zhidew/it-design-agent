@@ -380,7 +380,7 @@ type OrchestratorEvent =
   | RunFailedEvent;
 
 type ExecutionLogEntry =
-  | { kind: 'text'; id: string; text: string; tone: 'default' | 'error' }
+  | { kind: 'text'; id: string; text: string; tone: 'default' | 'error'; timestamp?: string | null }
   | { kind: 'tool'; id: string; event: ToolEvent };
 
 const NODE_STATUS_PRIORITY: Record<NodeStatus, number> = {
@@ -402,6 +402,46 @@ const PLANNER_EXPERT_SELECTION_WAIT_LOG_MARKERS = [
 const isPlannerExpertSelectionWaitLog = (text: string) => (
   PLANNER_EXPERT_SELECTION_WAIT_LOG_MARKERS.some((marker) => text.includes(marker))
 );
+
+const RUN_LOG_TIMESTAMP_RE = /^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}\]\s+/;
+
+const padTimePart = (value: number, length = 2) => String(value).padStart(length, '0');
+
+const formatLogTimestamp = (value?: string | null) => {
+  if (!value) {
+    return null;
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+  return [
+    parsed.getFullYear(),
+    '-',
+    padTimePart(parsed.getMonth() + 1),
+    '-',
+    padTimePart(parsed.getDate()),
+    ' ',
+    padTimePart(parsed.getHours()),
+    ':',
+    padTimePart(parsed.getMinutes()),
+    ':',
+    padTimePart(parsed.getSeconds()),
+    '.',
+    padTimePart(parsed.getMilliseconds(), 3),
+  ].join('');
+};
+
+const getLogDedupeBody = (text: string) => String(text || '').replace(RUN_LOG_TIMESTAMP_RE, '');
+
+const formatExecutionLogText = (text: string, timestamp?: string | null) => {
+  const safeText = String(text || '');
+  if (RUN_LOG_TIMESTAMP_RE.test(safeText)) {
+    return safeText;
+  }
+  const formattedTimestamp = formatLogTimestamp(timestamp);
+  return formattedTimestamp ? `[${formattedTimestamp}] ${safeText}` : safeText;
+};
 
 const isPlannerExpertSelectionInterruptLike = (
   value: {
@@ -1479,25 +1519,26 @@ export function ProjectDetail() {
       && isPlannerExpertSelectionInterruptLike(workflowState.pending_interrupt);
     const shouldHideStalePlannerExpertSelectionWait = !isCurrentlyWaitingForPlannerExpertSelection;
 
-    const eventEntries = runEvents.map((event) => {
+    const eventEntries: ExecutionLogEntry[] = runEvents.map((event): ExecutionLogEntry | null => {
       switch (event.event_type) {
         case 'node_started':
-          return { kind: 'text', id: event.event_id, text: `[EVENT] ${event.node_type} started`, tone: 'default' as const };
+          return { kind: 'text', id: event.event_id, text: `[EVENT] ${event.node_type} started`, tone: 'default' as const, timestamp: event.timestamp };
         case 'node_completed':
-          return { kind: 'text', id: event.event_id, text: `[EVENT] ${event.node_type} completed with status ${event.status}`, tone: event.status === 'failed' ? 'error' as const : 'default' as const };
+          return { kind: 'text', id: event.event_id, text: `[EVENT] ${event.node_type} completed with status ${event.status}`, tone: event.status === 'failed' ? 'error' as const : 'default' as const, timestamp: event.timestamp };
         case 'text_delta':
           if (shouldHideStalePlannerExpertSelectionWait && isPlannerExpertSelectionWaitLog(event.delta)) {
             return null;
           }
-          return { kind: 'text', id: event.event_id, text: event.delta, tone: event.delta.includes('[ERROR]') ? 'error' as const : 'default' as const };
+          return { kind: 'text', id: event.event_id, text: event.delta, tone: event.delta.includes('[ERROR]') ? 'error' as const : 'default' as const, timestamp: event.timestamp };
         case 'artifact_updated':
-          return { kind: 'text', id: event.event_id, text: `[EVENT] ${event.node_type} ${event.artifact_status} artifact ${event.artifact_name}`, tone: 'default' as const };
+          return { kind: 'text', id: event.event_id, text: `[EVENT] ${event.node_type} ${event.artifact_status} artifact ${event.artifact_name}`, tone: 'default' as const, timestamp: event.timestamp };
         case 'artifact_governance_reviewable':
           return {
             kind: 'text',
             id: event.event_id,
             text: `[EVENT] ${event.node_type} governance ${event.status} for ${event.artifacts.length} artifact${event.artifacts.length === 1 ? '' : 's'}`,
             tone: event.status === 'blocked' ? 'error' as const : 'default' as const,
+            timestamp: event.timestamp,
           };
         case 'tool_event':
           return { kind: 'tool', id: event.event_id, event };
@@ -1505,17 +1546,17 @@ export function ProjectDetail() {
           if (shouldHideStalePlannerExpertSelectionWait && isPlannerExpertSelectionInterruptLike(event)) {
             return null;
           }
-          return { kind: 'text', id: event.event_id, text: `[EVENT] Waiting for human input at ${event.node_type}: ${event.question}`, tone: 'default' as const };
+          return { kind: 'text', id: event.event_id, text: `[EVENT] Waiting for human input at ${event.node_type}: ${event.question}`, tone: 'default' as const, timestamp: event.timestamp };
         case 'run_completed':
-          return { kind: 'text', id: event.event_id, text: '[EVENT] Run completed successfully', tone: 'default' as const };
+          return { kind: 'text', id: event.event_id, text: '[EVENT] Run completed successfully', tone: 'default' as const, timestamp: event.timestamp };
         case 'run_failed':
-          return { kind: 'text', id: event.event_id, text: `[EVENT] Run failed: ${event.error_message}`, tone: 'error' as const };
+          return { kind: 'text', id: event.event_id, text: `[EVENT] Run failed: ${event.error_message}`, tone: 'error' as const, timestamp: event.timestamp };
         default:
           return null;
       }
     }).filter((entry): entry is ExecutionLogEntry => entry !== null);
 
-    const diskLogEntries = versionLogs
+    const diskLogEntries: ExecutionLogEntry[] = versionLogs
       .filter((log) => !(shouldHideStalePlannerExpertSelectionWait && isPlannerExpertSelectionWaitLog(log)))
       .map((log, idx) => ({
         kind: 'text' as const,
@@ -1524,7 +1565,7 @@ export function ProjectDetail() {
         tone: log.includes('[ERROR]') ? 'error' as const : 'default' as const,
       }));
 
-    const historyEntries = (workflowState?.history || [])
+    const historyEntries: ExecutionLogEntry[] = (workflowState?.history || [])
       .filter((log) => !(shouldHideStalePlannerExpertSelectionWait && isPlannerExpertSelectionWaitLog(log)))
       .map((log, idx) => ({
         kind: 'text' as const,
@@ -1534,12 +1575,23 @@ export function ProjectDetail() {
       }));
 
     const mergedEntries: ExecutionLogEntry[] = [];
-    const seen = new Set<string>();
+    const seen = new Map<string, number>();
     [...eventEntries, ...diskLogEntries, ...historyEntries].forEach((entry) => {
-      const key = entry.kind === 'tool' ? `tool:${entry.id}` : `text:${entry.text}`;
-      if (!seen.has(key)) {
-        seen.add(key);
+      const key = entry.kind === 'tool' ? `tool:${entry.id}` : `text:${getLogDedupeBody(entry.text)}`;
+      const seenIndex = seen.get(key);
+      if (seenIndex === undefined) {
+        seen.set(key, mergedEntries.length);
         mergedEntries.push(entry);
+        return;
+      }
+      const previousEntry = mergedEntries[seenIndex];
+      if (
+        entry.kind === 'text' &&
+        previousEntry?.kind === 'text' &&
+        RUN_LOG_TIMESTAMP_RE.test(entry.text) &&
+        !RUN_LOG_TIMESTAMP_RE.test(previousEntry.text)
+      ) {
+        mergedEntries[seenIndex] = entry;
       }
     });
 
@@ -2847,7 +2899,7 @@ export function ProjectDetail() {
                       <div key={entry.id} className="flex gap-3 whitespace-pre-wrap">
                         <span className="text-gray-600 flex-shrink-0">[{idx + 1}]</span>
                         <span className={entry.tone === 'error' ? 'text-rose-400' : 'text-emerald-400/80'}>
-                          {entry.text}
+                          {formatExecutionLogText(entry.text, entry.timestamp)}
                         </span>
                       </div>
                     )
