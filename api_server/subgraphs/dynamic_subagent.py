@@ -1026,6 +1026,55 @@ def _normalize_react_decision(decision: Dict[str, Any]) -> Dict[str, Any]:
     return normalized
 
 
+def _normalize_human_option(option: Any, fallback_value: str) -> Optional[Dict[str, str]]:
+    if isinstance(option, dict):
+        value = str(option.get("value") or option.get("label") or fallback_value).strip()
+        label = str(option.get("label") or value).strip()
+        description = str(option.get("description") or "").strip()
+    else:
+        value = str(option).strip()
+        label = value
+        description = ""
+
+    if not value:
+        return None
+    return {
+        "value": value,
+        "label": label or value,
+        "description": description,
+    }
+
+
+def _question_type_supports_options(question_type: str) -> bool:
+    return question_type in {"single_select", "multi_select"}
+
+
+def _select_default_question_type(supported_question_types: List[str]) -> str:
+    for candidate in ("single_select", "multi_select"):
+        if candidate in supported_question_types:
+            return candidate
+    return supported_question_types[0] if supported_question_types else "single_select"
+
+
+def _normalize_human_options_with_other(raw_options: Any) -> List[Dict[str, str]]:
+    options: List[Dict[str, str]] = []
+    if isinstance(raw_options, list):
+        for index, raw_option in enumerate(raw_options):
+            option = _normalize_human_option(raw_option, f"option_{index + 1}")
+            if option is not None:
+                options.append(option)
+
+    if not any(option["value"] == "other" or option["label"] == "其他" for option in options):
+        options.append(
+            {
+                "value": "other",
+                "label": "其他",
+                "description": "选择此项后，可在补充说明中填写未覆盖的情况。",
+            }
+        )
+    return options
+
+
 def _action_targets_final_artifact(
     action: Dict[str, Any],
     expected_files: List[str],
@@ -3201,7 +3250,7 @@ def build_react_system_prompt(
     default_topics = [str(item).strip() for item in (interaction_cfg.get("default_topics") or []) if str(item).strip()]
     answer_merge_targets = [str(item).strip() for item in (interaction_cfg.get("answer_merge_targets") or []) if str(item).strip()]
     interaction_lines = [
-        f"- Allowed question types: {', '.join(supported_question_types) if supported_question_types else 'single_select, long_text'}",
+        f"- Allowed question types: {', '.join(supported_question_types) if supported_question_types else 'single_select, multi_select'}",
         f"- Default clarification topics: {', '.join(default_topics) if default_topics else capability.replace('-', '_')}",
         f"- Answer merge targets: {', '.join(answer_merge_targets) if answer_merge_targets else 'clarified_requirements, decision_log'}",
     ]
@@ -4305,7 +4354,7 @@ async def run_dynamic_subagent(
                     str(item).strip()
                     for item in (clarification_cfg.get("supported_question_types") or [])
                     if str(item).strip()
-                ] or ["single_select", "long_text"]
+                ] or ["single_select", "multi_select"]
                 default_topics = [
                     str(item).strip()
                     for item in (clarification_cfg.get("default_topics") or [])
@@ -4320,11 +4369,16 @@ async def run_dynamic_subagent(
                 from graphs.nodes import _normalize_interrupt_context
                 normalized_ctx = _normalize_interrupt_context(expert_context)
                 preferred_answer_type = str(normalized_ctx.get("preferred_answer_type") or "").strip()
-                if preferred_answer_type not in supported_question_types:
+                supports_select_question = any(_question_type_supports_options(item) for item in supported_question_types)
+                if preferred_answer_type not in supported_question_types or (
+                    supports_select_question and not _question_type_supports_options(preferred_answer_type)
+                ):
                     if isinstance(normalized_ctx.get("options"), list) and normalized_ctx.get("options"):
-                        preferred_answer_type = "single_select" if "single_select" in supported_question_types else supported_question_types[0]
+                        preferred_answer_type = _select_default_question_type(supported_question_types)
                     else:
-                        preferred_answer_type = "long_text" if "long_text" in supported_question_types else supported_question_types[0]
+                        preferred_answer_type = _select_default_question_type(supported_question_types)
+                if _question_type_supports_options(preferred_answer_type):
+                    normalized_ctx["options"] = _normalize_human_options_with_other(normalized_ctx.get("options"))
                 normalized_ctx.setdefault("topic", "clarification")
                 if default_topics and normalized_ctx.get("topic") == "clarification":
                     normalized_ctx["topic"] = default_topics[0]
@@ -4340,13 +4394,16 @@ async def run_dynamic_subagent(
                 normalized_ctx["supported_question_types"] = supported_question_types
                 normalized_ctx["preferred_answer_type"] = preferred_answer_type
                 normalized_ctx["answer_merge_targets"] = answer_merge_targets
-                normalized_ctx.setdefault(
-                    "question_schema",
-                    {
-                        "type": preferred_answer_type,
-                        "allow_free_text": True,
-                    },
+                question_schema = (
+                    dict(normalized_ctx.get("question_schema"))
+                    if isinstance(normalized_ctx.get("question_schema"), dict)
+                    else {}
                 )
+                question_schema["type"] = preferred_answer_type
+                question_schema["allow_free_text"] = True
+                if _question_type_supports_options(preferred_answer_type):
+                    question_schema["options"] = list(normalized_ctx.get("options") or [])
+                normalized_ctx["question_schema"] = question_schema
                 from graphs.nodes import _build_pending_interrupt
                 pending_interrupt = _build_pending_interrupt(
                     node_id=state.get("current_task_id") or capability,
