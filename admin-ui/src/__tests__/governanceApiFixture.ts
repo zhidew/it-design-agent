@@ -1,4 +1,9 @@
 import type { DesignArtifact, ImpactRecord, SectionReview } from '../api';
+import {
+  canAcceptDesignArtifact,
+  isSystemControlledDesignArtifact,
+  isSystemControlledArtifactFile,
+} from '../components/artifactGovernanceUi';
 
 const sampleImpact: ImpactRecord = {
   impact_id: 'impact-1',
@@ -90,6 +95,24 @@ export const governanceFixture: DesignArtifact = {
   section_reviews: [sampleSectionReview],
 };
 
+const readyForReviewFixture: DesignArtifact = {
+  ...governanceFixture,
+  artifact_id: 'artifact-api-revision',
+  artifact_version: 3,
+  parent_artifact_id: 'artifact-api',
+  status: 'ready_for_review',
+};
+
+const validatorFixture: DesignArtifact = {
+  ...governanceFixture,
+  artifact_id: 'artifact-validator',
+  expert_id: 'validator',
+  status: 'auto_accepted',
+  title: 'validation-report.md',
+  file_name: 'validation-report.md',
+  file_path: 'artifacts/validation-report.md',
+};
+
 export const summarizeGovernanceFixture = (artifact: DesignArtifact) => {
   const openConflicts = artifact.consistency?.conflicts?.filter((conflict) => conflict.status === 'open') ?? [];
   const activeImpacts = [...(artifact.impact_records ?? []), ...(artifact.incoming_impacts ?? [])].filter(
@@ -107,4 +130,20 @@ export const summarizeGovernanceFixture = (artifact: DesignArtifact) => {
 const summary = summarizeGovernanceFixture(governanceFixture);
 if (summary.openConflictCount !== 1 || summary.activeImpactCount !== 1 || summary.disputedSectionCount !== 1) {
   throw new Error('Governance fixture summary does not match expected UI counters.');
+}
+
+if (canAcceptDesignArtifact(governanceFixture, true, 'accepted')) {
+  throw new Error('Initial auto_accepted artifacts must hide the accept action.');
+}
+
+if (!canAcceptDesignArtifact(readyForReviewFixture, true, 'ready_for_review')) {
+  throw new Error('User-created revision artifacts should expose the accept action.');
+}
+
+if (!isSystemControlledDesignArtifact(validatorFixture.file_name, validatorFixture)) {
+  throw new Error('Validator artifacts must be treated as system-controlled UI artifacts.');
+}
+
+if (!isSystemControlledArtifactFile('clarified-requirements.md')) {
+  throw new Error('Planner clarified requirements must remain outside governance actions.');
 }

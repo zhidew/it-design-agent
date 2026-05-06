@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm';
 import { FileText, FileJson, Database, MessageSquareText, GitCompare, Check, X, Wand2, ShieldAlert, AlertTriangle, GitBranch, CheckCircle2 } from 'lucide-react';
 import { CodeBlock } from './CodeBlock'; // Assuming we'll extract CodeBlock too
 import { api, type ArtifactAnchor, type DesignArtifact, type RevisionPatch, type RevisionSession } from '../api';
+import { canAcceptDesignArtifact, isSystemControlledDesignArtifact } from './artifactGovernanceUi';
 
 interface ArtifactViewerProps {
   projectId: string;
@@ -28,18 +29,6 @@ const getApiErrorMessage = (error: unknown, fallback: string) => {
     return error.message;
   }
   return fallback;
-};
-
-const isPlannerControlledArtifactFile = (fileName: string | null) => {
-  const normalized = (fileName || '').toLowerCase();
-  return [
-    'requirements.json',
-    'input-requirements.md',
-    'original-requirements.md',
-    'clarified-requirements.md',
-    'planner-reasoning.md',
-    'planner-output.md',
-  ].includes(normalized) || normalized.startsWith('planner-');
 };
 
 export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
@@ -83,8 +72,8 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
   const outgoingImpacts = activeDesignArtifact?.impact_records || [];
   const incomingImpacts = activeDesignArtifact?.incoming_impacts || [];
   const sectionReviews = activeDesignArtifact?.section_reviews || [];
-  const isPlannerControlledArtifact = isPlannerControlledArtifactFile(selectedFile);
-  const canDiscuss = Boolean(projectId && version && selectedFile && activeDesignArtifact && !isPlannerControlledArtifact);
+  const isSystemControlledArtifact = isSystemControlledDesignArtifact(selectedFile, activeDesignArtifact);
+  const canDiscuss = Boolean(projectId && version && selectedFile && activeDesignArtifact && !isSystemControlledArtifact);
   const normalizedIntent = revisionSession?.normalized_revision_request || {};
   const candidateConflictIds = Array.isArray(normalizedIntent.candidate_conflicts)
     ? (normalizedIntent.candidate_conflicts as string[])
@@ -110,6 +99,8 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
       : overallReviewStatus === 'needs_review'
         ? 'amber'
         : 'indigo';
+  const canAcceptArtifact = canAcceptDesignArtifact(activeDesignArtifact, canDiscuss, overallReviewStatus);
+  const governableDesignArtifact = activeDesignArtifact && !isSystemControlledArtifact ? activeDesignArtifact : null;
 
   const openDrawer = (scope: 'artifact' | 'selection', excerpt = '', nextFeedback = '') => {
     setDiscussionScope(scope);
@@ -300,7 +291,7 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
 
     return (
       <div className="flex-1 overflow-auto bg-white rounded-2xl border border-gray-100 shadow-sm p-6 sm:p-10 min-h-[500px] animate-in fade-in zoom-in-95 duration-300">
-        {activeDesignArtifact && !isPlannerControlledArtifact && (
+        {governableDesignArtifact && (
           <div className="mb-6 border-b border-gray-100 pb-5">
             <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
               <div className="min-w-0 flex-1">
@@ -312,10 +303,10 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
                     {overallReviewStatus}
                   </span>
                   <span className="rounded-full bg-slate-100 px-3 py-1 text-[10px] font-black uppercase tracking-wider text-slate-600">
-                    v{activeDesignArtifact.artifact_version}
+                    v{governableDesignArtifact.artifact_version}
                   </span>
                   <span className="rounded-full bg-slate-100 px-3 py-1 text-[10px] font-black uppercase tracking-wider text-slate-600">
-                    {activeDesignArtifact.status}
+                    {governableDesignArtifact.status}
                   </span>
                   {reflection && (
                     <span className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-wider ${
@@ -352,17 +343,19 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
                   </div>
                 </div>
               </div>
-              <div className="grid gap-2 sm:grid-cols-3 xl:w-[360px]">
-                <button
-                  type="button"
-                  onClick={handleAcceptArtifact}
-                  disabled={!canDiscuss || isWorking || ['accepted', 'auto_accepted'].includes(activeDesignArtifact.status) || overallReviewStatus === 'blocked'}
-                  className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-black text-white transition-all hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-300"
-                  title="接受当前 Artifact 版本"
-                >
-                  <Check size={14} />
-                  接受
-                </button>
+              <div className={`grid gap-2 ${canAcceptArtifact ? 'sm:grid-cols-3 xl:w-[360px]' : 'sm:grid-cols-2 xl:w-[240px]'}`}>
+                {canAcceptArtifact && (
+                  <button
+                    type="button"
+                    onClick={handleAcceptArtifact}
+                    disabled={isWorking}
+                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-black text-white transition-all hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-300"
+                    title="接受当前 Artifact 版本"
+                  >
+                    <Check size={14} />
+                    接受
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => handleStartArtifactDiscussion()}
@@ -387,7 +380,7 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
             </div>
           </div>
         )}
-        {consistencyConflicts.length > 0 && (
+        {governableDesignArtifact && consistencyConflicts.length > 0 && (
           <div className="mb-4 rounded-xl border border-rose-100 bg-rose-50 p-3">
             <div className="mb-2 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-rose-700">
               <AlertTriangle size={14} />
@@ -416,7 +409,7 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
             </div>
           </div>
         )}
-        {decisionLogs.length > 0 && (
+        {governableDesignArtifact && decisionLogs.length > 0 && (
           <div className="mb-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
             <div className="mb-2 text-[10px] font-black uppercase tracking-widest text-slate-500">Decision Log</div>
             <div className="space-y-2">
@@ -429,7 +422,7 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
             </div>
           </div>
         )}
-        {(outgoingImpacts.length > 0 || incomingImpacts.length > 0) && (
+        {governableDesignArtifact && (outgoingImpacts.length > 0 || incomingImpacts.length > 0) && (
           <div className="mb-4 rounded-xl border border-amber-100 bg-amber-50 p-3">
             <div className="mb-2 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-amber-700">
               <GitBranch size={14} />
@@ -481,7 +474,7 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
             ))}
           </div>
         )}
-        {sectionReviews.length > 0 && (
+        {governableDesignArtifact && sectionReviews.length > 0 && (
           <div className="mb-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
             <div className="mb-2 text-[10px] font-black uppercase tracking-widest text-slate-500">Section Reviews</div>
             <div className="space-y-2">

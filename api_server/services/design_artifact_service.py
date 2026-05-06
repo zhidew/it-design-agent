@@ -24,6 +24,7 @@ PLANNER_ARTIFACT_NAMES = {
     "planner-reasoning.md",
     "planner-output.md",
 }
+SYSTEM_REVIEW_EXPERT_IDS = {"planner", "validator"}
 
 
 def _sha256_text(value: str) -> str:
@@ -80,6 +81,16 @@ def _is_planner_artifact(expert_id: str, file_name: str) -> bool:
     return expert_id in PLANNER_EXPERT_IDS or lower in PLANNER_ARTIFACT_NAMES or lower.startswith("planner-")
 
 
+def _is_system_review_artifact(expert_id: str, file_name: str) -> bool:
+    lower = file_name.lower()
+    return (
+        expert_id in SYSTEM_REVIEW_EXPERT_IDS
+        or _is_planner_artifact(expert_id, file_name)
+        or lower.startswith("validator")
+        or lower.startswith("validation")
+    )
+
+
 def _build_summary(content: str) -> str:
     for line in content.splitlines():
         stripped = line.strip().strip("#").strip()
@@ -98,7 +109,7 @@ def sync_file_artifact(
     dependency_refs: Optional[List[str]] = None,
     source_refs: Optional[List[str]] = None,
 ) -> Optional[Dict[str, Any]]:
-    if _is_planner_artifact(expert_id, file_name):
+    if _is_system_review_artifact(expert_id, file_name):
         return None
     path = _resolve_artifact_path(project_id, version_id, file_name)
     if not path:
