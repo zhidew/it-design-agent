@@ -11,6 +11,7 @@ interface ArtifactViewerProps {
   version: string | null;
   artifacts: Record<string, string>;
   designArtifacts: DesignArtifact[];
+  activeExpertId?: string | null;
   selectedFile: string | null;
   onSelectFile: (filename: string) => void;
   filteredArtifacts: string[];
@@ -36,6 +37,7 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
   version,
   artifacts,
   designArtifacts,
+  activeExpertId,
   selectedFile,
   onSelectFile,
   filteredArtifacts,
@@ -62,8 +64,12 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
   const activeDesignArtifact = useMemo(() => {
     if (!selectedFile) return null;
     const candidates = designArtifacts.filter((item) => item.file_name === selectedFile || item.file_path.endsWith(`/${selectedFile}`));
-    return candidates.sort((left, right) => right.artifact_version - left.artifact_version)[0] || null;
-  }, [designArtifacts, selectedFile]);
+    const scopedCandidates = activeExpertId
+      ? candidates.filter((item) => item.expert_id === activeExpertId)
+      : candidates;
+    const rankedCandidates = scopedCandidates.length > 0 ? scopedCandidates : candidates;
+    return rankedCandidates.sort((left, right) => right.artifact_version - left.artifact_version)[0] || null;
+  }, [activeExpertId, designArtifacts, selectedFile]);
 
   const reflection = activeDesignArtifact?.reflection;
   const consistency = activeDesignArtifact?.consistency;
@@ -101,6 +107,47 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
         : 'indigo';
   const canAcceptArtifact = canAcceptDesignArtifact(activeDesignArtifact, canDiscuss, overallReviewStatus);
   const governableDesignArtifact = activeDesignArtifact && !isSystemControlledArtifact ? activeDesignArtifact : null;
+  const actionableConflicts = consistencyConflicts.filter((conflict) => conflict.status === 'open');
+  const actionableImpacts = [...incomingImpacts, ...outgoingImpacts].filter((impact) => impact.impact_status !== 'no_impact');
+  const actionableSectionReviews = sectionReviews.filter((review) => ['disputed', 'revision_pending', 'blocked_by_conflict'].includes(review.status));
+  const reviewFocusItems = [
+    ...actionableConflicts.map((conflict) => ({
+      id: `conflict-${conflict.conflict_id}`,
+      tone: conflict.severity === 'blocking' ? 'rose' : 'amber',
+      label: conflict.severity === 'blocking' ? '阻塞冲突' : '一致性警告',
+      title: conflict.summary || conflict.conflict_type || '发现一致性问题',
+      detail: [conflict.conflict_type, conflict.semantic, conflict.severity].filter(Boolean).join(' · '),
+      action: conflict.status === 'open'
+        ? () => handleStartArtifactDiscussion(`处理冲突：${conflict.summary}`)
+        : undefined,
+    })),
+    ...actionableImpacts.map((impact) => ({
+      id: `impact-${impact.impact_id}`,
+      tone: 'amber',
+      label: '下游影响',
+      title: impact.reason || '需要确认是否影响相关产物',
+      detail: impact.impact_status,
+      action: undefined,
+    })),
+    ...actionableSectionReviews.map((review) => ({
+      id: `section-${review.section_review_id}`,
+      tone: 'slate',
+      label: '局部审阅',
+      title: review.reviewer_note || review.anchor_id || '局部内容需要继续确认',
+      detail: review.status,
+      action: undefined,
+    })),
+    ...(reflection && reflection.status !== 'passed'
+      ? [{
+        id: `reflection-${reflection.report_id}`,
+        tone: reflection.status === 'blocking' ? 'rose' : 'amber',
+        label: '自检结果',
+        title: reflection.issues?.[0]?.message?.toString?.() || reflection.issues?.[0]?.summary?.toString?.() || `Reflection ${reflection.status}`,
+        detail: `${Math.round((reflection.confidence || 0) * 100)}% confidence`,
+        action: undefined,
+      }]
+      : []),
+  ];
 
   const openDrawer = (scope: 'artifact' | 'selection', excerpt = '', nextFeedback = '') => {
     setDiscussionScope(scope);
@@ -324,23 +371,63 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
                     </span>
                   )}
                 </div>
-                <div className="grid gap-2 text-xs sm:grid-cols-2 xl:grid-cols-4">
-                  <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
-                    <div className="font-black text-slate-900">{blockingConflictCount}</div>
-                    <div className="font-semibold text-slate-500">Blocking conflicts</div>
+                <div className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 text-xs">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="font-black text-slate-900">审阅关注点</div>
+                    {blockingConflictCount > 0 && (
+                      <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-black text-rose-700">
+                        {blockingConflictCount} 阻塞
+                      </span>
+                    )}
+                    {warningConflictCount > 0 && (
+                      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black text-amber-700">
+                        {warningConflictCount} 警告
+                      </span>
+                    )}
+                    {openImpactCount > 0 && (
+                      <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-black text-indigo-700">
+                        {openImpactCount} 影响
+                      </span>
+                    )}
+                    {disputedSectionCount > 0 && (
+                      <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-black text-slate-700">
+                        {disputedSectionCount} 局部
+                      </span>
+                    )}
                   </div>
-                  <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
-                    <div className="font-black text-slate-900">{warningConflictCount}</div>
-                    <div className="font-semibold text-slate-500">Warnings</div>
-                  </div>
-                  <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
-                    <div className="font-black text-slate-900">{openImpactCount}</div>
-                    <div className="font-semibold text-slate-500">Downstream impacts</div>
-                  </div>
-                  <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
-                    <div className="font-black text-slate-900">{disputedSectionCount}</div>
-                    <div className="font-semibold text-slate-500">Section issues</div>
-                  </div>
+                  {reviewFocusItems.length > 0 ? (
+                    <div className="mt-3 space-y-2">
+                      {reviewFocusItems.slice(0, 3).map((item) => (
+                        <div key={item.id} className="flex flex-col gap-2 rounded-lg bg-white px-3 py-2 sm:flex-row sm:items-start sm:justify-between">
+                          <div className="min-w-0">
+                            <div className={`text-[10px] font-black uppercase tracking-widest ${
+                              item.tone === 'rose' ? 'text-rose-600' : item.tone === 'amber' ? 'text-amber-600' : 'text-slate-500'
+                            }`}>
+                              {item.label}
+                            </div>
+                            <div className="mt-0.5 break-words font-bold text-slate-900">{item.title}</div>
+                            {item.detail && <div className="mt-0.5 break-words text-slate-500">{item.detail}</div>}
+                          </div>
+                          {item.action && (
+                            <button
+                              type="button"
+                              onClick={item.action}
+                              className="shrink-0 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[10px] font-black text-slate-700 hover:border-indigo-200 hover:text-indigo-700"
+                            >
+                              处理
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                      {reviewFocusItems.length > 3 && (
+                        <div className="text-[10px] font-bold text-slate-400">还有 {reviewFocusItems.length - 3} 项可在下方明细中查看</div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="mt-2 font-semibold text-slate-500">
+                      暂无阻塞冲突、警告、下游影响或局部争议，可以直接阅读并确认当前产物。
+                    </div>
+                  )}
                 </div>
               </div>
               <div className={`grid gap-2 ${canAcceptArtifact ? 'sm:grid-cols-3 xl:w-[360px]' : 'sm:grid-cols-2 xl:w-[240px]'}`}>

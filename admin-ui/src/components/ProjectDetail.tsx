@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useMemo } from 'react';
+import React, { useCallback, useEffect, useState, useRef, useMemo } from 'react';
 import { useParams, Link, useLocation } from 'react-router-dom';
 import { api, type ClarifiedRequirementsPayload, type DesignArtifact, type InteractionRecord } from '../api';
 import { ArrowLeft, Play, RefreshCw, Activity, Check, X, Upload, FileText, Database, Layers, Book, List, Trash2, ChevronLeft, ChevronRight, Settings2, FolderGit2, BookOpen, Bot, Cpu, Square, Clock3 } from 'lucide-react';
@@ -1405,6 +1405,11 @@ export function ProjectDetail() {
     }
   };
 
+  const handleSelectNode = useCallback((nodeId: string) => {
+    setSelectedNode(nodeId);
+    setSelectedFile(null);
+  }, []);
+
   const handleSelectFile = (filename: string) => {
     setSelectedFile((prev) => (prev === filename ? null : filename));
   };
@@ -1984,9 +1989,9 @@ export function ProjectDetail() {
       selectedNode && workflowState?.task_queue?.some((task) => task.agent_type === selectedNode),
     );
     if (!hasSelectedTask) {
-      setSelectedNode(workflowState.current_node);
+      handleSelectNode(workflowState.current_node);
     }
-  }, [workflowState?.current_node, workflowState?.task_queue, selectedNode]);
+  }, [handleSelectNode, workflowState?.current_node, workflowState?.task_queue, selectedNode]);
 
   useEffect(() => {
     if (filteredArtifacts.length === 0) {
@@ -1996,17 +2001,9 @@ export function ProjectDetail() {
       return;
     }
 
-    if (selectedNode === 'validator' && (!selectedFile || !filteredArtifacts.includes(selectedFile))) {
-      setSelectedFile(filteredArtifacts[0]);
-      return;
-    }
-
-    // Default selection disabled to hide preview by default
-    /*
     if (!selectedFile || !filteredArtifacts.includes(selectedFile)) {
       setSelectedFile(filteredArtifacts[0]);
     }
-    */
   }, [filteredArtifacts, selectedFile, selectedNode]);
 
   const renderUploadBtn = (type: InputFile['type'], label: string, icon: React.ReactNode, required: boolean = false) => {
@@ -2530,7 +2527,7 @@ export function ProjectDetail() {
               nodeStatuses={effectiveNodeStatuses}
               nodeLlmMap={workflowState?.node_llm_map}
               selectedNode={selectedNode}
-              onSelectNode={setSelectedNode}
+              onSelectNode={handleSelectNode}
               t={t}
               currentPhase={workflowState?.workflow_phase}
               selectedPipeline={selectedPipeline}
@@ -2859,6 +2856,7 @@ export function ProjectDetail() {
               version={selectedVersion}
               artifacts={artifacts}
               designArtifacts={designArtifacts}
+              activeExpertId={selectedNode}
               selectedFile={selectedFile}
               onSelectFile={handleSelectFile}
               filteredArtifacts={filteredArtifacts}
