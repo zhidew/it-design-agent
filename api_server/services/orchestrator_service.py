@@ -2710,6 +2710,149 @@ async def retry_workflow_node(
     return True
 
 
+def trigger_downstream_regeneration(
+    *,
+    project_id: str,
+    version: str,
+    target_expert_id: str,
+    source_artifact_id: str,
+    accepted_artifact_id: str,
+    impacted_artifact_id: str,
+    impact_id: str,
+    feedback: str = "",
+) -> dict:
+    current_state = get_workflow_state(project_id, version)
+    if not current_state:
+        return {
+            "status": "skipped",
+            "reason": "Workflow state not found.",
+            "impact_id": impact_id,
+            "artifact_id": impacted_artifact_id,
+            "target_expert_id": target_expert_id,
+        }
+
+    if current_state.get("run_status") in {RUN_STATUS_QUEUED, RUN_STATUS_RUNNING, RUN_STATUS_SCHEDULED}:
+        return {
+            "status": "skipped",
+            "reason": f"Workflow is already {current_state.get('run_status')}.",
+            "impact_id": impact_id,
+            "artifact_id": impacted_artifact_id,
+            "target_expert_id": target_expert_id,
+        }
+
+    target_task = next(
+        (task for task in current_state.get("task_queue", []) if task.get("agent_type") == target_expert_id),
+        None,
+    )
+    if not target_task:
+        return {
+            "status": "skipped",
+            "reason": "Target expert task not found in workflow queue.",
+            "impact_id": impact_id,
+            "artifact_id": impacted_artifact_id,
+            "target_expert_id": target_expert_id,
+        }
+
+    run_id = current_state.get("run_id") or str(uuid.uuid4())
+    reset_queue = _reset_retry_branch(current_state.get("task_queue", []), target_expert_id)
+    regeneration_queue = _build_resume_task_queue({"task_queue": reset_queue}, "approve", target_expert_id)
+    regeneration_phase = _resolve_resume_workflow_phase(
+        regeneration_queue,
+        "approve",
+        target_expert_id,
+        current_state.get("workflow_phase") or "INIT",
+    )
+    normalized_feedback = feedback or (
+        f"Accepted revision {accepted_artifact_id} impacts {impacted_artifact_id}; regenerate {target_expert_id}."
+    )
+    regeneration_state = {
+        **current_state,
+        "task_queue": regeneration_queue,
+        "history": [
+            *(current_state.get("history") or []),
+            f"[SYSTEM] Downstream regeneration requested for {target_expert_id} after artifact revision acceptance.",
+        ],
+        "run_status": RUN_STATUS_RUNNING,
+        "current_node": "bootstrap",
+        "human_intervention_required": False,
+        "waiting_reason": None,
+        "pending_interrupt": None,
+        "resume_action": "revise",
+        "resume_target_node": target_expert_id,
+        "workflow_phase": regeneration_phase,
+        "human_feedback": normalized_feedback,
+        "regeneration_context": {
+            "source_artifact_id": source_artifact_id,
+            "accepted_artifact_id": accepted_artifact_id,
+            "impacted_artifact_id": impacted_artifact_id,
+            "impact_id": impact_id,
+            "target_expert_id": target_expert_id,
+        },
+    }
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return {
+            "status": "skipped",
+            "reason": "No running event loop available to launch regeneration.",
+            "impact_id": impact_id,
+            "artifact_id": impacted_artifact_id,
+            "target_expert_id": target_expert_id,
+        }
+
+    _delete_checkpoint_state(project_id, version)
+    _ensure_job(run_id)
+    jobs[run_id]["status"] = RUN_STATUS_RUNNING
+    _sync_workflow_projection_from_payload(
+        project_id,
+        version,
+        regeneration_state,
+        run_id=run_id,
+        authoritative_tasks=True,
+    )
+    _set_runtime_state(
+        project_id,
+        version,
+        run_status=RUN_STATUS_RUNNING,
+        current_node="bootstrap",
+        waiting_reason=None,
+        can_resume=False,
+        job_id=run_id,
+    )
+    _finalize_waiting_interactions_for_version(
+        project_id,
+        version,
+        new_status="superseded",
+        event_type="downstream_regeneration_requested",
+        payload={
+            "run_id": run_id,
+            "target_expert_id": target_expert_id,
+            "impact_id": impact_id,
+            "accepted_artifact_id": accepted_artifact_id,
+        },
+    )
+    _launch_runtime_task(
+        _thread_id(project_id, version),
+        run_orchestrator_task(
+            run_id,
+            project_id,
+            version,
+            current_state.get("requirement", ""),
+            resume_action="revise",
+            feedback=normalized_feedback,
+            persisted_state_override=regeneration_state,
+        )
+    )
+    return {
+        "status": "queued",
+        "run_id": run_id,
+        "impact_id": impact_id,
+        "artifact_id": impacted_artifact_id,
+        "target_expert_id": target_expert_id,
+    }
+
+
 async def continue_workflow(
     project_id: str,
     version: str,

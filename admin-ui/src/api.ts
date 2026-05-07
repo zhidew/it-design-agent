@@ -183,8 +183,22 @@ export interface RevisionPatch {
   };
   rationale: string;
   predicted_impact: Record<string, unknown>;
+  apply_result?: Record<string, unknown>;
   post_apply_validation: Record<string, unknown>;
   created_artifact_id?: string | null;
+}
+
+export interface RevisionReplacementSuggestion {
+  project_id: string;
+  version_id: string;
+  revision_session_id: string;
+  artifact_id: string;
+  anchor_id: string;
+  original_text: string;
+  replacement_text: string;
+  rationale: string;
+  has_changes: boolean;
+  session: RevisionSession;
 }
 
 export interface RevisionSession {
@@ -274,6 +288,11 @@ export const api = {
     reviewer_note?: string;
     accepted_by?: string;
   }) => apiClient.post(`/projects/${projectId}/versions/${version}/artifacts/${artifactId}/accept`, payload || {}).then(res => res.data as DesignArtifact),
+  createManualArtifactRevision: (projectId: string, version: string, artifactId: string, payload: {
+    content: string;
+    reviewer_note?: string;
+    edited_by?: string;
+  }) => apiClient.post(`/projects/${projectId}/versions/${version}/artifacts/${artifactId}/manual-revision`, payload).then(res => res.data as RevisionPatch),
   markSectionReview: (projectId: string, version: string, artifactId: string, payload: {
     status: string;
     anchor_id?: string | null;
@@ -293,6 +312,11 @@ export const api = {
     apiClient.post(`/projects/${projectId}/versions/${version}/revision-sessions/${sessionId}/messages`, { role, content }).then(res => res.data as RevisionSession),
   finalizeRevisionSession: (projectId: string, version: string, sessionId: string) =>
     apiClient.post(`/projects/${projectId}/versions/${version}/revision-sessions/${sessionId}/finalize`).then(res => res.data as RevisionSession),
+  suggestRevisionReplacement: (projectId: string, version: string, sessionId: string, payload: {
+    artifact_id: string;
+    anchor_id: string;
+    user_feedback?: string;
+  }) => apiClient.post(`/projects/${projectId}/versions/${version}/revision-sessions/${sessionId}/replacement-suggestion`, payload).then(res => res.data as RevisionReplacementSuggestion),
   createArtifactAnchor: (projectId: string, version: string, artifactId: string, payload: {
     file_name: string;
     anchor_type?: string;

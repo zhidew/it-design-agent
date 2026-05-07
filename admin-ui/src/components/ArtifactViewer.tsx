@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { FileText, FileJson, Database, MessageSquareText, GitCompare, Check, X, Wand2, ShieldAlert, AlertTriangle, GitBranch, CheckCircle2 } from 'lucide-react';
+import { FileText, FileJson, Database, MessageSquareText, GitCompare, Check, X, Wand2, ShieldAlert, AlertTriangle, GitBranch, CheckCircle2, PencilLine } from 'lucide-react';
 import { CodeBlock } from './CodeBlock'; // Assuming we'll extract CodeBlock too
 import { api, type ArtifactAnchor, type DesignArtifact, type RevisionPatch, type RevisionSession } from '../api';
 import { canAcceptDesignArtifact, isSystemControlledDesignArtifact } from './artifactGovernanceUi';
@@ -120,6 +120,10 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
   const [patchPreview, setPatchPreview] = useState<RevisionPatch | null>(null);
   const [isWorking, setIsWorking] = useState(false);
   const [drawerError, setDrawerError] = useState<string | null>(null);
+  const [revisionSuggestionRationale, setRevisionSuggestionRationale] = useState('');
+  const [revisionSuggestionHasChanges, setRevisionSuggestionHasChanges] = useState<boolean | null>(null);
+  const [isManualRevision, setIsManualRevision] = useState(false);
+  const [manualRevisionContent, setManualRevisionContent] = useState('');
 
   const getFileIcon = (filename: string) => {
     if (filename.endsWith('.sql')) return <Database size={16} className="text-purple-500" />;
@@ -225,6 +229,10 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
     setAnchor(null);
     setPatchPreview(null);
     setDrawerError(null);
+    setRevisionSuggestionRationale('');
+    setRevisionSuggestionHasChanges(null);
+    setIsManualRevision(false);
+    setManualRevisionContent('');
     setIsDrawerOpen(true);
   };
 
@@ -280,6 +288,14 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
     openDrawer('artifact', '', initialFeedback);
   };
 
+  const handleStartManualRevision = () => {
+    if (!selectedFile) return;
+    openDrawer('artifact', '', '', null);
+    setIsManualRevision(true);
+    setManualRevisionContent(getCurrentSourceContent());
+    setFeedback('');
+  };
+
   const ensureSelectionAnchor = async () => {
     if (!version || !selectedFile || !activeDesignArtifact || !selectedExcerpt.trim()) {
       throw new Error('请先选中一段内容。');
@@ -306,12 +322,24 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
     try {
       const createdAnchor = discussionScope === 'selection' ? await ensureSelectionAnchor() : null;
       const session = await api.createRevisionSession(projectId, version, activeDesignArtifact.artifact_id, feedback);
-      const updatedSession = feedback.trim()
-        ? await api.addRevisionMessage(projectId, version, session.revision_session_id, feedback)
-        : session;
-      const finalized = await api.finalizeRevisionSession(projectId, version, updatedSession.revision_session_id);
-      setRevisionSession(finalized);
+      const finalized = await api.finalizeRevisionSession(projectId, version, session.revision_session_id);
       setAnchor(createdAnchor);
+      if (discussionScope === 'selection' && createdAnchor) {
+        const suggestion = await api.suggestRevisionReplacement(projectId, version, finalized.revision_session_id, {
+          artifact_id: activeDesignArtifact.artifact_id,
+          anchor_id: createdAnchor.anchor_id,
+          user_feedback: feedback,
+        });
+        setRevisionSession(suggestion.session || finalized);
+        setReplacementText(suggestion.replacement_text || selectedExcerpt);
+        setRevisionSuggestionRationale(suggestion.rationale || '');
+        setRevisionSuggestionHasChanges(Boolean(suggestion.has_changes));
+        if (!suggestion.has_changes) {
+          setDrawerError('LLM 未生成与原选区不同的修订内容，请补充更具体的反馈或直接编辑 Replacement 后再生成预览。');
+        }
+      } else {
+        setRevisionSession(finalized);
+      }
     } catch (err: unknown) {
       setDrawerError(getApiErrorMessage(err, '创建修订会话失败。'));
     } finally {
@@ -349,6 +377,25 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
       await onArtifactsChanged?.();
     } catch (err: unknown) {
       setDrawerError(getApiErrorMessage(err, '应用补丁失败。'));
+    } finally {
+      setIsWorking(false);
+    }
+  };
+
+  const handleApplyManualRevision = async () => {
+    if (!version || !activeDesignArtifact) return;
+    setIsWorking(true);
+    setDrawerError(null);
+    try {
+      const patch = await api.createManualArtifactRevision(projectId, version, activeDesignArtifact.artifact_id, {
+        content: manualRevisionContent,
+        reviewer_note: feedback || 'Manual artifact revision.',
+        edited_by: 'user',
+      });
+      setPatchPreview(patch);
+      await onArtifactsChanged?.();
+    } catch (err: unknown) {
+      setDrawerError(getApiErrorMessage(err, '人工修订失败。'));
     } finally {
       setIsWorking(false);
     }
@@ -563,7 +610,7 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
                   )}
                 </div>
               </div>
-              <div className={`grid gap-2 ${canAcceptArtifact ? 'sm:grid-cols-3 xl:w-[360px]' : 'sm:grid-cols-2 xl:w-[240px]'}`}>
+              <div className={`grid gap-2 ${canAcceptArtifact ? 'sm:grid-cols-4 xl:w-[480px]' : 'sm:grid-cols-3 xl:w-[360px]'}`}>
                 {canAcceptArtifact && (
                   <button
                     type="button"
@@ -585,6 +632,16 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
                 >
                   <MessageSquareText size={14} />
                   讨论
+                </button>
+                <button
+                  type="button"
+                  onClick={handleStartManualRevision}
+                  disabled={!canDiscuss}
+                  className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 transition-all hover:border-indigo-200 hover:text-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  title="人工编辑整份产物源码并生成修订版本"
+                >
+                  <PencilLine size={14} />
+                  人工修订
                 </button>
                 <button
                   type="button"
@@ -780,7 +837,7 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
             <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-100 bg-white px-5 py-4">
               <div>
                 <div className="text-[10px] font-black uppercase tracking-widest text-indigo-600">
-                  {discussionScope === 'selection' ? 'Selection Review' : 'Artifact Review'}
+                  {isManualRevision ? 'Manual Revision' : discussionScope === 'selection' ? 'Selection Review' : 'Artifact Review'}
                 </div>
                 <h3 className="text-base font-black text-slate-900">{selectedFile}</h3>
                 {activeDesignArtifact && (
@@ -806,7 +863,41 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
                 </div>
               )}
 
-              {discussionScope === 'selection' ? (
+              {isManualRevision ? (
+                <section className="space-y-3">
+                  <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-3">
+                    <div className="text-[10px] font-black uppercase tracking-widest text-indigo-600">Manual Edit</div>
+                    <div className="mt-1 text-xs font-semibold text-slate-600">
+                      直接编辑整份源文档，保存后生成待接受的修订版本。
+                    </div>
+                  </div>
+                  <textarea
+                    value={manualRevisionContent}
+                    onChange={(event) => setManualRevisionContent(event.target.value)}
+                    rows={22}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 font-mono text-xs leading-5 outline-none focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100"
+                  />
+                  <section className="space-y-2">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Revision Note</label>
+                    <textarea
+                      value={feedback}
+                      onChange={(event) => setFeedback(event.target.value)}
+                      rows={3}
+                      className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100"
+                      placeholder="说明本次人工修订的原因"
+                    />
+                  </section>
+                  <button
+                    type="button"
+                    onClick={handleApplyManualRevision}
+                    disabled={isWorking || !manualRevisionContent.trim() || manualRevisionContent === getCurrentSourceContent()}
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-black text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-indigo-300"
+                  >
+                    <PencilLine size={16} />
+                    {isWorking ? '保存中...' : '保存人工修订'}
+                  </button>
+                </section>
+              ) : discussionScope === 'selection' ? (
                 <section className="space-y-2">
                   <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Selected Range</div>
                   <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
@@ -838,6 +929,7 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
                 </section>
               )}
 
+              {!isManualRevision && (
               <section className="space-y-2">
                 <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Feedback</label>
                 <textarea
@@ -848,12 +940,13 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
                   placeholder="说明你想补充、质疑或修改什么"
                 />
               </section>
+              )}
 
-              {!revisionSession && (
+              {!isManualRevision && !revisionSession && (
                 <button
                   type="button"
                   onClick={handleStartRevision}
-                  disabled={isWorking || !selectedExcerpt.trim()}
+                  disabled={isWorking || !feedback.trim() || (discussionScope === 'selection' && !selectedExcerpt.trim())}
                   className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-black text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-indigo-300"
                 >
                   <Wand2 size={16} />
@@ -861,7 +954,7 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
                 </button>
               )}
 
-              {revisionSession && (
+              {!isManualRevision && revisionSession && (
                 <section className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-4">
                   <div className="text-[10px] font-black uppercase tracking-widest text-indigo-600">Intent</div>
                   <div className="mt-2 text-sm font-semibold text-slate-800">
@@ -870,10 +963,15 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
                   <div className="mt-1 text-xs text-slate-500">
                     {String(normalizedIntent.revision_reason || '已记录结构化修订意图。')}
                   </div>
+                  {revisionSuggestionRationale && (
+                    <div className="mt-3 rounded-lg bg-white/70 px-3 py-2 text-xs leading-5 text-slate-600">
+                      {revisionSuggestionRationale}
+                    </div>
+                  )}
                 </section>
               )}
 
-              {revisionSession && candidateConflictCount > 0 && (
+              {!isManualRevision && revisionSession && candidateConflictCount > 0 && (
                 <section className={`space-y-3 rounded-xl border p-4 ${
                   decisionRequired ? 'border-rose-100 bg-rose-50' : 'border-amber-100 bg-amber-50'
                 }`}>
@@ -915,20 +1013,28 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
                 </section>
               )}
 
-              {revisionSession && (
+              {!isManualRevision && revisionSession && (
                 <section className="space-y-2">
                   <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Replacement</label>
                   <textarea
                     value={replacementText}
-                    onChange={(event) => setReplacementText(event.target.value)}
+                    onChange={(event) => {
+                      setReplacementText(event.target.value);
+                      setRevisionSuggestionHasChanges(event.target.value !== selectedExcerpt);
+                    }}
                     rows={7}
                     disabled={discussionScope !== 'selection'}
                     className="w-full rounded-xl border border-slate-200 px-3 py-2 font-mono text-xs outline-none focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100"
                   />
+                  {revisionSuggestionHasChanges === false && (
+                    <div className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">
+                      当前 Replacement 与原选区一致，系统不会创建无变化的新版本。
+                    </div>
+                  )}
                   <button
                     type="button"
                     onClick={handleCreatePatchPreview}
-                    disabled={isWorking || discussionScope !== 'selection' || !replacementText.trim()}
+                    disabled={isWorking || discussionScope !== 'selection' || !replacementText.trim() || revisionSuggestionHasChanges === false}
                     className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 hover:border-indigo-200 hover:text-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <GitCompare size={16} />
@@ -958,7 +1064,9 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
                     className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-black text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-300"
                   >
                     <Check size={16} />
-                    {patchPreview.patch_status === 'applied' ? '已应用并生成新版本' : isWorking ? '应用中...' : '应用补丁'}
+                    {patchPreview.patch_status === 'applied'
+                      ? (patchPreview.apply_result?.revision_mode === 'updated_existing_revision' ? '已应用到当前修订版本' : '已应用并生成新版本')
+                      : isWorking ? '应用中...' : '应用补丁'}
                   </button>
                 </section>
               )}

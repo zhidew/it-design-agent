@@ -1662,6 +1662,10 @@ class MetadataDB:
         artifact_id: str,
         *,
         status: Optional[str] = None,
+        content_hash: Optional[str] = None,
+        summary: Optional[str] = None,
+        source_refs: Any = JSON_UNSET,
+        dependency_refs: Any = JSON_UNSET,
         reflection_report_id: Optional[str] = None,
         consistency_report_id: Optional[str] = None,
         decision_refs: Any = JSON_UNSET,
@@ -1669,12 +1673,18 @@ class MetadataDB:
         existing = self.get_design_artifact(artifact_id)
         if not existing:
             return None
+        effective_source_refs = existing.get("source_refs") if source_refs is JSON_UNSET else (source_refs or [])
+        effective_dependency_refs = existing.get("dependency_refs") if dependency_refs is JSON_UNSET else (dependency_refs or [])
         effective_decision_refs = existing.get("decision_refs") if decision_refs is JSON_UNSET else (decision_refs or [])
         with self._get_connection() as conn:
             conn.execute(
                 """
                 UPDATE design_artifacts
                 SET status = ?,
+                    content_hash = ?,
+                    summary = ?,
+                    source_refs_json = ?,
+                    dependency_refs_json = ?,
                     reflection_report_id = ?,
                     consistency_report_id = ?,
                     decision_refs_json = ?,
@@ -1683,6 +1693,10 @@ class MetadataDB:
                 """,
                 (
                     status or existing.get("status"),
+                    content_hash if content_hash is not None else existing.get("content_hash"),
+                    summary if summary is not None else existing.get("summary"),
+                    self._dumps_json(effective_source_refs),
+                    self._dumps_json(effective_dependency_refs),
                     reflection_report_id if reflection_report_id is not None else existing.get("reflection_report_id"),
                     consistency_report_id if consistency_report_id is not None else existing.get("consistency_report_id"),
                     self._dumps_json(effective_decision_refs),

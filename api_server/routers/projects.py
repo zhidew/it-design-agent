@@ -14,10 +14,12 @@ from models.project import (
     InteractionListResponse,
     InteractionResponseRequest,
     JobResponse,
+    ManualArtifactRevisionRequest,
     NodeRetryRequest,
     ProjectCreateRequest,
     ProjectResponse,
     RevisionMessageRequest,
+    RevisionReplacementSuggestionRequest,
     RevisionPatchPreviewRequest,
     RevisionSessionCreateRequest,
     ResumeRequest,
@@ -158,6 +160,22 @@ async def accept_design_artifact(project_id: str, version: str, artifact_id: str
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/{project_id}/versions/{version}/artifacts/{artifact_id}/manual-revision")
+async def create_manual_artifact_revision(project_id: str, version: str, artifact_id: str, req: ManualArtifactRevisionRequest):
+    artifact = artifacts_service.get_design_artifact(artifact_id)
+    if not artifact or artifact["project_id"] != project_id or artifact["version_id"] != version:
+        raise HTTPException(status_code=404, detail="Design artifact not found.")
+    try:
+        return artifacts_service.create_manual_artifact_revision(
+            artifact_id=artifact_id,
+            content=req.content,
+            reviewer_note=req.reviewer_note or "",
+            edited_by=req.edited_by or "user",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/{project_id}/versions/{version}/artifacts/{artifact_id}/reflection")
@@ -367,6 +385,22 @@ async def finalize_revision_session(project_id: str, version: str, session_id: s
     if session["project_id"] != project_id or session["version_id"] != version:
         raise HTTPException(status_code=404, detail="Revision session not found.")
     return session
+
+
+@router.post("/{project_id}/versions/{version}/revision-sessions/{session_id}/replacement-suggestion")
+async def suggest_revision_replacement(project_id: str, version: str, session_id: str, req: RevisionReplacementSuggestionRequest):
+    try:
+        suggestion = artifacts_service.suggest_revision_replacement(
+            revision_session_id=session_id,
+            artifact_id=req.artifact_id,
+            anchor_id=req.anchor_id,
+            user_feedback=req.user_feedback or "",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if suggestion["project_id"] != project_id or suggestion["version_id"] != version:
+        raise HTTPException(status_code=404, detail="Revision session not found.")
+    return suggestion
 
 
 @router.post("/{project_id}/versions/{version}/artifacts/{artifact_id}/anchors")

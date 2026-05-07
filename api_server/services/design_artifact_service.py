@@ -35,6 +35,82 @@ def _normalize_anchor_text(value: str) -> str:
     return " ".join(value.split())
 
 
+def _has_meaningful_text_change(left: str, right: str) -> bool:
+    return left != right
+
+
+def _is_mutable_revision_artifact(artifact: Dict[str, Any]) -> bool:
+    return bool(artifact.get("parent_artifact_id")) and artifact.get("status") in {
+        "ready_for_review",
+        "reflection_warning",
+        "revision_requested",
+        "user_disputed",
+    }
+
+
+def _record_downstream_regeneration_plan(
+    *,
+    accepted_artifact: Dict[str, Any],
+    impact_records: List[Dict[str, Any]],
+    reviewer_note: str,
+) -> List[Dict[str, Any]]:
+    plans: List[Dict[str, Any]] = []
+    for record in impact_records:
+        if record.get("impact_status") != "needs_regeneration":
+            continue
+        impacted = metadata_db.get_design_artifact(record["impacted_artifact_id"])
+        if not impacted:
+            plans.append(
+                {
+                    "impact_id": record.get("impact_id"),
+                    "artifact_id": record.get("impacted_artifact_id"),
+                    "status": "skipped",
+                    "reason": "Impacted artifact not found.",
+                }
+            )
+            continue
+        try:
+            from services import orchestrator_service
+
+            plan = orchestrator_service.trigger_downstream_regeneration(
+                project_id=accepted_artifact["project_id"],
+                version=accepted_artifact["version_id"],
+                target_expert_id=impacted["expert_id"],
+                source_artifact_id=record["source_artifact_id"],
+                accepted_artifact_id=accepted_artifact["artifact_id"],
+                impacted_artifact_id=impacted["artifact_id"],
+                impact_id=record["impact_id"],
+                feedback=reviewer_note or "Accepted upstream artifact revision; regenerate impacted downstream design artifact.",
+            )
+        except Exception as exc:
+            plan = {
+                "status": "failed",
+                "impact_id": record.get("impact_id"),
+                "artifact_id": impacted["artifact_id"],
+                "target_expert_id": impacted["expert_id"],
+                "reason": str(exc),
+            }
+        plans.append(plan)
+        metadata_db.append_design_artifact_event(
+            event_id=str(uuid.uuid4()),
+            artifact_id=impacted["artifact_id"],
+            event_type="downstream_regeneration_requested",
+            payload={
+                **plan,
+                "source_artifact_id": record["source_artifact_id"],
+                "accepted_artifact_id": accepted_artifact["artifact_id"],
+            },
+        )
+    if plans:
+        metadata_db.append_design_artifact_event(
+            event_id=str(uuid.uuid4()),
+            artifact_id=accepted_artifact["artifact_id"],
+            event_type="downstream_regeneration_planned",
+            payload={"plans": plans},
+        )
+    return plans
+
+
 def _safe_slug(value: str) -> str:
     return "".join(ch if ch.isalnum() or ch in {"-", "_"} else "-" for ch in value).strip("-") or "artifact"
 
@@ -297,6 +373,11 @@ def _propagate_accepted_revision_impact(artifact: Dict[str, Any], *, reviewer_no
             }
             for record in impact_result.get("impact_records", [])
         ]
+        regeneration_plans = _record_downstream_regeneration_plan(
+            accepted_artifact=artifact,
+            impact_records=impact_result.get("impact_records", []),
+            reviewer_note=reviewer_note,
+        )
         for session in sessions:
             if session.get("created_artifact_id") == artifact["artifact_id"]:
                 metadata_db.update_revision_session(
@@ -311,6 +392,7 @@ def _propagate_accepted_revision_impact(artifact: Dict[str, Any], *, reviewer_no
                     payload={
                         "accepted_artifact_id": artifact["artifact_id"],
                         "affected_artifacts": affected_artifacts,
+                        "regeneration_plans": regeneration_plans,
                     },
                 )
     except Exception as exc:
@@ -512,6 +594,108 @@ def finalize_revision_session(revision_session_id: str) -> Dict[str, Any]:
     return session
 
 
+def suggest_revision_replacement(
+    *,
+    revision_session_id: str,
+    artifact_id: str,
+    anchor_id: str,
+    user_feedback: str = "",
+) -> Dict[str, Any]:
+    session = metadata_db.get_revision_session(revision_session_id)
+    artifact = metadata_db.get_design_artifact(artifact_id)
+    anchor = metadata_db.get_artifact_anchor(anchor_id)
+    if not session or not artifact or not anchor:
+        raise ValueError("Revision session, artifact, or anchor not found.")
+    if session["target_artifact_id"] != artifact_id or anchor["artifact_id"] != artifact_id:
+        raise ValueError("Revision suggestion target does not match the selected artifact.")
+
+    content = _read_artifact_content(artifact["project_id"], artifact["version_id"], artifact["file_path"])
+    start_offset = int(anchor["start_offset"])
+    end_offset = int(anchor["end_offset"])
+    if start_offset < 0 or end_offset < start_offset or end_offset > len(content):
+        raise ValueError("Anchor offsets are outside the artifact content.")
+    original = content[start_offset:end_offset]
+    feedback = (user_feedback or session.get("user_feedback") or "").strip()
+    if not feedback:
+        raise ValueError("User feedback is required to suggest a revision.")
+
+    system_prompt = (
+        "You revise a selected range of an IT design artifact. "
+        "Return JSON only. Preserve all correct details unless the user's feedback explicitly changes them. "
+        "Do not include markdown fences unless they are part of the replacement text."
+    )
+    surrounding_start = max(0, start_offset - 1200)
+    surrounding_end = min(len(content), end_offset + 1200)
+    user_prompt = json.dumps(
+        {
+            "task": "rewrite_selected_artifact_range",
+            "artifact": {
+                "file_name": artifact.get("file_name"),
+                "expert_id": artifact.get("expert_id"),
+                "artifact_type": artifact.get("artifact_type"),
+            },
+            "selected_range": original,
+            "user_feedback": feedback,
+            "surrounding_context": content[surrounding_start:surrounding_end],
+            "required_output": {
+                "replacement_text": "Complete replacement text for the selected range only.",
+                "rationale": "Short rationale for the proposed edit.",
+            },
+        },
+        ensure_ascii=False,
+    )
+    try:
+        from services import llm_service
+
+        output = llm_service.generate_with_llm(
+            system_prompt,
+            user_prompt,
+            ["replacement_text", "rationale"],
+            max_retries=1,
+            project_id=artifact["project_id"],
+            version=artifact["version_id"],
+            node_id="artifact-revision-suggestion",
+        )
+        replacement_text = str(output.artifacts.get("replacement_text") or "")
+        rationale = str(output.artifacts.get("rationale") or output.reasoning or "").strip()
+    except Exception as exc:
+        replacement_text = original
+        rationale = f"LLM suggestion failed; preserved original selection. Error: {exc}"
+
+    normalized = dict(session.get("normalized_revision_request") or {})
+    normalized["suggested_replacement_text"] = replacement_text
+    normalized["suggested_replacement_rationale"] = rationale
+    session = metadata_db.update_revision_session(
+        revision_session_id,
+        normalized_revision_request=normalized,
+    ) or session
+    metadata_db.append_revision_session_event(
+        event_id=str(uuid.uuid4()),
+        revision_session_id=revision_session_id,
+        event_type="replacement_suggested",
+        payload={
+            "artifact_id": artifact_id,
+            "anchor_id": anchor_id,
+            "original_text": original,
+            "replacement_text": replacement_text,
+            "rationale": rationale,
+            "has_changes": _has_meaningful_text_change(original, replacement_text),
+        },
+    )
+    return {
+        "project_id": artifact["project_id"],
+        "version_id": artifact["version_id"],
+        "revision_session_id": revision_session_id,
+        "artifact_id": artifact_id,
+        "anchor_id": anchor_id,
+        "original_text": original,
+        "replacement_text": replacement_text,
+        "rationale": rationale,
+        "has_changes": _has_meaningful_text_change(original, replacement_text),
+        "session": session,
+    }
+
+
 def create_anchor(
     *,
     artifact_id: str,
@@ -566,6 +750,7 @@ def create_patch_preview(
     replacement_text: str,
     rationale: str = "",
     preserve_policy: str = "preserve_unselected_content",
+    scope: str = "selection",
 ) -> Dict[str, Any]:
     artifact = metadata_db.get_design_artifact(artifact_id)
     anchor = metadata_db.get_artifact_anchor(anchor_id)
@@ -576,10 +761,15 @@ def create_patch_preview(
     start_offset = int(anchor["start_offset"])
     end_offset = int(anchor["end_offset"])
     original = content[start_offset:end_offset]
+    if not _has_meaningful_text_change(original, replacement_text):
+        raise ValueError("No content changes detected in the selected range.")
     if _sha256_text(original) != anchor["content_hash"]:
         validation = {"status": "stale_anchor", "message": "Anchor content hash no longer matches the artifact file."}
     else:
-        validation = {"status": "valid", "message": "Patch is limited to the selected range."}
+        validation = {
+            "status": "valid",
+            "message": "Patch replaces the full artifact." if scope == "artifact" else "Patch is limited to the selected range.",
+        }
     diff = list(
         difflib.unified_diff(
             original.splitlines(),
@@ -594,7 +784,7 @@ def create_patch_preview(
         revision_session_id=revision_session_id,
         artifact_id=artifact_id,
         anchor_id=anchor_id,
-        scope="selection",
+        scope=scope if scope in {"selection", "artifact"} else "selection",
         preserve_policy=preserve_policy,
         patch_status="preview_created",
         source_content_hash=source_hash,
@@ -618,6 +808,84 @@ def create_patch_preview(
         payload={"patch_id": patch["patch_id"], "validation": validation},
     )
     return patch
+
+
+def create_manual_artifact_revision(
+    *,
+    artifact_id: str,
+    content: str,
+    reviewer_note: str = "",
+    edited_by: str = "user",
+) -> Dict[str, Any]:
+    artifact = metadata_db.get_design_artifact(artifact_id)
+    if not artifact:
+        raise ValueError("Design artifact not found.")
+    if not str(content or "").strip():
+        raise ValueError("Manual revision content cannot be empty.")
+    original = _read_artifact_content(artifact["project_id"], artifact["version_id"], artifact["file_path"])
+    if not _has_meaningful_text_change(original, content):
+        raise ValueError("No content changes detected in the artifact.")
+
+    session = create_revision_session(
+        project_id=artifact["project_id"],
+        version_id=artifact["version_id"],
+        target_artifact_id=artifact_id,
+        user_feedback=reviewer_note or "Manual artifact revision.",
+    )
+    normalized = {
+        "target_expert": artifact["expert_id"],
+        "target_artifact_id": artifact_id,
+        "revision_reason": (reviewer_note or "Manual artifact revision.")[:500],
+        "user_new_information": reviewer_note or "",
+        "revision_type": "manual_edit",
+        "as_is_or_to_be": "to_be",
+        "semantic": "manual_artifact_revision",
+        "candidate_conflicts": [],
+        "affected_artifacts": [],
+        "decision_required": False,
+        "edited_by": edited_by or "user",
+    }
+    metadata_db.update_revision_session(
+        session["revision_session_id"],
+        status="manual_revision_created",
+        normalized_revision_request=normalized,
+    )
+    metadata_db.append_revision_session_event(
+        event_id=str(uuid.uuid4()),
+        revision_session_id=session["revision_session_id"],
+        event_type="manual_revision_created",
+        payload=normalized,
+    )
+    anchor = create_anchor(
+        artifact_id=artifact_id,
+        file_name=artifact["file_name"],
+        anchor_type="text_range",
+        text_excerpt=original[:5000],
+        start_offset=0,
+        end_offset=len(original),
+        label="Full artifact",
+    )
+    patch = create_patch_preview(
+        revision_session_id=session["revision_session_id"],
+        artifact_id=artifact_id,
+        anchor_id=anchor["anchor_id"],
+        replacement_text=content,
+        rationale=reviewer_note or "Manual artifact revision.",
+        preserve_policy="replace_full_artifact",
+        scope="artifact",
+    )
+    applied = apply_revision_patch(patch["patch_id"])
+    metadata_db.append_revision_session_event(
+        event_id=str(uuid.uuid4()),
+        revision_session_id=session["revision_session_id"],
+        event_type="manual_revision_applied",
+        payload={
+            "patch_id": applied["patch_id"],
+            "created_artifact_id": applied.get("created_artifact_id"),
+            "edited_by": edited_by or "user",
+        },
+    )
+    return applied
 
 
 def apply_revision_patch(patch_id: str) -> Dict[str, Any]:
@@ -644,37 +912,60 @@ def apply_revision_patch(patch_id: str) -> Dict[str, Any]:
     end_offset = int(allowed.get("end_offset"))
     replacement = (patch.get("diff") or {}).get("replacement_text", "")
     new_content = content[:start_offset] + replacement + content[end_offset:]
+    if not _has_meaningful_text_change(content, new_content):
+        failed = metadata_db.update_revision_patch(
+            patch_id,
+            patch_status="apply_failed",
+            apply_result={"status": "no_changes_detected"},
+            post_apply_validation={"status": "failed", "message": "No content changes detected."},
+        )
+        return failed or patch
     source_path = (_project_version_root(artifact["project_id"], artifact["version_id"]) / artifact["file_path"]).resolve()
     source_hash = artifact["content_hash"]
-    version_number = int(artifact.get("artifact_version") or 1) + 1
-    new_file_name = f"{source_path.name}.v{version_number}"
-    target_path = source_path.parent / new_file_name
+    update_existing_revision = _is_mutable_revision_artifact(artifact)
+    parent_artifact_id = artifact.get("parent_artifact_id") if update_existing_revision else artifact["artifact_id"]
+    version_number = int(artifact.get("artifact_version") or 1) if update_existing_revision else int(artifact.get("artifact_version") or 1) + 1
+    new_file_name = artifact["file_name"] if update_existing_revision else f"{source_path.name}.v{version_number}"
+    target_path = source_path if update_existing_revision else source_path.parent / new_file_name
     target_path.write_text(new_content, encoding="utf-8")
     new_relative = _relative_to_version(artifact["project_id"], artifact["version_id"], target_path)
     new_hash = _sha256_text(new_content)
 
-    new_artifact = metadata_db.create_design_artifact(
-        artifact_id=str(uuid.uuid4()),
-        project_id=artifact["project_id"],
-        version_id=artifact["version_id"],
-        run_id=artifact.get("run_id"),
-        expert_id=artifact["expert_id"],
-        artifact_type=artifact["artifact_type"],
-        artifact_version=version_number,
-        parent_artifact_id=artifact["artifact_id"],
-        status="ready_for_review",
-        title=artifact["title"],
-        file_name=new_file_name,
-        file_path=new_relative,
-        content_hash=new_hash,
-        summary=_build_summary(new_content),
-        source_refs=[
-            {"type": "artifact", "artifact_id": artifact["artifact_id"], "content_hash": source_hash},
-            {"type": "file", "path": new_relative, "content_hash": new_hash},
-        ],
-        dependency_refs=artifact.get("dependency_refs") or [],
-        decision_refs=[],
-    )
+    if update_existing_revision:
+        new_artifact = metadata_db.update_design_artifact(
+            artifact["artifact_id"],
+            status="ready_for_review",
+            content_hash=new_hash,
+            summary=_build_summary(new_content),
+            source_refs=[
+                {"type": "artifact_revision_previous", "artifact_id": artifact["artifact_id"], "content_hash": source_hash},
+                {"type": "artifact", "artifact_id": parent_artifact_id, "content_hash": (artifact.get("source_refs") or [{}])[0].get("content_hash")},
+                {"type": "file", "path": new_relative, "content_hash": new_hash},
+            ],
+        ) or artifact
+    else:
+        new_artifact = metadata_db.create_design_artifact(
+            artifact_id=str(uuid.uuid4()),
+            project_id=artifact["project_id"],
+            version_id=artifact["version_id"],
+            run_id=artifact.get("run_id"),
+            expert_id=artifact["expert_id"],
+            artifact_type=artifact["artifact_type"],
+            artifact_version=version_number,
+            parent_artifact_id=parent_artifact_id,
+            status="ready_for_review",
+            title=artifact["title"],
+            file_name=new_file_name,
+            file_path=new_relative,
+            content_hash=new_hash,
+            summary=_build_summary(new_content),
+            source_refs=[
+                {"type": "artifact", "artifact_id": artifact["artifact_id"], "content_hash": source_hash},
+                {"type": "file", "path": new_relative, "content_hash": new_hash},
+            ],
+            dependency_refs=artifact.get("dependency_refs") or [],
+            decision_refs=[],
+        )
     reflection = record_reflection_observation(new_content, dependency_refs=artifact.get("dependency_refs") or [])
     report = metadata_db.create_expert_reflection_report(
         report_id=str(uuid.uuid4()),
@@ -705,14 +996,22 @@ def apply_revision_patch(patch_id: str) -> Dict[str, Any]:
             event_type="consistency_check_failed",
             payload={"error": str(exc)},
         )
-    metadata_db.update_design_artifact(artifact["artifact_id"], status="superseded")
+    if not update_existing_revision:
+        metadata_db.update_design_artifact(artifact["artifact_id"], status="superseded")
     updated_patch = metadata_db.update_revision_patch(
         patch_id,
         patch_status="applied",
         created_artifact_id=new_artifact["artifact_id"],
-        apply_result={"status": "applied", "file_path": new_relative},
+        apply_result={
+            "status": "applied",
+            "file_path": new_relative,
+            "revision_mode": "updated_existing_revision" if update_existing_revision else "created_new_version",
+        },
         post_apply_content_hash=new_hash,
-        post_apply_validation={"status": "valid", "message": "Patch applied and new artifact version created."},
+        post_apply_validation={
+            "status": "valid",
+            "message": "Patch applied to existing revision artifact." if update_existing_revision else "Patch applied and new artifact version created.",
+        },
         applied=True,
     )
     session_id = patch["revision_session_id"]

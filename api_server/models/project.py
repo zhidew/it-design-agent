@@ -147,6 +147,18 @@ class RevisionPatchPreviewRequest(BaseModel):
     preserve_policy: str = "preserve_unselected_content"
 
 
+class RevisionReplacementSuggestionRequest(BaseModel):
+    artifact_id: str
+    anchor_id: str
+    user_feedback: Optional[str] = ""
+
+
+class ManualArtifactRevisionRequest(BaseModel):
+    content: str
+    reviewer_note: Optional[str] = ""
+    edited_by: Optional[str] = "user"
+
+
 class ArtifactAcceptRequest(BaseModel):
     reviewer_note: Optional[str] = ""
     accepted_by: Optional[str] = "user"
