@@ -31,6 +31,10 @@ def _sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def _normalize_anchor_text(value: str) -> str:
+    return " ".join(value.split())
+
+
 def _safe_slug(value: str) -> str:
     return "".join(ch if ch.isalnum() or ch in {"-", "_"} else "-" for ch in value).strip("-") or "artifact"
 
@@ -522,15 +526,24 @@ def create_anchor(
     if not artifact:
         raise ValueError("Artifact not found.")
     content = _read_artifact_content(artifact["project_id"], artifact["version_id"], artifact["file_path"])
-    if start_offset is None or end_offset is None:
+    has_offsets = start_offset is not None and end_offset is not None
+    if not has_offsets:
         index = content.find(text_excerpt)
         if index < 0:
-            raise ValueError("Selected text could not be located in the artifact source.")
+            raise ValueError(
+                "Selected text could not be located in the artifact source. "
+                "Please reselect it in source view so exact offsets can be captured."
+            )
         start_offset = index
         end_offset = index + len(text_excerpt)
     if start_offset < 0 or end_offset < start_offset or end_offset > len(content):
         raise ValueError("Anchor offsets are outside the artifact content.")
     anchor_content = content[start_offset:end_offset]
+    if has_offsets and text_excerpt.strip():
+        normalized_excerpt = _normalize_anchor_text(text_excerpt)
+        normalized_anchor = _normalize_anchor_text(anchor_content)
+        if normalized_excerpt and normalized_excerpt not in normalized_anchor and normalized_anchor not in normalized_excerpt:
+            raise ValueError("Anchor offsets do not match the selected artifact text.")
     return metadata_db.create_artifact_anchor(
         anchor_id=str(uuid.uuid4()),
         artifact_id=artifact_id,

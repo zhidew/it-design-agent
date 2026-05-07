@@ -32,6 +32,70 @@ const getApiErrorMessage = (error: unknown, fallback: string) => {
   return fallback;
 };
 
+interface SourceSelectionRange {
+  startOffset: number;
+  endOffset: number;
+  sourceText: string;
+  renderedText: string;
+  mode: 'rendered' | 'source';
+}
+
+interface MarkdownPosition {
+  start?: { offset?: number };
+  end?: { offset?: number };
+}
+
+interface MarkdownNode {
+  position?: MarkdownPosition;
+}
+
+type MarkdownComponentProps = React.HTMLAttributes<HTMLElement> & {
+  node?: MarkdownNode;
+  children?: React.ReactNode;
+  className?: string;
+};
+
+const sourceAttrsForNode = (node?: MarkdownNode | null) => {
+  const start = node?.position?.start?.offset;
+  const end = node?.position?.end?.offset;
+  return typeof start === 'number' && typeof end === 'number'
+    ? { 'data-source-start': start, 'data-source-end': end }
+    : {};
+};
+
+const readSourceBounds = (element: Element | null) => {
+  if (!(element instanceof HTMLElement)) return null;
+  const start = Number(element.dataset.sourceStart);
+  const end = Number(element.dataset.sourceEnd);
+  return Number.isFinite(start) && Number.isFinite(end) ? { start, end } : null;
+};
+
+const closestSourceElement = (node: Node | null) => {
+  const element = node instanceof Element ? node : node?.parentElement;
+  return element?.closest<HTMLElement>('[data-source-start][data-source-end]') || null;
+};
+
+const renderedOffsetWithin = (element: HTMLElement, node: Node, offset: number) => {
+  const range = document.createRange();
+  range.selectNodeContents(element);
+  range.setEnd(node, offset);
+  return range.toString().length;
+};
+
+const normalizeSourceRange = (
+  content: string,
+  startOffset: number,
+  endOffset: number,
+  renderedText: string,
+  mode: 'rendered' | 'source',
+): SourceSelectionRange | null => {
+  const start = Math.max(0, Math.min(startOffset, endOffset, content.length));
+  const end = Math.max(0, Math.min(Math.max(startOffset, endOffset), content.length));
+  const sourceText = content.slice(start, end);
+  if (!sourceText.trim()) return null;
+  return { startOffset: start, endOffset: end, sourceText, renderedText, mode };
+};
+
 export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
   projectId,
   version,
@@ -45,7 +109,9 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
   t
 }) => {
   const [selectedExcerpt, setSelectedExcerpt] = useState('');
+  const [selectedSourceRange, setSelectedSourceRange] = useState<SourceSelectionRange | null>(null);
   const [discussionScope, setDiscussionScope] = useState<'artifact' | 'selection'>('selection');
+  const [artifactViewMode, setArtifactViewMode] = useState<'rendered' | 'source'>('rendered');
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [feedback, setFeedback] = useState('');
   const [replacementText, setReplacementText] = useState('');
@@ -149,10 +215,11 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
       : []),
   ];
 
-  const openDrawer = (scope: 'artifact' | 'selection', excerpt = '', nextFeedback = '') => {
+  const openDrawer = (scope: 'artifact' | 'selection', excerpt = '', nextFeedback = '', sourceRange: SourceSelectionRange | null = null) => {
     setDiscussionScope(scope);
     setSelectedExcerpt(excerpt);
     setReplacementText(excerpt);
+    setSelectedSourceRange(sourceRange);
     setFeedback(nextFeedback);
     setRevisionSession(null);
     setAnchor(null);
@@ -161,13 +228,52 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
     setIsDrawerOpen(true);
   };
 
+  const getCurrentSourceContent = () => (selectedFile ? artifacts[selectedFile] || '' : '');
+  const currentFileSupportsRenderedOffsets = () => Boolean(selectedFile && /\.(md|markdown)$/i.test(selectedFile));
+
+  const captureSourceSelection = (selection: Selection, content: string): SourceSelectionRange | null => {
+    const range = selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+    if (!range) return null;
+    const sourceRoot = range.commonAncestorContainer instanceof Element
+      ? range.commonAncestorContainer.closest('[data-artifact-source-view="true"]')
+      : range.commonAncestorContainer.parentElement?.closest('[data-artifact-source-view="true"]');
+    if (!sourceRoot) return null;
+    const pre = sourceRoot.querySelector('pre');
+    if (!pre) return null;
+    const start = renderedOffsetWithin(pre, range.startContainer, range.startOffset);
+    const end = renderedOffsetWithin(pre, range.endContainer, range.endOffset);
+    return normalizeSourceRange(content, start, end, selection.toString().trim(), 'source');
+  };
+
+  const captureRenderedSelection = (selection: Selection, content: string): SourceSelectionRange | null => {
+    if (!currentFileSupportsRenderedOffsets()) return null;
+    const range = selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+    if (!range) return null;
+    const startElement = closestSourceElement(range.startContainer);
+    const endElement = closestSourceElement(range.endContainer);
+    if (!startElement || !endElement) return null;
+    const startBounds = readSourceBounds(startElement);
+    const endBounds = readSourceBounds(endElement);
+    if (!startBounds || !endBounds) return null;
+    return normalizeSourceRange(content, startBounds.start, endBounds.end, selection.toString().trim(), 'rendered');
+  };
+
   const handleCaptureSelection = () => {
-    const selection = window.getSelection()?.toString().trim() || '';
+    const browserSelection = window.getSelection();
+    const selection = browserSelection?.toString().trim() || '';
     if (!selection) {
       setDrawerError('请先选中一段内容。');
       return;
     }
-    openDrawer('selection', selection);
+    const sourceContent = getCurrentSourceContent();
+    const sourceRange = browserSelection
+      ? captureSourceSelection(browserSelection, sourceContent) || captureRenderedSelection(browserSelection, sourceContent)
+      : null;
+    if (!sourceRange) {
+      setDrawerError('当前选区无法稳定映射到源文档。请切换到“源文档”视图后重新划词。');
+      return;
+    }
+    openDrawer('selection', sourceRange.sourceText, '', sourceRange);
   };
 
   const handleStartArtifactDiscussion = (initialFeedback = '') => {
@@ -178,11 +284,16 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
     if (!version || !selectedFile || !activeDesignArtifact || !selectedExcerpt.trim()) {
       throw new Error('请先选中一段内容。');
     }
+    if (!selectedSourceRange) {
+      throw new Error('当前选区缺少源文档位置。请切换到“源文档”视图后重新划词。');
+    }
     if (anchor) return anchor;
     const createdAnchor = await api.createArtifactAnchor(projectId, version, activeDesignArtifact.artifact_id, {
       file_name: selectedFile,
       anchor_type: selectedExcerpt.includes('\n```') ? 'code_block' : 'text_range',
       text_excerpt: selectedExcerpt,
+      start_offset: selectedSourceRange.startOffset,
+      end_offset: selectedSourceRange.endOffset,
     });
     setAnchor(createdAnchor);
     return createdAnchor;
@@ -193,8 +304,8 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
     setIsWorking(true);
     setDrawerError(null);
     try {
-      const session = await api.createRevisionSession(projectId, version, activeDesignArtifact.artifact_id, feedback);
       const createdAnchor = discussionScope === 'selection' ? await ensureSelectionAnchor() : null;
+      const session = await api.createRevisionSession(projectId, version, activeDesignArtifact.artifact_id, feedback);
       const updatedSession = feedback.trim()
         ? await api.addRevisionMessage(projectId, version, session.revision_session_id, feedback)
         : session;
@@ -316,10 +427,32 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
     }
   };
 
+  const markdownComponents = useMemo(() => ({
+    h1: ({ node, ...props }: MarkdownComponentProps) => <h1 {...sourceAttrsForNode(node)} {...props} />,
+    h2: ({ node, ...props }: MarkdownComponentProps) => <h2 {...sourceAttrsForNode(node)} {...props} />,
+    h3: ({ node, ...props }: MarkdownComponentProps) => <h3 {...sourceAttrsForNode(node)} {...props} />,
+    h4: ({ node, ...props }: MarkdownComponentProps) => <h4 {...sourceAttrsForNode(node)} {...props} />,
+    h5: ({ node, ...props }: MarkdownComponentProps) => <h5 {...sourceAttrsForNode(node)} {...props} />,
+    h6: ({ node, ...props }: MarkdownComponentProps) => <h6 {...sourceAttrsForNode(node)} {...props} />,
+    p: ({ node, ...props }: MarkdownComponentProps) => <p {...sourceAttrsForNode(node)} {...props} />,
+    li: ({ node, ...props }: MarkdownComponentProps) => <li {...sourceAttrsForNode(node)} {...props} />,
+    blockquote: ({ node, ...props }: MarkdownComponentProps) => <blockquote {...sourceAttrsForNode(node)} {...props} />,
+    table: ({ node, ...props }: MarkdownComponentProps) => <table {...sourceAttrsForNode(node)} {...props} />,
+    th: ({ node, ...props }: MarkdownComponentProps) => <th {...sourceAttrsForNode(node)} {...props} />,
+    td: ({ node, ...props }: MarkdownComponentProps) => <td {...sourceAttrsForNode(node)} {...props} />,
+    a: ({ node, ...props }: MarkdownComponentProps) => <a {...sourceAttrsForNode(node)} {...props} />,
+    strong: ({ node, ...props }: MarkdownComponentProps) => <strong {...sourceAttrsForNode(node)} {...props} />,
+    em: ({ node, ...props }: MarkdownComponentProps) => <em {...sourceAttrsForNode(node)} {...props} />,
+    code: ({ node, ...props }: MarkdownComponentProps) => (
+      <CodeBlock {...props} {...sourceAttrsForNode(node)} />
+    ),
+  }), []);
+
   const renderContent = () => {
     if (!selectedFile) return null;
     
-    let content = artifacts[selectedFile] || '';
+    const sourceContent = artifacts[selectedFile] || '';
+    let content = sourceContent;
     
     // For JSON files, try to pretty print
     if (selectedFile.endsWith('.json')) {
@@ -467,6 +600,24 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
             </div>
           </div>
         )}
+        <div className="mb-4 flex justify-end">
+          <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1 text-xs font-bold text-slate-600">
+            <button
+              type="button"
+              onClick={() => setArtifactViewMode('rendered')}
+              className={`rounded-md px-3 py-1.5 ${artifactViewMode === 'rendered' ? 'bg-white text-indigo-700 shadow-sm' : 'hover:text-slate-900'}`}
+            >
+              阅读视图
+            </button>
+            <button
+              type="button"
+              onClick={() => setArtifactViewMode('source')}
+              className={`rounded-md px-3 py-1.5 ${artifactViewMode === 'source' ? 'bg-white text-indigo-700 shadow-sm' : 'hover:text-slate-900'}`}
+            >
+              源文档
+            </button>
+          </div>
+        </div>
         {governableDesignArtifact && consistencyConflicts.length > 0 && (
           <div className="mb-4 rounded-xl border border-rose-100 bg-rose-50 p-3">
             <div className="mb-2 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-rose-700">
@@ -574,16 +725,22 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
             </div>
           </div>
         )}
-        <div className="prose prose-sm prose-slate max-w-none prose-headings:text-gray-800 prose-headings:font-black prose-a:text-indigo-600 prose-strong:text-gray-900 prose-code:text-indigo-600 prose-pre:bg-transparent prose-pre:p-0">
-          <ReactMarkdown 
-            remarkPlugins={[remarkGfm]}
-            components={{
-              code: CodeBlock
-            }}
-          >
-            {content}
-          </ReactMarkdown>
-        </div>
+        {artifactViewMode === 'source' ? (
+          <div data-artifact-source-view="true">
+            <pre className="overflow-auto whitespace-pre-wrap rounded-xl border border-slate-200 bg-slate-50 p-4 font-mono text-xs leading-6 text-slate-800">
+              {sourceContent}
+            </pre>
+          </div>
+        ) : (
+          <div className="prose prose-sm prose-slate max-w-none prose-headings:text-gray-800 prose-headings:font-black prose-a:text-indigo-600 prose-strong:text-gray-900 prose-code:text-indigo-600 prose-pre:bg-transparent prose-pre:p-0">
+            <ReactMarkdown 
+              remarkPlugins={[remarkGfm]}
+              components={markdownComponents}
+            >
+              {content}
+            </ReactMarkdown>
+          </div>
+        )}
       </div>
     );
   };

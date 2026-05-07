@@ -5,10 +5,17 @@ import { Mermaid } from './Mermaid';
 
 export const CodeBlock = (props: any) => {
   const { t } = useTranslation();
-  const { children, className, node, ...rest } = props;
+  const { children, className, node, sourceStart, sourceEnd, ...rest } = props;
   const match = /language-(\w+)/.exec(className || '');
   const language = match ? match[1] : '';
   const codeString = String(children).replace(/\n$/, '');
+  const dataSourceStart = rest['data-source-start'];
+  const dataSourceEnd = rest['data-source-end'];
+  const resolvedSourceStart = typeof sourceStart === 'number' ? sourceStart : dataSourceStart;
+  const resolvedSourceEnd = typeof sourceEnd === 'number' ? sourceEnd : dataSourceEnd;
+  const sourceAttrs = typeof resolvedSourceStart === 'number' && typeof resolvedSourceEnd === 'number'
+    ? { 'data-source-start': resolvedSourceStart, 'data-source-end': resolvedSourceEnd }
+    : {};
 
   if (language === 'mermaid') {
     return <Mermaid chart={codeString} />;
@@ -16,7 +23,7 @@ export const CodeBlock = (props: any) => {
 
   if (language) {
     return (
-      <div className="my-6 rounded-xl overflow-hidden border border-gray-200 shadow-sm">
+      <div className="my-6 rounded-xl overflow-hidden border border-gray-200 shadow-sm" {...sourceAttrs}>
         <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex justify-between items-center">
           <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{language}</span>
           <button
@@ -51,7 +58,7 @@ export const CodeBlock = (props: any) => {
   }
 
   return (
-    <code className="px-1.5 py-0.5 bg-gray-100 text-indigo-700 border border-gray-200 rounded text-[0.85em] font-mono font-semibold mx-0.5" {...rest}>
+    <code className="px-1.5 py-0.5 bg-gray-100 text-indigo-700 border border-gray-200 rounded text-[0.85em] font-mono font-semibold mx-0.5" {...sourceAttrs} {...rest}>
       {children}
     </code>
   );
