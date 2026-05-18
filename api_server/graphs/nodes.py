@@ -285,6 +285,8 @@ def _build_project_asset_context(project_id: str) -> Dict[str, Any]:
                 "id": kb["id"],
                 "name": kb["name"],
                 "type": kb["type"],
+                "branch": kb.get("branch"),
+                "repo_path": kb.get("repo_path"),
                 "includes": kb.get("includes") or [],
                 "description": kb.get("description"),
             }

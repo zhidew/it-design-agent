@@ -119,6 +119,9 @@ interface KnowledgeBaseResourceSummary {
   type: string;
   path?: string;
   index_url?: string;
+  url?: string;
+  branch?: string;
+  repo_path?: string;
 }
 
 interface ExpertResourceSummary {
@@ -2425,7 +2428,9 @@ export function ProjectDetail() {
                     {resourceSummary.knowledgeBases.slice(0, 2).map((kb) => (
                       <div key={kb.id} className="rounded-xl bg-white border border-gray-100 px-3 py-2">
                         <div className="text-xs font-black text-gray-800">{kb.name}</div>
-                        <div className="text-[10px] font-mono text-gray-400 mt-1">{kb.type} / {kb.path || kb.index_url || '-'}</div>
+                        <div className="text-[10px] font-mono text-gray-400 mt-1">
+                          {kb.type} / {kb.type === 'git' ? [kb.branch, kb.repo_path || kb.url].filter(Boolean).join(' / ') : (kb.path || kb.index_url || '-')}
+                        </div>
                       </div>
                     ))}
                     {resourceSummary.knowledgeBases.length > 2 && (
@@ -2691,7 +2696,9 @@ export function ProjectDetail() {
                       {resourceSummary.knowledgeBases.slice(0, 2).map((kb) => (
                         <div key={kb.id} className="rounded-xl bg-white border border-gray-100 px-3 py-2">
                           <div className="text-xs font-black text-gray-800">{kb.name}</div>
-                          <div className="text-[10px] font-mono text-gray-400 mt-1">{kb.type} · {kb.path || kb.index_url || '-'}</div>
+                          <div className="text-[10px] font-mono text-gray-400 mt-1">
+                            {kb.type} · {kb.type === 'git' ? [kb.branch, kb.repo_path || kb.url].filter(Boolean).join(' · ') : (kb.path || kb.index_url || '-')}
+                          </div>
                         </div>
                       ))}
                       {resourceSummary.knowledgeBases.length > 2 && (
