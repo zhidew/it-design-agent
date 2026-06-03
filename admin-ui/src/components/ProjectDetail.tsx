@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState, useRef, useMemo } from 'react';
 import { useParams, Link, useLocation } from 'react-router-dom';
-import { api, type ClarifiedRequirementsPayload, type DesignArtifact, type InteractionRecord } from '../api';
+import { api, BASELINE_UPLOAD_ACCEPT, formatApiErrorMessage, type ClarifiedRequirementsPayload, type DesignArtifact, type InteractionRecord } from '../api';
 import { ArrowLeft, Play, RefreshCw, Activity, Check, X, Upload, FileText, Database, Layers, Book, List, Trash2, ChevronLeft, ChevronRight, Settings2, FolderGit2, BookOpen, Bot, Cpu, Square, Clock3 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { LanguageSwitcher } from './LanguageSwitcher';
@@ -1168,6 +1168,7 @@ export function ProjectDetail() {
       const file = e.target.files[0];
       setInputFiles(prev => [...prev.filter(f => f.type !== type), { type, file }]);
     }
+    e.target.value = '';
   };
 
   const prepareVersionRunState = (version: string, streamStatus: StreamStatus) => {
@@ -1222,8 +1223,8 @@ export function ProjectDetail() {
       setCurrentRunId(run.job_id);
       void fetchState(timestampVersion);
       await finalizeNewVersionSubmission(timestampVersion);
-    } catch (err: any) {
-      setUiError(err?.response?.data?.detail || t('common.error'));
+    } catch (err: unknown) {
+      setUiError(formatApiErrorMessage(err, t('common.error'), i18n.language));
     } finally {
       setLoading(false);
     }
@@ -1250,8 +1251,8 @@ export function ProjectDetail() {
       await finalizeNewVersionSubmission(timestampVersion);
       setIsScheduleDialogOpen(false);
       setScheduledAt(getDefaultScheduledAt());
-    } catch (err: any) {
-      setUiError(err?.response?.data?.detail || t('common.error'));
+    } catch (err: unknown) {
+      setUiError(formatApiErrorMessage(err, t('common.error'), i18n.language));
     } finally {
       setScheduleLoading(false);
     }
@@ -1401,8 +1402,8 @@ export function ProjectDetail() {
           setStreamStatus('idle');
         }
       }
-    } catch (err: any) {
-      setUiError(err?.response?.data?.detail || 'Failed to delete version');
+    } catch (err: unknown) {
+      setUiError(formatApiErrorMessage(err, 'Failed to delete version', i18n.language));
     } finally {
       setDeletingVersion(null);
     }
@@ -2020,7 +2021,7 @@ export function ProjectDetail() {
             {required && <span className="text-rose-500 font-bold">*</span>}
           </div>
           {hasFile ? <Check size={12} strokeWidth={3} /> : <Upload size={12} />}
-          <input type="file" className="hidden" onChange={(e) => handleFileChange(type, e)} />
+          <input type="file" accept={BASELINE_UPLOAD_ACCEPT} className="hidden" onChange={(e) => handleFileChange(type, e)} />
         </label>
         {hasFile && <span className="text-[9px] font-bold text-emerald-600 truncate px-1">{inputFiles.find(f => f.type === type)?.file.name}</span>}
       </div>
@@ -2092,8 +2093,8 @@ export function ProjectDetail() {
       } : prev);
       await api.retryWorkflowNode(id, selectedVersion, selectedNode, selectedModel);
       void fetchState();
-    } catch (err: any) {
-      setUiError(err?.response?.data?.detail || 'Failed to retry selected node');
+    } catch (err: unknown) {
+      setUiError(formatApiErrorMessage(err, 'Failed to retry selected node', i18n.language));
       setStreamStatus('error');
     } finally {
       setRetryingNode(null);
@@ -2113,8 +2114,8 @@ export function ProjectDetail() {
       setStreamStatus('connecting');
       await api.continueWorkflow(id, selectedVersion, selectedModel);
       void fetchState();
-    } catch (err: any) {
-      setUiError(err?.response?.data?.detail || 'Failed to continue workflow');
+    } catch (err: unknown) {
+      setUiError(formatApiErrorMessage(err, 'Failed to continue workflow', i18n.language));
       setStreamStatus('error');
     } finally {
       setContinuingWorkflow(false);
@@ -2134,8 +2135,8 @@ export function ProjectDetail() {
     try {
       await api.cancelWorkflow(id, selectedVersion, 'Cancelled by user');
       void fetchState();
-    } catch (err: any) {
-      setUiError(err?.response?.data?.detail || 'Failed to cancel workflow');
+    } catch (err: unknown) {
+      setUiError(formatApiErrorMessage(err, 'Failed to cancel workflow', i18n.language));
       setStreamStatus('error');
     } finally {
       setCancellingWorkflow(false);
@@ -2203,6 +2204,9 @@ export function ProjectDetail() {
               {renderUploadBtn('dict', t('projectDetail.uploadDict'), <Book size={14} />)}
               {renderUploadBtn('lookup', t('projectDetail.uploadLookup'), <List size={14} />)}
             </div>
+            <p className="px-1 text-[10px] font-bold leading-relaxed text-gray-400">
+              {t('projectDetail.uploadFormatHint')}
+            </p>
 
             <div className="h-px bg-gray-50" />
 
