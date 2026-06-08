@@ -775,6 +775,43 @@ def _thread_id(project_id: str, version: str) -> str:
     return f"{project_id}_{version}"
 
 
+def _infer_runtime_model_id(project_id: str, state: dict | None) -> str | None:
+    design_context = (state or {}).get("design_context") or {}
+    model_config = design_context.get("model_config") or {}
+    explicit_id = str(model_config.get("id") or "").strip()
+    if explicit_id:
+        return explicit_id
+
+    model_name = str(model_config.get("model_name") or "").strip()
+    base_url = str(model_config.get("base_url") or "").strip()
+    if not model_name:
+        return None
+
+    try:
+        project_models = metadata_db.list_project_models(project_id, include_secrets=False)
+    except Exception:
+        return None
+
+    for candidate in project_models:
+        if str(candidate.get("model_name") or "").strip() != model_name:
+            continue
+        candidate_base_url = str(candidate.get("base_url") or "").strip()
+        if base_url and candidate_base_url != base_url:
+            continue
+        return str(candidate.get("id") or "").strip() or None
+    return None
+
+
+def _remember_runtime_model_id(project_id: str, version: str, model_id: str | None) -> None:
+    normalized_model_id = str(model_id or "").strip()
+    thread_id = _thread_id(project_id, version)
+    runtime = runtime_registry.setdefault(thread_id, {})
+    if normalized_model_id:
+        runtime["model_id"] = normalized_model_id
+    else:
+        runtime.pop("model_id", None)
+
+
 def _graph_config(project_id: str, version: str, run_id: str | None = None) -> dict:
     config = {
         "configurable": {
@@ -1039,13 +1076,20 @@ def _active_job_for_thread(project_id: str, version: str) -> dict | None:
     status = runtime.get("run_status")
     job_id = runtime.get("job_id")
     if job_id and status in ACTIVE_RUN_STATUSES:
-        return {"job_id": job_id, "status": status}
+        model_id = runtime.get("model_id")
+        if not model_id:
+            state = get_workflow_state(project_id, version, include_runtime=False) or {}
+            model_id = _infer_runtime_model_id(project_id, state)
+            if model_id:
+                runtime["model_id"] = model_id
+        return {"job_id": job_id, "status": status, "model_id": model_id}
 
     persisted = metadata_db.get_workflow_run(project_id, version) or {}
     persisted_status = persisted.get("status")
     persisted_job_id = persisted.get("run_id")
     if persisted_job_id and persisted_status in ACTIVE_RUN_STATUSES:
-        return {"job_id": persisted_job_id, "status": persisted_status}
+        state = get_workflow_state(project_id, version, include_runtime=False) or {}
+        return {"job_id": persisted_job_id, "status": persisted_status, "model_id": _infer_runtime_model_id(project_id, state)}
     return None
 
 
@@ -1077,11 +1121,18 @@ def list_active_runs(project_id: str | None = None) -> list[dict]:
         status = runtime.get("run_status")
         job_id = runtime.get("job_id")
         if job_id and status in ACTIVE_RUN_STATUSES:
+            model_id = runtime.get("model_id")
+            if not model_id:
+                state = get_workflow_state(runtime_project_id, version, include_runtime=False) or {}
+                model_id = _infer_runtime_model_id(runtime_project_id, state)
+                if model_id:
+                    runtime["model_id"] = model_id
             active[(runtime_project_id, version)] = {
                 "project_id": runtime_project_id,
                 "version": version,
                 "job_id": job_id,
                 "status": status,
+                "model_id": model_id,
             }
 
     projects = [metadata_db.get_project(project_id)] if project_id else metadata_db.list_projects()
@@ -1105,6 +1156,7 @@ def list_active_runs(project_id: str | None = None) -> list[dict]:
                         "version": version,
                         "job_id": active_job.get("job_id"),
                         "status": active_job.get("status"),
+                        "model_id": active_job.get("model_id"),
                     },
                 )
     return list(active.values())
@@ -2626,6 +2678,7 @@ def _build_graph_input_state(
             model_config = next((m for m in project_models if m["id"] == model), None)
             if model_config:
                 design_context["model_config"] = {
+                    "id": model_config["id"],
                     "provider": model_config["provider"],
                     "api_key": model_config["api_key"],
                     "base_url": model_config["base_url"],
@@ -2718,6 +2771,7 @@ async def run_orchestrator_task(
             feedback=feedback,
             model=model,
         )
+        _remember_runtime_model_id(project_id, version, _infer_runtime_model_id(project_id, initial_state) or model)
         if not preflight_checked:
             preflight_result = await asyncio.to_thread(
                 _run_llm_connectivity_preflight,
@@ -3320,6 +3374,7 @@ async def retry_workflow_node(
 
     _delete_checkpoint_state(project_id, version)
     _ensure_job(run_id)
+    _remember_runtime_model_id(project_id, version, model or _infer_runtime_model_id(project_id, current_state))
     _set_runtime_state(
         project_id,
         version,
@@ -3595,6 +3650,7 @@ async def continue_workflow(
     _delete_checkpoint_state(project_id, version)
     _ensure_job(run_id)
     jobs[run_id]["status"] = RUN_STATUS_RUNNING
+    _remember_runtime_model_id(project_id, version, model or _infer_runtime_model_id(project_id, current_state))
 
     _set_runtime_state(
         project_id,
@@ -3942,6 +3998,7 @@ def trigger_orchestrator(
         can_resume=False,
         job_id=job_id,
     )
+    _remember_runtime_model_id(project_id, version, model)
     _launch_runtime_task(
         _thread_id(project_id, version),
         run_orchestrator_task(
