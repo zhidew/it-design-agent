@@ -17,6 +17,7 @@ from models.events import dump_event, validate_event_payload
 from services.log_service import format_run_log_entry, get_run_log, run_log_dedupe_key, save_run_log
 from services.db_service import JSON_UNSET, metadata_db
 from services import requirement_decomposition_service, requirement_identity_service
+from services.version_path_resolver import resolve_version_path
 from services.artifact_governance_runtime import finalize_expert_artifact_outputs
 from services.design_artifact_service import sync_artifacts_from_disk
 from services.llm_service import (
@@ -596,7 +597,7 @@ def _merge_clarified_requirements_payload(
 
 def _get_clarified_requirements_snapshot(project_id: str, version: str, state: Dict[str, Any] | None = None) -> Dict[str, Any]:
     payload = _build_clarified_requirements_payload(project_id, version, state=state)
-    project_path = PROJECTS_DIR / project_id / version
+    project_path = resolve_version_path(project_id, version)
     baseline_dir = project_path / "baseline"
     requirements_json_path = baseline_dir / "requirements.json"
     existing_requirements_payload: Dict[str, Any] = {}
@@ -619,7 +620,7 @@ def _get_clarified_requirements_snapshot(project_id: str, version: str, state: D
 
 def _persist_clarification_artifacts(project_id: str, version: str, state: Dict[str, Any] | None = None) -> Dict[str, Any]:
     payload = _build_clarified_requirements_payload(project_id, version, state=state)
-    project_path = PROJECTS_DIR / project_id / version
+    project_path = resolve_version_path(project_id, version)
     baseline_dir = project_path / "baseline"
     baseline_dir.mkdir(parents=True, exist_ok=True)
     clarification_log_path = baseline_dir / "clarification-log.json"
@@ -663,7 +664,7 @@ def _load_persisted_requirement_text(project_id: str, version: str, fallback: st
     if version_requirement:
         return version_requirement
 
-    baseline_dir = PROJECTS_DIR / project_id / version / "baseline"
+    baseline_dir = resolve_version_path(project_id, version) / "baseline"
     for filename in COMPATIBLE_REQUIREMENT_BASELINE_FILES:
         path = baseline_dir / filename
         if path.exists():
@@ -698,7 +699,7 @@ def _write_requirement_baseline_files(
     normalized_requirement = str(requirement_text or "").strip()
     if not normalized_requirement:
         return
-    baseline_dir = PROJECTS_DIR / project_id / version / "baseline"
+    baseline_dir = resolve_version_path(project_id, version) / "baseline"
     baseline_dir.mkdir(parents=True, exist_ok=True)
     path = baseline_dir / PRIMARY_REQUIREMENT_BASELINE_FILE
     try:
@@ -1191,7 +1192,7 @@ def _launch_runtime_task(thread_id: str, coro):
 
 
 def _latest_project_timestamp(project_id: str, version: str) -> str:
-    project_root = PROJECTS_DIR / project_id / version
+    project_root = resolve_version_path(project_id, version)
     if not project_root.exists():
         return _now_iso()
 
@@ -1211,7 +1212,7 @@ def _latest_project_timestamp(project_id: str, version: str) -> str:
 
 def _load_artifacts_from_disk(project_id: str, version: str) -> dict:
     artifacts = {}
-    project_root = PROJECTS_DIR / project_id / version
+    project_root = resolve_version_path(project_id, version)
     for dirname in ("baseline", "artifacts", "logs", "evidence", "release"):
         dir_path = project_root / dirname
         if not dir_path.exists():
@@ -1253,7 +1254,7 @@ def _get_registry_expert_outputs() -> dict[str, list[str]]:
 
 
 def _build_legacy_task_queue(project_id: str, version: str) -> list[dict]:
-    project_root = PROJECTS_DIR / project_id / version
+    project_root = resolve_version_path(project_id, version)
     logs_dir = project_root / "logs"
     baseline_file = project_root / "baseline" / "requirements.json"
 
@@ -1527,7 +1528,7 @@ def _build_node_llm_map(project_id: str, version: str, state: dict, task_queue: 
     fallback_provider = str(model_config.get("provider") or "").strip().lower() or None
 
     latest_by_node: dict[str, dict] = {}
-    log_file = BASE_DIR / "projects" / project_id / version / "logs" / "llm_interactions.jsonl"
+    log_file = resolve_version_path(project_id, version) / "logs" / "llm_interactions.jsonl"
     if log_file.exists():
         try:
             with open(log_file, "r", encoding="utf-8") as handle:
@@ -2752,7 +2753,7 @@ async def run_orchestrator_task(
     _emit_node_started(job_id, job_id, "bootstrap", "bootstrap", project_id=project_id, version_id=version)
 
     try:
-        project_path = PROJECTS_DIR / project_id / version
+        project_path = resolve_version_path(project_id, version)
         baseline_path = project_path / "baseline"
         baseline_path.mkdir(parents=True, exist_ok=True)
         (project_path / "logs").mkdir(parents=True, exist_ok=True)
@@ -3901,7 +3902,7 @@ async def schedule_orchestrator_run(
     )
     _write_requirement_baseline_files(project_id, version, requirement_text, overwrite=True)
 
-    project_root = PROJECTS_DIR / project_id / version
+    project_root = resolve_version_path(project_id, version)
     project_root.mkdir(parents=True, exist_ok=True)
 
     existing_state = get_workflow_state(project_id, version)
@@ -4106,7 +4107,7 @@ def delete_version(project_id: str, version: str) -> bool:
     if has_active_runtime and state and state.get("run_status") in {RUN_STATUS_QUEUED, RUN_STATUS_RUNNING}:
         return False
 
-    project_version_dir = PROJECTS_DIR / project_id / version
+    project_version_dir = resolve_version_path(project_id, version)
     if not project_version_dir.exists():
         return False
 
