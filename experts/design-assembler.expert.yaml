@@ -32,6 +32,7 @@ outputs:
   expected:
     - detailed-design.md
     - implementation-plan.json
+    - us-items.json
     - traceability.json
     - review-checklist.md
   evidence:
@@ -74,6 +75,7 @@ metadata:
     file_guidance:
       detailed-design.md: 聚合上游专家产物，形成一致的最终详细设计，标出跨产物依赖、冲突处理和残余假设，不新增未经上游支撑的设计。
       implementation-plan.json: 结构化输出实施阶段、任务、依赖、风险、验收点和对应产物，保持可追踪。
+      us-items.json: 将一个 IR 拆解为多个可交给 Code Agent 开发的 US item，包含 us_id、title、description、source_requirement_ids、acceptance_summary、confidence、artifact_refs 和 validation/status。
       traceability.json: 建立需求、设计产物、关键决策和验证项之间的追踪关系，字段稳定且可机器读取。
       review-checklist.md: 汇总跨专家评审项，覆盖一致性、完整性、风险、约束和待确认问题。
     default_file_guidance: 聚焦综合、对齐和追踪，不替代上游专家生成新的领域/API/数据/测试细节。
@@ -92,6 +94,10 @@ metadata:
       implementation-plan.json:
         - 阶段、任务、依赖、风险、验收点和关联产物必须结构化。
         - 需要能支持后续实施排期和责任拆分。
+      us-items.json:
+        - 必须包含 schema_version、status、items 和 validation。
+        - 每个 item 必须包含唯一 us_id、标题、说明、来源 IR/证据引用和置信度。
+        - status 只能是 valid、partial 或 invalid。
       traceability.json:
         - 需求、设计产物、关键决策和验证项之间的映射必须完整且稳定。
         - 需要标出未覆盖或低置信度的追踪关系。

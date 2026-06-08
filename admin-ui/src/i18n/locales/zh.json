@@ -77,6 +77,7 @@
     "activeProject": "活跃工作空间",
     "newDesignRun": "新建设计会话",
     "startDesign": "启动设计",
+    "requirementIdLabel": "IR_ID（可选）",
     "uploadIR": "IT需求文档",
     "uploadPhysical": "物理数据模型",
     "uploadLogical": "逻辑数据模型",
